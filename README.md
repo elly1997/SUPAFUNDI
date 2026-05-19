@@ -43,3 +43,4 @@ After deploy, the build log should show `publish: /opt/build/repo/.next` and `pu
 | `npm run dev:clean` | Kill stale dev ports, delete `.next`, start dev |
 | `npm run build` | Production build |
 | `npm run lint` | ESLint |
+"# SUPAFUNDI" 
