@@ -1,0 +1,1 @@
+-- Optional seed data (dev). Run after migrations: `supabase db reset` or SQL editor.

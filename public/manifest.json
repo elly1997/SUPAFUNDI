@@ -1,0 +1,10 @@
+{
+  "name": "SUPAFUNDI TRADERS",
+  "short_name": "Supafundi",
+  "description": "Hardware Dealership • Wholesale & Retail — POS and business management",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": []
+}

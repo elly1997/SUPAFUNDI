@@ -1,0 +1,152 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useTransition } from "react";
+import { LogOut, Menu, Search, User } from "lucide-react";
+import { toast } from "sonner";
+import { updateActiveOutlet, signOut } from "@/lib/actions/auth";
+import { useAuthStore } from "@/stores/authStore";
+import { Button } from "@/components/ui/button";
+import { AppBreadcrumbs } from "@/components/layout/app-breadcrumbs";
+import { ContextBar } from "@/components/layout/context-bar";
+import { filterNavForRole } from "@/components/layout/nav-config";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useState } from "react";
+
+type OutletOption = { id: string; name: string };
+
+type AppHeaderProps = {
+  outlets: OutletOption[];
+};
+
+export function AppHeader({ outlets }: AppHeaderProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [pending, startTransition] = useTransition();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const session = useAuthStore((s) => s.session);
+  const activeOutletId = useAuthStore((s) => s.activeOutletId);
+  const setActiveOutletId = useAuthStore((s) => s.setActiveOutletId);
+
+  if (!session) {
+    return null;
+  }
+
+  const displayName = session.fullName || session.email;
+  const outletValue = activeOutletId ?? session.outletId ?? outlets[0]?.id ?? "";
+  const mobileSections = filterNavForRole(session.role);
+  const isPos = pathname === "/pos" || pathname.startsWith("/pos/");
+
+  const onOutletChange = (outletId: string) => {
+    setActiveOutletId(outletId);
+    startTransition(async () => {
+      const res = await updateActiveOutlet(outletId);
+      if (res.ok) {
+        router.refresh();
+      } else {
+        toast.error(res.message);
+      }
+    });
+  };
+
+  return (
+    <div className="flex shrink-0 flex-col">
+      <header className="flex h-14 items-center justify-between gap-3 border-b bg-background px-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {!isPos ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="md:hidden"
+              onClick={() => setMobileNavOpen(true)}
+              aria-label="Open menu"
+            >
+              <Menu className="size-5" />
+            </Button>
+          ) : null}
+          <AppBreadcrumbs />
+        </div>
+        <div className="hidden max-w-xs flex-1 lg:flex">
+          <div className="relative w-full">
+            <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="search"
+              placeholder="Search products, sales…"
+              className="h-9 w-full rounded-lg border border-input bg-muted/40 pl-9 pr-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              disabled
+              title="Global search coming soon"
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="hidden items-center gap-2 text-sm text-muted-foreground sm:flex">
+            <User className="size-4" />
+            <span className="max-w-[8rem] truncate" title={displayName}>
+              {displayName}
+            </span>
+            <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs capitalize">
+              {session.role.replace("_", " ")}
+            </span>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => startTransition(() => void signOut())}
+            disabled={pending}
+          >
+            <LogOut className="mr-1.5 size-4" />
+            <span className="hidden sm:inline">Sign out</span>
+          </Button>
+        </div>
+      </header>
+      {!isPos && outlets.length > 0 ? (
+        <ContextBar
+          outlets={outlets}
+          outletId={outletValue}
+          onOutletChange={onOutletChange}
+          outletChangeDisabled={pending}
+        />
+      ) : null}
+
+      <Dialog open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Menu</DialogTitle>
+          </DialogHeader>
+          <nav className="flex flex-col gap-4">
+            {mobileSections.map((section) => (
+              <div key={section.id}>
+                {section.title ? (
+                  <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
+                    {section.title}
+                  </p>
+                ) : null}
+                <ul className="space-y-1">
+                  {section.items.map((item) => (
+                    <li key={item.href}>
+                      <Link
+                        href={item.href}
+                        onClick={() => setMobileNavOpen(false)}
+                        className="block rounded-lg px-3 py-2 text-sm hover:bg-muted"
+                      >
+                        {item.label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </nav>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

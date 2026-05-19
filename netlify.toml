@@ -1,0 +1,12 @@
+# Publish must NOT be the repo root (.) — that breaks @netlify/plugin-nextjs.
+# This file overrides a wrong "Publish directory" saved in the Netlify UI.
+# Official template: https://github.com/netlify-templates/next-platform-starter
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"

@@ -1,0 +1,200 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2, Plus, Store } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  createOutlet,
+  listOutletsSettings,
+  updateOutlet,
+  type OutletRow,
+} from "@/lib/actions/settings";
+
+export function OutletsSettingsClient() {
+  const [open, setOpen] = useState(false);
+  const [edit, setEdit] = useState<OutletRow | null>(null);
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
+  const [address, setAddress] = useState("");
+  const [phone, setPhone] = useState("");
+  const [isActive, setIsActive] = useState(true);
+  const queryClient = useQueryClient();
+
+  const { data: outlets = [], isLoading } = useQuery({
+    queryKey: ["settings-outlets"],
+    queryFn: listOutletsSettings,
+  });
+
+  const resetForm = () => {
+    setName("");
+    setCode("");
+    setAddress("");
+    setPhone("");
+    setIsActive(true);
+    setEdit(null);
+  };
+
+  const openCreate = () => {
+    resetForm();
+    setOpen(true);
+  };
+
+  const openEdit = (row: OutletRow) => {
+    setEdit(row);
+    setName(row.name);
+    setCode(row.code ?? "");
+    setAddress(row.address ?? "");
+    setPhone(row.phone ?? "");
+    setIsActive(row.is_active);
+    setOpen(true);
+  };
+
+  const saveMut = useMutation({
+    mutationFn: async () => {
+      const payload = {
+        name,
+        code,
+        address,
+        phone,
+        isActive,
+      };
+      if (edit) return updateOutlet(edit.id, payload);
+      return createOutlet(payload);
+    },
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success(edit ? "Outlet updated" : "Outlet created");
+        setOpen(false);
+        resetForm();
+        queryClient.invalidateQueries({ queryKey: ["settings-outlets"] });
+        queryClient.invalidateQueries({ queryKey: ["outlets"] });
+      } else toast.error(r.message);
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="flex items-center gap-2">
+          <Store className="h-5 w-5" />
+          Outlets / branches
+        </CardTitle>
+        <Button onClick={openCreate}>
+          <Plus className="mr-2 h-4 w-4" />
+          Add outlet
+        </Button>
+      </CardHeader>
+      <CardContent>
+        <p className="mb-4 text-sm text-muted-foreground">
+          Branch codes appear on invoices and POs (e.g. MAIN-2026-00001). Use
+          unique 2–8 character codes per outlet.
+        </p>
+        {isLoading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin" />
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Code</TableHead>
+                <TableHead>Phone</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {outlets.map((o) => (
+                <TableRow key={o.id}>
+                  <TableCell className="font-medium">{o.name}</TableCell>
+                  <TableCell>{o.code ?? "—"}</TableCell>
+                  <TableCell>{o.phone ?? "—"}</TableCell>
+                  <TableCell>{o.is_active ? "Active" : "Inactive"}</TableCell>
+                  <TableCell className="text-right">
+                    <Button variant="ghost" size="sm" onClick={() => openEdit(o)}>
+                      Edit
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (!v) resetForm();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{edit ? "Edit outlet" : "New outlet"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Code (optional)</Label>
+              <Input
+                value={code}
+                maxLength={8}
+                placeholder="MAIN"
+                onChange={(e) => setCode(e.target.value.toUpperCase())}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Phone</Label>
+              <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Address</Label>
+              <Input value={address} onChange={(e) => setAddress(e.target.value)} />
+            </div>
+            {edit && (
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={isActive}
+                  onChange={(e) => setIsActive(e.target.checked)}
+                />
+                Active
+              </label>
+            )}
+          </div>
+          <DialogFooter>
+            <Button disabled={saveMut.isPending} onClick={() => saveMut.mutate()}>
+              {saveMut.isPending ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+

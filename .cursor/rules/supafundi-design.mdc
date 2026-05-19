@@ -1,0 +1,98 @@
+---
+description: SUPAFUNDI TRADERS — product, brand, layout, and UI implementation spec
+globs: app/**/*.{tsx,css},components/**/*.{tsx,css},public/manifest.json
+alwaysApply: true
+---
+
+# SUPAFUNDI TRADERS — System Design & UI
+
+## Product
+Web POS + business management for **SUPAFUNDI TRADERS** (hardware, wholesale & retail, Tanzania). Professional, fast, trustworthy for **counter tablets/phones**—not generic SaaS.
+
+- **Tagline (visible):** *Hardware Dealership • Wholesale & Retail*
+- **Currency:** TZS via `formatTzs()` in `lib/utils/currency.ts` (e.g. `TZS 1,250,000`)
+- **Payments:** Cash, M-Pesa, bank transfers are first-class
+- **Multi-outlet:** Branch switcher; data scoped per outlet (`useAuthStore`, `updateActiveOutlet`)
+
+## Brand (target — dark-first, orange accent)
+| Token | Hex | Use |
+|-------|-----|-----|
+| Primary | `#f97316` | CTAs, active nav, logo gradient |
+| Primary dark | `#ea580c` | Hover |
+| Primary light | `#fdba74` | Highlights |
+| Background | `#0f172a` | Canvas |
+| Card / header | `#1e293b` | Panels, header |
+| Surface 1 / 2 | `#334155` / `#475569` | Inputs, secondary buttons |
+| Text primary / secondary | `#f1f5f9` / `#94a3b8` | Body / labels |
+| Success / Danger / Warning / Info | `#10b981` / `#ef4444` / `#f59e0b` / `#3b82f6` | Semantic |
+
+**Typography:** Segoe UI / system sans; **JetBrains Mono** for money, codes, receipts. **Icons:** Lucide (stroke), 18–24px nav.
+
+**Shape:** radius 4px chips, 8px inputs/buttons, 12–16px cards; 1px `#334155` borders; card shadow `0 4px 6px rgba(0,0,0,0.3)`. Primary buttons: orange **135° gradient**, lift on hover.
+
+> **Theme:** `app/globals.css` `:root` uses this token set; PWA `theme_color` is `#0f172a` in `public/manifest.json` and `app/layout.tsx` viewport.
+
+## Layout shell
+1. **Sticky header** — logo, brand, outlet, Reconcile, Open Session, datetime, cashier, sync badge (Synced / Syncing / Offline)
+2. **Horizontal tab nav** — scroll on mobile; icon + label
+3. **Main** — `PageHeader` (title left, actions/filters right)
+
+**Login:** Centered card, dark gradient, logo + email/password.
+
+**POS desktop:** ~25% expenses | ~45% catalog (search, category, retail/wholesale toggle, grid) | ~30% cart.
+**POS mobile:** Stack + FABs for Cart and Expenses with badges.
+
+**Dashboard:** Stat row → cash-session warning → 2-col insight panels.
+
+## Codebase map (reuse — do not duplicate)
+| Area | Path |
+|------|------|
+| Shell | `components/layout/dashboard-shell.tsx`, `app-header.tsx`, `app-sidebar.tsx`, `nav-config.ts` |
+| POS | `components/pos/*`, `app/(dashboard)/pos/` |
+| UI primitives | `components/ui/*` (shadcn) |
+| Settings / outlets / users | `components/settings/*`, `app/(dashboard)/settings/` |
+| Roles | `lib/auth/roles.ts` — hide/gray admin-only for cashiers |
+| Offline sync | `lib/offline/sync.ts`, sync indicator in header |
+
+## Modules (design targets)
+Dashboard, POS, Sales, Invoices (sub-tabs), Inventory, Customers, Suppliers, Payments, Reports (pill tabs + date toolbar), Settings.
+
+**Modals:** cash session open/close, daily reconcile, checkout/payment split, customer statement, invoice CRUD, destructive confirms.
+
+## Component patterns
+- **Buttons:** `primary` orange gradient; neutral `action-btn`; green gradient `header-btn` for Reconcile; destructive = red, never orange
+- **Forms:** dark fill surface-1, orange focus ring; labels 0.85rem secondary; `form-hint` under complex fields
+- **Cards:** `dash-stat-card` / `report-card` — icon in 10% semantic tint circle; net profit hero = green gradient (red if loss)
+- **Tables:** dark header, right-align currency (monospace), row icon actions, empty states
+- **Nav tabs:** inactive secondary; active primary tint + orange accent; nested `report-tab-btn` / `invoice-tab-btn`
+- **Modals:** dim overlay; header + ×; footer Cancel + Primary; receipt preview for print
+- **Feedback:** sonner toasts; sync colors (green/blue pulse/amber offline)
+
+## UX (non-negotiable)
+1. ≤2 taps to add product; min **44px** touch targets on mobile
+2. Prominent warning when cash session closed
+3. Obvious retail/wholesale toggle; distinct prices
+4. TZS prefix, right-aligned amounts, monospace totals
+5. Credit/payables use **warning** styling, visible
+6. Sync state always visible
+7. Role-based UI (`canManageSettings`, `canUsePos`, etc.)
+8. Emoji in section headers OK sparingly; **not** on printed docs
+
+## Responsive
+≥1400px full POS 3-col; 992–1199 compressed; ≤768 FABs + 2-col stats; ≤575 single column full-width modals. `prefers-reduced-motion`: no pulse.
+
+## Print
+- **80mm receipt:** monospace, B&W, line items, totals, payment, cashier
+- **A4 invoice/quote/proforma/delivery:** white page, letterhead, dark theme **not** used on print
+
+## Avoid
+Light-default UI, blue SaaS aesthetic, tiny POS card text, admin clutter on POS, non-TZS currency, desktop-only POS without FABs.
+
+## Figma → code (if used)
+1. `get_design_context` + `get_screenshot` for the node
+2. Map to `components/ui/*` and layout components above
+3. Use tokens from this rule / `globals.css`, not raw Figma Tailwind output
+4. Validate 1:1 with screenshot before done
+
+## Deliverables reference (design/AI)
+Tokens page, component sheet, 10 screens (Login, Dashboard, POS×2, Sales detail, Invoices, Inventory, Customer, Supplier payables, Reports, Settings), 3 modals (checkout, open session, reconcile), 2 print templates, prototype Login → session → sale → receipt → dashboard.

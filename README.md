@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SUPAFUNDI TRADERS — Hardware POS
 
-## Getting Started
+Web POS and business management for hardware wholesale & retail (Tanzania). Built with Next.js 14, Supabase, and Tailwind.
 
-First, run the development server:
+## Local development
 
 ```bash
+npm install
+# Create .env.local with Supabase URL + anon + service role keys
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). Use `npm run dev:clean` if the dev server shows stale chunk errors.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Deploy to Netlify
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. **Connect Git** (recommended) — Netlify → **Add new site** → **Import from Git** → select this repo. Do not rely on drag-and-drop zip deploys for Next.js.
+2. **Build settings** — Netlify reads `netlify.toml`:
+   - Build command: `npm run build`
+   - Publish directory: `.next` (set in repo; overrides a bad UI value)
+3. **Clear wrong UI publish** (if deploy still fails):
+   - **Site configuration** → **Build & deploy** → **Build settings** → **Edit**
+   - **Publish directory**: leave **completely blank** or set to `.next` (never `.` or `/` or repo root)
+   - Save → **Deploys** → **Clear cache and deploy site**
+4. **Environment variables** (Site configuration → Environment variables):
 
-## Learn More
+   | Variable | Required |
+   |----------|----------|
+   | `NEXT_PUBLIC_SUPABASE_URL` | Yes |
+   | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes |
+   | `SUPABASE_SERVICE_ROLE_KEY` | Yes |
+   | `NEXT_PUBLIC_APP_URL` | Yes — e.g. `https://your-site.netlify.app` |
 
-To learn more about Next.js, take a look at the following resources:
+5. **Supabase** — Authentication → URL configuration: set **Site URL** and redirect URLs to your Netlify domain.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+After deploy, the build log should show `publish: /opt/build/repo/.next` and `publishOrigin: config` (not `ui` with repo root).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Scripts
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Dev server on port 3000 |
+| `npm run dev:clean` | Kill stale dev ports, delete `.next`, start dev |
+| `npm run build` | Production build |
+| `npm run lint` | ESLint |

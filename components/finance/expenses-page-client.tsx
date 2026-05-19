@@ -1,0 +1,177 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2, Plus } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { listExpenses, recordExpense } from "@/lib/actions/expenses";
+import { formatTzs } from "@/lib/utils/currency";
+
+const CATEGORIES = [
+  { key: "rent", label: "Rent" },
+  { key: "utilities", label: "Utilities" },
+  { key: "wages", label: "Wages" },
+  { key: "bank", label: "Bank charges" },
+  { key: "misc", label: "Miscellaneous" },
+];
+
+export function ExpensesPageClient() {
+  const [open, setOpen] = useState(false);
+  const [category, setCategory] = useState("misc");
+  const [description, setDescription] = useState("");
+  const [amount, setAmount] = useState("");
+  const [paidCash, setPaidCash] = useState(true);
+  const queryClient = useQueryClient();
+
+  const { data: expenses = [], isLoading } = useQuery({
+    queryKey: ["expenses"],
+    queryFn: () => listExpenses(50),
+  });
+
+  const recordMut = useMutation({
+    mutationFn: recordExpense,
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Expense recorded and posted to GL");
+        setOpen(false);
+        setAmount("");
+        setDescription("");
+        queryClient.invalidateQueries({ queryKey: ["expenses"] });
+      } else toast.error(r.message);
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle>Expenses</CardTitle>
+        <Button onClick={() => setOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" />
+          Record expense
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin" />
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Date</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {expenses.map((e) => (
+                <TableRow key={e.id}>
+                  <TableCell>{e.expense_date}</TableCell>
+                  <TableCell className="capitalize">{e.category}</TableCell>
+                  <TableCell>{e.description ?? "—"}</TableCell>
+                  <TableCell className="text-right">
+                    {formatTzs(e.amount)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Record expense</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Category</Label>
+              <Select
+                value={category}
+                onValueChange={(v) => setCategory(v ?? "misc")}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORIES.map((c) => (
+                    <SelectItem key={c.key} value={c.key}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Input value={description} onChange={(e) => setDescription(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Amount (TZS)</Label>
+              <Input type="number" min={1} value={amount} onChange={(e) => setAmount(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Payment</Label>
+              <Select
+                value={paidCash ? "cash" : "credit"}
+                onValueChange={(v) => setPaidCash(v === "cash")}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">Paid from cash</SelectItem>
+                  <SelectItem value="credit">On account (AP)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={() =>
+                recordMut.mutate({
+                  category,
+                  description,
+                  amount: Number(amount),
+                  paidFromCash: paidCash,
+                })
+              }
+              disabled={recordMut.isPending || !amount}
+            >
+              {recordMut.isPending ? "Saving…" : "Save & post"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}

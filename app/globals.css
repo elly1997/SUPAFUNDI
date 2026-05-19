@@ -1,27 +1,260 @@
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-}
-
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+
+  .touch-manipulation {
+    touch-action: manipulation;
+  }
+
+  .pos-page {
+    min-height: 100%;
+    background-color: #0f172a;
+    background: linear-gradient(
+      180deg,
+      var(--header, #1e293b) 0%,
+      var(--background, #0f172a) 12rem
+    );
+    color: var(--foreground, #f1f5f9);
+  }
+
+  .font-money {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  /* POS uses same Inter stack as the rest of the app */
+  .font-pos {
+    font-family: var(--font-sans), system-ui, sans-serif;
+  }
+
+  .pos-shell {
+    font-feature-settings: "kern" 1, "liga" 1;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .pos-touch {
+    min-height: 2.75rem;
+    touch-action: manipulation;
+  }
+
+  .pos-product-grid {
+    contain: layout style;
+  }
+
+  .pos-product-grid > * {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 7.25rem;
+  }
+
+  .app-page {
+    @apply mx-auto max-w-[1600px];
+  }
+
+  .glass-card {
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background-color: color-mix(in srgb, var(--card) 88%, transparent);
+    box-shadow: 0 4px 6px rgb(0 0 0 / 0.3);
+    backdrop-filter: blur(8px);
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+}
+
+@layer components {
+  .btn-primary-gradient {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    color: var(--primary-foreground);
+    box-shadow: 0 2px 8px rgb(249 115 22 / 0.35);
+  }
+
+  .btn-primary-gradient:hover:not(:disabled) {
+    background: linear-gradient(135deg, #fb923c 0%, var(--primary) 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgb(249 115 22 / 0.45);
+  }
+
+  .btn-reconcile {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: #fff;
+    box-shadow: 0 2px 8px rgb(16 185 129 / 0.35);
+  }
+
+  .btn-reconcile:hover:not(:disabled) {
+    filter: brightness(1.05);
+  }
+
+  .dash-stat-card {
+    box-shadow: 0 4px 6px rgb(0 0 0 / 0.3);
+    border: 1px solid var(--border);
+  }
+
+  .nav-tab {
+    display: inline-flex;
+    shrink: 0;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 9999px;
+    padding: 0.45rem 0.85rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--muted-foreground);
+    transition: color 0.15s, background-color 0.15s, box-shadow 0.15s;
+  }
+
+  .nav-tab:hover {
+    background-color: rgb(51 65 85 / 0.75);
+    color: var(--foreground);
+  }
+
+  .report-tab {
+    display: inline-flex;
+    shrink: 0;
+    align-items: center;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.85rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    background: transparent;
+    transition: background-color 0.15s, color 0.15s;
+  }
+
+  .report-tab:hover {
+    background: rgb(51 65 85 / 0.6);
+    color: var(--foreground);
+  }
+
+  .report-tab-active {
+    background: var(--primary);
+    color: var(--primary-foreground);
+    box-shadow: 0 2px 8px rgb(249 115 22 / 0.35);
+  }
+
+  .nav-tab-active {
+    background: linear-gradient(
+      135deg,
+      rgb(249 115 22 / 0.22) 0%,
+      rgb(249 115 22 / 0.08) 100%
+    );
+    color: var(--primary);
+    box-shadow:
+      inset 0 0 0 1px rgb(249 115 22 / 0.35),
+      0 2px 8px rgb(249 115 22 / 0.12);
+  }
+
+  .auth-gradient {
+    background: radial-gradient(
+        ellipse 80% 50% at 50% -20%,
+        rgb(249 115 22 / 0.15),
+        transparent
+      ),
+      linear-gradient(180deg, #0f172a 0%, #020617 100%);
+  }
+
+  .login-card {
+    box-shadow: 0 8px 32px rgb(0 0 0 / 0.45);
+    border: 1px solid var(--border);
+  }
+}
+
+@layer base {
+  .theme {
+    --font-heading: var(--font-sans);
+  }
+
+  :root {
+    --background: #0f172a;
+    --foreground: #f1f5f9;
+    --card: #1e293b;
+    --card-foreground: #f1f5f9;
+    --popover: #1e293b;
+    --popover-foreground: #f1f5f9;
+    --primary: #f97316;
+    --primary-foreground: #ffffff;
+    --primary-dark: #ea580c;
+    --primary-light: #fdba74;
+    --secondary: #334155;
+    --secondary-foreground: #f1f5f9;
+    --muted: #334155;
+    --muted-foreground: #94a3b8;
+    --accent: #475569;
+    --accent-foreground: #f1f5f9;
+    --destructive: #ef4444;
+    --border: #334155;
+    --input: #334155;
+    --ring: #f97316;
+    --radius: 0.75rem;
+    --header: #1e293b;
+    --surface-1: #334155;
+    --surface-2: #475569;
+    --chart-1: #f97316;
+    --chart-2: #10b981;
+    --chart-3: #3b82f6;
+    --chart-4: #f59e0b;
+    --chart-5: #ef4444;
+    --sidebar: #1e293b;
+    --sidebar-foreground: #f1f5f9;
+    --sidebar-primary: #f97316;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #334155;
+    --sidebar-accent-foreground: #f1f5f9;
+    --sidebar-border: #334155;
+    --sidebar-ring: #f97316;
+    --inflow: #10b981;
+    --inflow-muted: rgb(16 185 129 / 0.12);
+    --outflow: #ef4444;
+    --outflow-muted: rgb(239 68 68 / 0.12);
+    --warning: #f59e0b;
+    --warning-muted: rgb(245 158 11 / 0.12);
+    --info: #3b82f6;
+    --info-muted: rgb(59 130 246 / 0.12);
+    --shell: #0f172a;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  html,
+  body {
+    font-family: var(--font-sans), "Inter", "Segoe UI", system-ui, sans-serif;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+
+  .bg-shell {
+    background-color: var(--shell);
+  }
+
+  html {
+    @apply font-sans;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font-family: inherit;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sync-pulse {
+      animation: none !important;
+    }
   }
 }
