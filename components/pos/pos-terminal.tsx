@@ -597,13 +597,13 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
             <>
               <PosWholesaleBanner mode={pricingMode} customerName={customerName} />
 
-              <div className="pos-workspace">
+              <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(12rem,22%)_minmax(0,1fr)_minmax(16rem,30%)]">
                 <PosCashflowPanel
                   outletId={effectiveOutletId}
                   products={products}
-                  className="hidden min-h-0 overflow-hidden lg:flex"
+                  className="hidden h-full min-h-0 min-w-0 lg:flex lg:flex-col"
                 />
-                <section className="pos-catalog-column border-x border-border pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
+                <section className="flex min-h-0 min-w-0 flex-col overflow-hidden border-x border-border pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
                   {effectiveOutletId && (
                     <PosFavoritesRow
                       outletId={effectiveOutletId}
@@ -651,7 +651,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                     <PosCategoryChips value={categoryId} onChange={setCategoryId} />
                   </div>
 
-                  <div className="pos-scroll-area flex-1 p-3">
+                  <div className="pos-scroll-area min-h-0 flex-1 p-3">
                     {productsLoading ? (
                       <div className="flex flex-col items-center justify-center gap-3 py-20 text-muted-foreground">
                         <Loader2 className="size-8 animate-spin text-primary" />
@@ -684,14 +684,14 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                   </div>
                 </section>
 
-                <aside className="hidden min-h-0 overflow-hidden bg-muted/20 lg:block">
+                <div className="hidden h-full min-h-0 min-w-0 bg-muted/20 lg:block">
                   <PosCartPanel
                     {...cartPanelProps}
                     className="h-full"
                     checkoutDisabled={!canSell}
                     showCheckoutButton={false}
                   />
-                </aside>
+                </div>
               </div>
 
               <div
@@ -767,7 +767,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                     <PosCashflowPanel
                       outletId={effectiveOutletId}
                       products={products}
-                      className="max-h-[min(85vh,640px)]"
+                      className="h-[min(85vh,640px)] w-full border-r-0"
                     />
                   )}
                 </DialogContent>

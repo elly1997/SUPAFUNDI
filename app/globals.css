@@ -93,40 +93,6 @@
     z-index: 120 !important;
   }
 
-  .pos-cart-footer {
-    max-height: min(48vh, 22rem);
-  }
-
-  .pos-workspace {
-    display: grid;
-    min-height: 0;
-    flex: 1 1 0%;
-    overflow: hidden;
-    grid-template-columns: 1fr;
-    grid-template-rows: 1fr;
-  }
-
-  @media (min-width: 1024px) {
-    .pos-workspace {
-      grid-template-columns: minmax(220px, 24%) minmax(0, 1fr) minmax(
-          320px,
-          34%
-        );
-    }
-  }
-
-  .pos-cashflow-panel {
-    isolation: isolate;
-  }
-
-  .pos-catalog-column {
-    display: flex;
-    min-height: 0;
-    min-width: 0;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
   .app-page {
     @apply mx-auto max-w-[1600px];
   }
