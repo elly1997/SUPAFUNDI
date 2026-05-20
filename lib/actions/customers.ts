@@ -134,6 +134,8 @@ export async function createCustomer(
       return { ok: false, message: error?.message ?? "Create failed" };
     }
     revalidatePath("/customers");
+    revalidatePath("/pos");
+    revalidatePath("/finance/credit");
     return { ok: true, id: data.id };
   } catch (e) {
     return {

@@ -82,7 +82,7 @@ export function PosCartPanel({
   return (
     <div
       className={cn(
-        "pos-cart-panel grid h-full min-h-0 w-full grid-rows-[auto_minmax(8rem,1fr)_auto_auto] overflow-hidden bg-card/50",
+        "pos-cart-panel grid h-full min-h-0 w-full grid-rows-[auto_minmax(10rem,1.2fr)_auto_minmax(0,auto)] overflow-hidden bg-card/50",
         className
       )}
     >
@@ -103,7 +103,7 @@ export function PosCartPanel({
       </div>
 
       {/* Line items — primary scroll region */}
-      <div className="pos-scroll-area min-h-[8rem] border-b border-border/60 px-2 py-2">
+      <div className="pos-scroll-area min-h-[10rem] border-b border-primary/20 bg-background/30 px-2.5 py-2.5">
         {lines.length === 0 ? (
           <div className="flex h-full min-h-[8rem] flex-col items-center justify-center px-4 text-center">
             <ShoppingBag className="mb-2 size-10 text-muted-foreground/40" />
@@ -205,7 +205,7 @@ export function PosCartPanel({
       )}
 
       {/* Totals + checkout — shrink only, scroll inside panel above */}
-      <div className="pos-cart-footer shrink-0 space-y-2 overflow-y-auto border-t border-border bg-card/95 px-3 py-2.5">
+      <div className="pos-cart-footer pos-scroll-area max-h-[42vh] shrink-0 space-y-2 border-t border-border bg-card/95 px-3 py-2.5">
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
           <span className="text-muted-foreground">Subtotal</span>
           <span className="text-right font-money tabular-nums text-foreground">

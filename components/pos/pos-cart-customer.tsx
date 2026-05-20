@@ -68,6 +68,7 @@ export function PosCartCustomer({
       setNewName("");
       setNewPhone("");
       void queryClient.invalidateQueries({ queryKey: ["pos-customers"] });
+      void queryClient.invalidateQueries({ queryKey: ["customers"] });
       onCustomerIdChange(res.id);
       onCustomerSelect?.({
         id: res.id,

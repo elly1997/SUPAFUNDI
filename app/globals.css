@@ -65,6 +65,32 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #475569 #1e293b;
+  }
+
+  .pos-scroll-area::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .pos-scroll-area::-webkit-scrollbar-track {
+    background: rgb(15 23 42 / 0.85);
+    border-radius: 4px;
+  }
+
+  .pos-scroll-area::-webkit-scrollbar-thumb {
+    background: #475569;
+    border-radius: 4px;
+    border: 2px solid #1e293b;
+  }
+
+  .pos-scroll-area::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
+  }
+
+  .pos-select-popup {
+    z-index: 120 !important;
   }
 
   .pos-cart-footer {
@@ -82,11 +108,15 @@
 
   @media (min-width: 1024px) {
     .pos-workspace {
-      grid-template-columns: minmax(200px, 22%) minmax(0, 1fr) minmax(
-          300px,
-          30%
+      grid-template-columns: minmax(220px, 24%) minmax(0, 1fr) minmax(
+          320px,
+          34%
         );
     }
+  }
+
+  .pos-cashflow-panel {
+    isolation: isolate;
   }
 
   .pos-catalog-column {

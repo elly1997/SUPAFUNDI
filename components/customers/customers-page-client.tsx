@@ -45,6 +45,8 @@ export function CustomersPageClient() {
   const { data: customers = [], isLoading } = useQuery({
     queryKey: ["customers"],
     queryFn: listCustomers,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const createMut = useMutation({

@@ -67,7 +67,7 @@ export function PosExpenseCategorySelect({
           <SelectTrigger className="h-9 flex-1 rounded-lg">
             <SelectValue placeholder={isLoading ? "Loading…" : "Category"} />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="max-h-60" side="bottom" align="start">
             {categories.map((c) => (
               <SelectItem key={c.id} value={c.id}>
                 {c.label}
