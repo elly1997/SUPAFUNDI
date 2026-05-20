@@ -57,7 +57,7 @@ export const PRIMARY_NAV_TABS: NavItem[] = [
   { label: "Suppliers", href: "/suppliers", icon: Truck },
   {
     label: "Purchase orders",
-    href: "/purchase-orders",
+    href: "/inventory/purchase-orders",
     icon: ClipboardList,
     roles: ["owner", "manager", "accountant"],
   },
@@ -146,7 +146,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Suppliers", href: "/suppliers", icon: Truck },
       {
         label: "Purchase orders",
-        href: "/purchase-orders",
+        href: "/inventory/purchase-orders",
         icon: ClipboardList,
         roles: ["owner", "manager", "accountant"],
       },
@@ -161,12 +161,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Products", href: "/inventory/products", icon: Package },
       { label: "Stock", href: "/inventory/stock", icon: Warehouse },
       { label: "Receive goods", href: "/inventory/receive", icon: PackagePlus },
+      { label: "Supplier returns", href: "/inventory/returns", icon: ArrowLeftRight },
       { label: "Transfers", href: "/inventory/transfers", icon: ArrowLeftRight },
-      {
-        label: "Purchase orders",
-        href: "/purchase-orders",
-        icon: ClipboardList,
-      },
     ],
   },
   {
@@ -291,16 +287,14 @@ export function isNavItemActive(pathname: string, href: string): boolean {
   if (href === "/suppliers") {
     return pathname.startsWith("/suppliers");
   }
-  if (href === "/purchase-orders") {
-    return (
-      pathname.startsWith("/purchase-orders") ||
-      pathname.startsWith("/inventory/purchase-orders")
-    );
+  if (href === "/inventory/purchase-orders") {
+    return pathname.startsWith("/inventory/purchase-orders");
   }
   if (href === "/inventory/products") {
     return (
       pathname.startsWith("/inventory") &&
-      !pathname.startsWith("/inventory/purchase-orders")
+      !pathname.startsWith("/inventory/purchase-orders") &&
+      !pathname.startsWith("/inventory/returns")
     );
   }
   if (href === "/finance/cash-sessions") {

@@ -28,7 +28,9 @@ type Props = { poId: string };
 
 export function PurchaseOrderDetailClient({ poId }: Props) {
   const [receiveQty, setReceiveQty] = useState<Record<string, number>>({});
-  const [onAccount, setOnAccount] = useState(true);
+  const [paymentMethod, setPaymentMethod] = useState<
+    "on_account" | "cash" | "mpesa" | "bank_transfer"
+  >("on_account");
   const queryClient = useQueryClient();
 
   const { data: po, isLoading } = useQuery({
@@ -199,14 +201,26 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
             <CardTitle>Receive against PO</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                id="on-account"
-                checked={onAccount}
-                onChange={(e) => setOnAccount(e.target.checked)}
-              />
-              <Label htmlFor="on-account">On supplier account (AP)</Label>
+            <div className="space-y-2">
+              <Label>Payment on receipt</Label>
+              <select
+                className="flex h-9 w-full max-w-xs rounded-lg border border-border bg-secondary px-3 text-sm"
+                value={paymentMethod}
+                onChange={(e) =>
+                  setPaymentMethod(
+                    e.target.value as
+                      | "on_account"
+                      | "cash"
+                      | "mpesa"
+                      | "bank_transfer"
+                  )
+                }
+              >
+                <option value="on_account">On account (AP)</option>
+                <option value="cash">Cash</option>
+                <option value="mpesa">M-Pesa</option>
+                <option value="bank_transfer">Bank transfer</option>
+              </select>
             </div>
             <Button
               disabled={receiveLines.length === 0 || receiveMut.isPending}
@@ -214,7 +228,7 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
                 receiveMut.mutate({
                   poId,
                   lines: receiveLines,
-                  onAccount,
+                  paymentMethod,
                   taxRate: 18,
                 })
               }

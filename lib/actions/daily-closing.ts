@@ -129,6 +129,7 @@ export async function computeDayCashSummary(
 
   let cashExpenses = 0;
   let bankDeposits = 0;
+  let cashPurchases = 0;
   for (const e of expenses ?? []) {
     const amt = Number(e.amount);
     const cat = (e.category ?? "").toLowerCase();
@@ -143,13 +144,38 @@ export async function computeDayCashSummary(
     }
   }
 
+  const { data: cashGrns } = await supabase
+    .from("grns")
+    .select("total_amount, payment_method")
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", outletId)
+    .eq("received_date", businessDate)
+    .eq("payment_method", "cash");
+
+  for (const g of cashGrns ?? []) {
+    cashPurchases += Number(g.total_amount);
+  }
+
+  const { data: cashReturns } = await supabase
+    .from("supplier_returns")
+    .select("total_amount")
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", outletId)
+    .eq("return_date", businessDate)
+    .eq("payment_method", "cash");
+
+  for (const r of cashReturns ?? []) {
+    cashPurchases -= Number(r.total_amount);
+  }
+
   cashSales = roundMoney(cashSales);
   mpesaSales = roundMoney(mpesaSales);
   cashExpenses = roundMoney(cashExpenses);
   bankDeposits = roundMoney(bankDeposits);
+  cashPurchases = roundMoney(Math.max(0, cashPurchases));
 
   const expectedCash = roundMoney(
-    openingBalance + cashSales - cashExpenses - bankDeposits
+    openingBalance + cashSales - cashExpenses - bankDeposits - cashPurchases
   );
 
   const closingBalance =

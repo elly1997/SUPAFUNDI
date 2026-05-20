@@ -5,6 +5,20 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react", "recharts"],
   },
+  async redirects() {
+    return [
+      {
+        source: "/purchase-orders",
+        destination: "/inventory/purchase-orders",
+        permanent: true,
+      },
+      {
+        source: "/purchase-orders/:id",
+        destination: "/inventory/purchase-orders/:id",
+        permanent: true,
+      },
+    ];
+  },
   async headers() {
     return [
       {

@@ -42,6 +42,8 @@ const completeSaleInput = z.object({
     "cheque",
   ]),
   amountPaid: z.number().nonnegative(),
+  /** Apply up to this amount from customer deposit_balance */
+  depositApplied: z.number().nonnegative().optional(),
   notes: z.string().max(2000).optional(),
   /** Business date (YYYY-MM-DD); defaults to today. Used for backdated POS sales. */
   businessDate: z
@@ -199,10 +201,24 @@ export async function completeSale(
     const taxableBase = roundMoney(subtotal - discountAmount);
     const taxAmount = computeVat(taxableBase, input.taxRate);
     const totalAmount = roundMoney(taxableBase + taxAmount);
-    const balanceDue = roundMoney(Math.max(0, totalAmount - input.amountPaid));
-    const changeGiven = roundMoney(
-      Math.max(0, input.amountPaid - totalAmount)
-    );
+
+    let depositApplied = 0;
+    if (input.customerId && (input.depositApplied ?? 0) > 0) {
+      const { data: depCust } = await supabase
+        .from("customers")
+        .select("deposit_balance")
+        .eq("id", input.customerId)
+        .eq("organization_id", ctx.organizationId)
+        .maybeSingle();
+      const available = Number(depCust?.deposit_balance ?? 0);
+      depositApplied = roundMoney(
+        Math.min(available, totalAmount, input.depositApplied ?? 0)
+      );
+    }
+
+    const totalPaid = roundMoney(input.amountPaid + depositApplied);
+    const balanceDue = roundMoney(Math.max(0, totalAmount - totalPaid));
+    const changeGiven = roundMoney(Math.max(0, totalPaid - totalAmount));
 
     if (balanceDue > 0 && !input.customerId) {
       return {
@@ -270,7 +286,7 @@ export async function completeSale(
         tax_rate: input.taxRate,
         tax_amount: taxAmount,
         total_amount: totalAmount,
-        amount_paid: roundMoney(Math.min(input.amountPaid, totalAmount)),
+        amount_paid: roundMoney(Math.min(totalPaid, totalAmount)),
         change_given: changeGiven,
         balance_due: balanceDue,
         notes: input.notes?.trim() || null,
@@ -317,6 +333,25 @@ export async function completeSale(
       if (payErr) {
         await rollbackSale(supabase, sale.id, stockRollbacks);
         return { ok: false, message: payErr.message };
+      }
+    }
+
+    if (depositApplied > 0 && input.customerId) {
+      const { data: depRow } = await supabase
+        .from("customers")
+        .select("deposit_balance")
+        .eq("id", input.customerId)
+        .single();
+      const newDep = roundMoney(
+        Number(depRow?.deposit_balance ?? 0) - depositApplied
+      );
+      const { error: depErr } = await supabase
+        .from("customers")
+        .update({ deposit_balance: newDep })
+        .eq("id", input.customerId);
+      if (depErr) {
+        await rollbackSale(supabase, sale.id, stockRollbacks);
+        return { ok: false, message: depErr.message };
       }
     }
 
@@ -393,7 +428,7 @@ export async function completeSale(
     }
 
     const glPaymentMethod =
-      balanceDue > 0 && input.amountPaid === 0
+      balanceDue > 0 && totalPaid === 0
         ? ("credit_account" as const)
         : input.paymentMethod;
 
@@ -402,7 +437,7 @@ export async function completeSale(
       discountAmount,
       taxAmount,
       totalAmount,
-      amountPaid: roundMoney(Math.min(input.amountPaid, totalAmount)),
+      amountPaid: roundMoney(Math.min(totalPaid, totalAmount)),
       balanceDue,
       paymentMethod: glPaymentMethod,
       cogsAmount,

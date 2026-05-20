@@ -6,6 +6,7 @@ import { buildGrnJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { listStockLevels } from "@/lib/actions/stock";
 import { computeVat, roundMoney } from "@/lib/utils/calculations";
 import {
   formatPoReference,
@@ -36,7 +37,10 @@ const receivePoInput = z.object({
     })
   ).min(1),
   invoiceNo: z.string().max(100).optional(),
-  onAccount: z.boolean().default(true),
+  onAccount: z.boolean().optional(),
+  paymentMethod: z
+    .enum(["cash", "mpesa", "bank_transfer", "on_account"])
+    .optional(),
   taxRate: z.number().min(0).max(100).default(18),
 });
 
@@ -422,6 +426,9 @@ export async function receiveFromPurchaseOrder(
         po_id: po.id,
         reference_no: po.reference_no,
         invoice_no: input.invoiceNo?.trim() || null,
+        payment_method:
+          input.paymentMethod ??
+          (input.onAccount === false ? "cash" : "on_account"),
         subtotal: inventoryValue,
         tax_amount: taxAmount,
         total_amount: totalAmount,
@@ -523,7 +530,9 @@ export async function receiveFromPurchaseOrder(
       lines: buildGrnJournalLines({
         inventoryValue,
         taxAmount,
-        onAccount: input.onAccount,
+        paymentMethod:
+          input.paymentMethod ??
+          (input.onAccount === false ? "cash" : "on_account"),
       }),
     });
     if (!journal.ok) throw new Error(journal.message);
@@ -565,6 +574,39 @@ export async function receiveFromPurchaseOrder(
       message: e instanceof Error ? e.message : "Receive from PO failed",
     };
   }
+}
+
+/** Draft PO from low/out-of-stock items at an outlet. */
+export async function suggestPurchaseOrderFromStock(
+  outletId: string,
+  supplierId?: string | null
+): Promise<{ ok: true; poId: string } | { ok: false; message: string }> {
+  const levels = await listStockLevels(outletId);
+  const lines = levels
+    .filter(
+      (r) =>
+        r.stock_status !== "ok" &&
+        r.suggested_order_qty > 0 &&
+        r.cost_price >= 0
+    )
+    .map((r) => ({
+      productId: r.product_id,
+      orderedQty: r.suggested_order_qty,
+      unitCost: r.cost_price,
+    }));
+  if (lines.length === 0) {
+    return {
+      ok: false,
+      message: "No low or out-of-stock items need replenishment.",
+    };
+  }
+  return createPurchaseOrder({
+    outletId,
+    supplierId: supplierId ?? undefined,
+    taxRate: 18,
+    notes: "Auto-suggested from stock levels",
+    lines,
+  });
 }
 
 export async function createSupplier(

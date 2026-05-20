@@ -392,6 +392,7 @@ export type Database = {
           credit_limit: number;
           credit_days: number;
           outstanding_balance: number;
+          deposit_balance: number;
           price_type: string;
           is_active: boolean;
         };
@@ -406,6 +407,7 @@ export type Database = {
           credit_limit?: number;
           credit_days?: number;
           outstanding_balance?: number;
+          deposit_balance?: number;
           price_type?: string;
           is_active?: boolean;
         };
@@ -419,6 +421,7 @@ export type Database = {
           credit_days?: number;
           price_type?: string;
           outstanding_balance?: number;
+          deposit_balance?: number;
           is_active?: boolean;
         };
         Relationships: [];
@@ -576,6 +579,8 @@ export type Database = {
           outlet_id: string | null;
           supplier_id: string | null;
           po_id: string | null;
+          received_date: string;
+          payment_method: string;
           subtotal: number;
           tax_amount: number;
           total_amount: number;
@@ -589,6 +594,8 @@ export type Database = {
           outlet_id?: string | null;
           supplier_id?: string | null;
           po_id?: string | null;
+          received_date?: string;
+          payment_method?: string;
           subtotal?: number;
           tax_amount?: number;
           total_amount?: number;
@@ -596,6 +603,60 @@ export type Database = {
           invoice_no?: string | null;
           notes?: string | null;
           received_by?: string | null;
+        };
+        Update: {
+          payment_method?: string;
+          received_date?: string;
+        };
+        Relationships: [];
+      };
+      supplier_returns: {
+        Row: {
+          id: string;
+          organization_id: string;
+          outlet_id: string;
+          supplier_id: string | null;
+          grn_id: string | null;
+          reference_no: string | null;
+          return_date: string;
+          total_amount: number;
+          payment_method: string;
+          notes: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          outlet_id: string;
+          supplier_id?: string | null;
+          grn_id?: string | null;
+          reference_no?: string | null;
+          return_date?: string;
+          total_amount?: number;
+          payment_method?: string;
+          notes?: string | null;
+          created_by?: string | null;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      supplier_return_items: {
+        Row: {
+          id: string;
+          return_id: string;
+          product_id: string;
+          quantity: number;
+          unit_cost: number;
+          total_cost: number;
+        };
+        Insert: {
+          id?: string;
+          return_id: string;
+          product_id: string;
+          quantity: number;
+          unit_cost: number;
+          total_cost: number;
         };
         Update: Record<string, never>;
         Relationships: [];

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Loader2, PackagePlus, Plus, Trash2 } from "lucide-react";
+import { Loader2, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -16,24 +16,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { listOutletsForOrg } from "@/lib/actions/inventory";
-import { listSuppliersForOrg, receiveGoods } from "@/lib/actions/grn";
+import { listSuppliersForOrg } from "@/lib/actions/grn";
+import { createSupplierReturn } from "@/lib/actions/supplier-returns";
 import { usePosProducts } from "@/hooks/usePosProducts";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
 
-type Line = { productId: string; name: string; quantity: number; unitCost: number };
-
-export function ReceiveGoodsClient() {
+export function SupplierReturnsClient() {
   const defaultOutlet = useAuthStore((s) => s.activeOutletId);
   const [outletId, setOutletId] = useState(defaultOutlet ?? "");
   const [supplierId, setSupplierId] = useState("");
+  const [productId, setProductId] = useState("");
+  const [qty, setQty] = useState(1);
+  const [unitCost, setUnitCost] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<
     "on_account" | "cash" | "mpesa" | "bank_transfer"
   >("on_account");
-  const [lines, setLines] = useState<Line[]>([]);
-  const [pickProduct, setPickProduct] = useState("");
-  const [qty, setQty] = useState(1);
-  const [unitCost, setUnitCost] = useState(0);
 
   const { data: outlets = [] } = useQuery({
     queryKey: ["outlets"],
@@ -45,44 +43,27 @@ export function ReceiveGoodsClient() {
   });
   const { data: products = [] } = usePosProducts(outletId || null);
 
-  const receiveMut = useMutation({
-    mutationFn: receiveGoods,
+  const returnMut = useMutation({
+    mutationFn: createSupplierReturn,
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success("Goods received and posted to GL");
-        setLines([]);
+        toast.success("Return posted — stock reduced");
+        setProductId("");
+        setQty(1);
+        setUnitCost(0);
       } else toast.error(r.message);
     },
   });
-
-  const addLine = () => {
-    const p = products.find((x) => x.id === pickProduct);
-    if (!p || qty <= 0) return;
-    setLines((prev) => [
-      ...prev.filter((l) => l.productId !== p.id),
-      {
-        productId: p.id,
-        name: p.name,
-        quantity: qty,
-        unitCost: unitCost || p.costPrice,
-      },
-    ]);
-    setPickProduct("");
-    setQty(1);
-    setUnitCost(0);
-  };
-
-  const subtotal = lines.reduce((s, l) => s + l.quantity * l.unitCost, 0);
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <PackagePlus className="h-5 w-5" />
-          Receive goods (GRN)
+          <Undo2 className="size-5" />
+          Return goods to supplier
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-2">
             <Label>Outlet</Label>
@@ -103,7 +84,7 @@ export function ReceiveGoodsClient() {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Supplier (optional)</Label>
+            <Label>Supplier</Label>
             <Select
               value={supplierId || "__none__"}
               onValueChange={(v) =>
@@ -111,7 +92,7 @@ export function ReceiveGoodsClient() {
               }
             >
               <SelectTrigger>
-                <SelectValue placeholder="None" />
+                <SelectValue placeholder="Optional" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none__">None</SelectItem>
@@ -124,7 +105,7 @@ export function ReceiveGoodsClient() {
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Payment</Label>
+            <Label>Settlement</Label>
             <Select
               value={paymentMethod}
               onValueChange={(v) =>
@@ -137,10 +118,10 @@ export function ReceiveGoodsClient() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="on_account">On account (AP)</SelectItem>
-                <SelectItem value="cash">Cash</SelectItem>
-                <SelectItem value="mpesa">M-Pesa</SelectItem>
-                <SelectItem value="bank_transfer">Bank transfer</SelectItem>
+                <SelectItem value="on_account">Reduce AP</SelectItem>
+                <SelectItem value="cash">Cash refund</SelectItem>
+                <SelectItem value="mpesa">M-Pesa refund</SelectItem>
+                <SelectItem value="bank_transfer">Bank refund</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -150,8 +131,8 @@ export function ReceiveGoodsClient() {
           <div className="min-w-[200px] flex-1 space-y-1">
             <Label>Product</Label>
             <Select
-              value={pickProduct}
-              onValueChange={(v) => setPickProduct(v ?? "")}
+              value={productId}
+              onValueChange={(v) => setProductId(v ?? "")}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Select product" />
@@ -186,63 +167,32 @@ export function ReceiveGoodsClient() {
               onChange={(e) => setUnitCost(Number(e.target.value))}
             />
           </div>
-          <Button type="button" variant="secondary" onClick={addLine}>
-            <Plus className="mr-1 h-4 w-4" />
-            Add
-          </Button>
         </div>
 
-        {lines.length > 0 && (
-          <ul className="space-y-2 text-sm">
-            {lines.map((l) => (
-              <li
-                key={l.productId}
-                className="flex items-center justify-between rounded border px-3 py-2"
-              >
-                <span>
-                  {l.name} × {l.quantity} @ {formatTzs(l.unitCost)}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() =>
-                    setLines((prev) =>
-                      prev.filter((x) => x.productId !== l.productId)
-                    )
-                  }
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </li>
-            ))}
-            <p className="font-semibold">Subtotal: {formatTzs(subtotal)}</p>
-          </ul>
+        {productId && qty > 0 && (
+          <p className="text-sm text-muted-foreground">
+            Return value: {formatTzs(qty * unitCost)}
+          </p>
         )}
 
         <Button
-          disabled={!outletId || lines.length === 0 || receiveMut.isPending}
+          disabled={!outletId || !productId || returnMut.isPending}
           onClick={() =>
-            receiveMut.mutate({
+            returnMut.mutate({
               outletId,
               supplierId: supplierId || null,
               paymentMethod,
-              taxRate: 18,
-              lines: lines.map((l) => ({
-                productId: l.productId,
-                quantity: l.quantity,
-                unitCost: l.unitCost,
-              })),
+              lines: [{ productId, quantity: qty, unitCost }],
             })
           }
         >
-          {receiveMut.isPending ? (
+          {returnMut.isPending ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               Posting…
             </>
           ) : (
-            "Receive & post to GL"
+            "Post return"
           )}
         </Button>
       </CardContent>

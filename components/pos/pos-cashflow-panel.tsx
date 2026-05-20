@@ -285,7 +285,7 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
               stockMut.mutate({
                 outletId,
                 supplierId: supplierId || null,
-                onAccount: !paidCash,
+                paymentMethod: paidCash ? "cash" : "on_account",
                 taxRate: 18,
                 lines: [{ productId, quantity: qty, unitCost: cost }],
                 notes: description || undefined,

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { roundMoney } from "@/lib/utils/calculations";
 
 const customerInput = z.object({
   name: z.string().min(1).max(200),
@@ -25,6 +26,7 @@ export type CustomerListRow = {
   customer_type: string;
   credit_limit: number;
   outstanding_balance: number;
+  deposit_balance: number;
   is_active: boolean;
 };
 
@@ -34,7 +36,7 @@ export async function listCustomers(): Promise<CustomerListRow[]> {
   const { data, error } = await supabase
     .from("customers")
     .select(
-      "id, name, phone, customer_type, credit_limit, outstanding_balance, is_active"
+      "id, name, phone, customer_type, credit_limit, outstanding_balance, deposit_balance, is_active"
     )
     .eq("organization_id", ctx.organizationId)
     .order("name");
@@ -46,8 +48,63 @@ export async function listCustomers(): Promise<CustomerListRow[]> {
     customer_type: c.customer_type,
     credit_limit: Number(c.credit_limit),
     outstanding_balance: Number(c.outstanding_balance),
+    deposit_balance: Number(c.deposit_balance ?? 0),
     is_active: c.is_active,
   }));
+}
+
+const depositInput = z.object({
+  customerId: z.string().uuid(),
+  outletId: z.string().uuid(),
+  amount: z.number().positive(),
+  paymentMethod: z.enum(["cash", "mpesa", "bank_transfer"]),
+  notes: z.string().max(500).optional(),
+});
+
+export async function recordCustomerDeposit(
+  raw: z.infer<typeof depositInput>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const input = depositInput.parse(raw);
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const { data: customer } = await supabase
+      .from("customers")
+      .select("deposit_balance, name")
+      .eq("id", input.customerId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!customer) return { ok: false, message: "Customer not found." };
+
+    const newBalance = roundMoney(
+      Number(customer.deposit_balance ?? 0) + input.amount
+    );
+    const { error: updErr } = await supabase
+      .from("customers")
+      .update({ deposit_balance: newBalance })
+      .eq("id", input.customerId);
+    if (updErr) return { ok: false, message: updErr.message };
+
+    await supabase.from("payments").insert({
+      organization_id: ctx.organizationId,
+      outlet_id: input.outletId,
+      payment_method: input.paymentMethod,
+      amount: input.amount,
+      reference_no: input.notes?.trim() || `DEP-${customer.name}`,
+      status: "completed",
+      received_by: ctx.userId,
+    });
+
+    revalidatePath("/customers");
+    revalidatePath(`/customers/${input.customerId}`);
+    revalidatePath("/finance/credit");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Deposit failed",
+    };
+  }
 }
 
 export async function createCustomer(
@@ -144,7 +201,7 @@ export async function getCustomerById(
   const { data: c, error } = await supabase
     .from("customers")
     .select(
-      "id, name, phone, email, address, customer_type, credit_limit, credit_days, outstanding_balance, price_type, is_active"
+      "id, name, phone, email, address, customer_type, credit_limit, credit_days, outstanding_balance, deposit_balance, price_type, is_active"
     )
     .eq("id", id)
     .eq("organization_id", ctx.organizationId)
@@ -168,6 +225,7 @@ export async function getCustomerById(
     credit_limit: Number(c.credit_limit),
     credit_days: c.credit_days,
     outstanding_balance: Number(c.outstanding_balance),
+    deposit_balance: Number(c.deposit_balance ?? 0),
     price_type: c.price_type,
     is_active: c.is_active,
     recentSales: (sales ?? []).map((s) => ({

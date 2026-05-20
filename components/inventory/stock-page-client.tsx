@@ -1,7 +1,11 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, ClipboardList, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -11,32 +15,83 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { listStockLevels } from "@/lib/actions/stock";
+import { suggestPurchaseOrderFromStock } from "@/lib/actions/purchase-orders";
+import { listStockLevels, type StockStatus } from "@/lib/actions/stock";
+import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
 
+const statusLabel: Record<StockStatus, string> = {
+  out_of_stock: "Out of stock",
+  low: "Low",
+  ok: "OK",
+};
+
+const statusClass: Record<StockStatus, string> = {
+  out_of_stock: "bg-destructive/15 text-destructive",
+  low: "bg-warning/15 text-warning",
+  ok: "bg-inflow/15 text-inflow",
+};
+
 export function StockPageClient() {
   const outletId = useAuthStore((s) => s.activeOutletId);
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["stock-levels", outletId],
     queryFn: () => listStockLevels(outletId),
   });
 
-  const lowStock = rows.filter((r) => r.needs_reorder);
+  const suggestMut = useMutation({
+    mutationFn: () => {
+      if (!outletId) throw new Error("Select an outlet");
+      return suggestPurchaseOrderFromStock(outletId);
+    },
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Draft purchase order created");
+        queryClient.invalidateQueries({ queryKey: ["purchase-orders"] });
+        router.push(`/inventory/purchase-orders/${r.poId}`);
+      } else toast.error(r.message);
+    },
+  });
+
+  const lowStock = rows.filter((r) => r.stock_status !== "ok");
 
   return (
     <div className="space-y-4">
       {lowStock.length > 0 && (
-        <Card className="border-amber-200 bg-amber-50/50">
-          <CardContent className="flex items-center gap-2 py-3 text-sm text-amber-800">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            {lowStock.length} product(s) at or below reorder point
+        <Card className="border-warning/30 bg-warning/5">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
+            <span className="flex items-center gap-2 text-warning">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {lowStock.length} product(s) need attention
+            </span>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!outletId || suggestMut.isPending}
+              onClick={() => suggestMut.mutate()}
+            >
+              {suggestMut.isPending ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <ClipboardList className="mr-2 h-4 w-4" />
+              )}
+              Suggest purchase order
+            </Button>
           </CardContent>
         </Card>
       )}
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Stock on hand</CardTitle>
+          <Link
+            href="/inventory/receive"
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            Receive goods
+          </Link>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -51,30 +106,44 @@ export function StockPageClient() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Outlet</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead>SKU</TableHead>
                   <TableHead>Product</TableHead>
                   <TableHead className="text-right">Qty</TableHead>
-                  <TableHead className="text-right">Cost</TableHead>
+                  <TableHead className="text-right">Avg/day</TableHead>
+                  <TableHead className="text-right">Cover (days)</TableHead>
+                  <TableHead className="text-right">Suggest order</TableHead>
                   <TableHead className="text-right">Value</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((r) => (
-                  <TableRow
-                    key={`${r.outlet_id}-${r.product_id}`}
-                    className={r.needs_reorder ? "bg-amber-50/40" : undefined}
-                  >
-                    <TableCell>{r.outlet_name}</TableCell>
+                  <TableRow key={`${r.outlet_id}-${r.product_id}`}>
+                    <TableCell>
+                      <span
+                        className={cn(
+                          "rounded px-1.5 py-0.5 text-xs font-medium",
+                          statusClass[r.stock_status]
+                        )}
+                      >
+                        {statusLabel[r.stock_status]}
+                      </span>
+                    </TableCell>
                     <TableCell>{r.code ?? "—"}</TableCell>
                     <TableCell>{r.product_name}</TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right font-money">
                       {r.quantity} {r.unit}
                     </TableCell>
-                    <TableCell className="text-right">
-                      {formatTzs(r.cost_price)}
+                    <TableCell className="text-right font-money text-muted-foreground">
+                      {r.avg_daily_sales}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right text-muted-foreground">
+                      {r.days_of_cover ?? "—"}
+                    </TableCell>
+                    <TableCell className="text-right font-money">
+                      {r.suggested_order_qty > 0 ? r.suggested_order_qty : "—"}
+                    </TableCell>
+                    <TableCell className="text-right font-money">
                       {formatTzs(r.stock_value)}
                     </TableCell>
                   </TableRow>

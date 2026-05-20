@@ -52,6 +52,8 @@ export type SaleDocumentRow = {
   amount_paid: number;
   balance_due: number;
   customer_name: string | null;
+  due_date: string | null;
+  is_overdue: boolean;
 };
 
 async function generateDocumentNo(
@@ -86,6 +88,7 @@ async function generateDocumentNo(
 export async function listSaleDocuments(options?: {
   saleTypes?: SaleDocumentType[];
   status?: string[];
+  balanceDueMin?: number;
   limit?: number;
 }): Promise<SaleDocumentRow[]> {
   const ctx = await requireOrgContext();
@@ -104,6 +107,9 @@ export async function listSaleDocuments(options?: {
   }
   if (options?.status?.length) {
     query = query.in("status", options.status);
+  }
+  if (options?.balanceDueMin != null) {
+    query = query.gte("balance_due", options.balanceDueMin);
   }
 
   const { data, error } = await query;
@@ -124,19 +130,41 @@ export async function listSaleDocuments(options?: {
     }
   }
 
-  return rows.map((row) => ({
-    id: row.id,
-    invoice_no: row.invoice_no,
-    sale_type: row.sale_type,
-    status: row.status,
-    sale_date: row.sale_date,
-    total_amount: Number(row.total_amount),
-    amount_paid: Number(row.amount_paid),
-    balance_due: Number(row.balance_due),
-    customer_name: row.customer_id
-      ? (customerNames.get(row.customer_id) ?? null)
-      : null,
-  }));
+  const saleIds = rows.map((r) => r.id);
+  const dueBySale = new Map<string, string>();
+  if (saleIds.length > 0) {
+    const { data: ledger } = await supabase
+      .from("credit_ledger")
+      .select("reference_id, due_date")
+      .eq("organization_id", ctx.organizationId)
+      .eq("entry_type", "invoice")
+      .in("reference_id", saleIds);
+    for (const e of ledger ?? []) {
+      if (e.reference_id && e.due_date) {
+        dueBySale.set(e.reference_id, e.due_date);
+      }
+    }
+  }
+  const today = new Date().toISOString().slice(0, 10);
+
+  return rows.map((row) => {
+    const dueDate = dueBySale.get(row.id) ?? null;
+    return {
+      id: row.id,
+      invoice_no: row.invoice_no,
+      sale_type: row.sale_type,
+      status: row.status,
+      sale_date: row.sale_date,
+      total_amount: Number(row.total_amount),
+      amount_paid: Number(row.amount_paid),
+      balance_due: Number(row.balance_due),
+      customer_name: row.customer_id
+        ? (customerNames.get(row.customer_id) ?? null)
+        : null,
+      due_date: dueDate,
+      is_overdue: !!dueDate && dueDate < today && Number(row.balance_due) > 0,
+    };
+  });
 }
 
 export async function createDraftSaleDocument(

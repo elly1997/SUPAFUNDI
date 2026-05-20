@@ -106,14 +106,38 @@ export function buildSaleJournalLines(input: SalePostingInput): JournalLineInput
   return lines;
 }
 
+export type PurchasePaymentMethod =
+  | "cash"
+  | "mpesa"
+  | "bank_transfer"
+  | "on_account";
+
 export type GrnPostingInput = {
   inventoryValue: number;
   taxAmount: number;
-  onAccount: boolean;
+  /** @deprecated use paymentMethod */
+  onAccount?: boolean;
+  paymentMethod?: PurchasePaymentMethod;
 };
 
-/** Goods received — inventory up; AP or cash depending on terms. */
+function purchaseCreditAccount(method: PurchasePaymentMethod): string {
+  switch (method) {
+    case "mpesa":
+      return SYSTEM_ACCOUNT_CODES.mpesa;
+    case "bank_transfer":
+      return SYSTEM_ACCOUNT_CODES.bank;
+    case "on_account":
+      return SYSTEM_ACCOUNT_CODES.ap;
+    default:
+      return SYSTEM_ACCOUNT_CODES.cash;
+  }
+}
+
+/** Goods received — inventory up; AP or cash/mpesa/bank depending on payment. */
 export function buildGrnJournalLines(input: GrnPostingInput): JournalLineInput[] {
+  const method: PurchasePaymentMethod =
+    input.paymentMethod ??
+    (input.onAccount === false ? "cash" : "on_account");
   const lines: JournalLineInput[] = [
     {
       accountCode: SYSTEM_ACCOUNT_CODES.inventory,
@@ -132,12 +156,40 @@ export function buildGrnJournalLines(input: GrnPostingInput): JournalLineInput[]
   }
   const creditTotal = input.inventoryValue + input.taxAmount;
   lines.push({
-    accountCode: input.onAccount ? SYSTEM_ACCOUNT_CODES.ap : SYSTEM_ACCOUNT_CODES.cash,
+    accountCode: purchaseCreditAccount(method),
     debit: 0,
     credit: creditTotal,
-    memo: input.onAccount ? "Supplier bill (AP)" : "Cash purchase",
+    memo:
+      method === "on_account"
+        ? "Supplier bill (AP)"
+        : `Purchase paid (${method})`,
   });
   return lines;
+}
+
+/** Supplier return — reverse inventory; reduce AP or refund cash account. */
+export function buildSupplierReturnJournalLines(input: {
+  inventoryValue: number;
+  paymentMethod: PurchasePaymentMethod;
+}): JournalLineInput[] {
+  const creditAccount = purchaseCreditAccount(input.paymentMethod);
+  return [
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.inventory,
+      debit: 0,
+      credit: input.inventoryValue,
+      memo: "Stock returned to supplier",
+    },
+    {
+      accountCode: creditAccount,
+      debit: input.inventoryValue,
+      credit: 0,
+      memo:
+        input.paymentMethod === "on_account"
+          ? "Reduce supplier AP"
+          : "Purchase refund",
+    },
+  ];
 }
 
 export type ExpensePostingInput = {

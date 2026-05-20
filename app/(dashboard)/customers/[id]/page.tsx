@@ -10,6 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { CustomerDepositForm } from "@/components/customers/customer-deposit-form";
 import { getCustomerById } from "@/lib/actions/customers";
 import { cn } from "@/lib/utils";
 import { formatTzs, formatDateTimeEAT } from "@/lib/utils/currency";
@@ -35,7 +36,7 @@ export default async function CustomerDetailPage({ params }: Props) {
         </Link>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Credit limit</CardTitle>
@@ -48,8 +49,16 @@ export default async function CustomerDetailPage({ params }: Props) {
           <CardHeader>
             <CardTitle className="text-base">Outstanding</CardTitle>
           </CardHeader>
-          <CardContent className="text-xl font-semibold text-amber-700">
+          <CardContent className="text-xl font-semibold text-warning">
             {formatTzs(customer.outstanding_balance)}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Deposit balance</CardTitle>
+          </CardHeader>
+          <CardContent className="font-money text-xl font-semibold text-inflow">
+            {formatTzs(customer.deposit_balance)}
           </CardContent>
         </Card>
         <Card>
@@ -61,6 +70,18 @@ export default async function CustomerDetailPage({ params }: Props) {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Record deposit</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CustomerDepositForm
+            customerId={customer.id}
+            customerName={customer.name}
+          />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

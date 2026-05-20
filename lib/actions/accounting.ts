@@ -86,6 +86,7 @@ type PostJournalParams = {
     | "expense"
     | "supplier_bill"
     | "supplier_payment"
+    | "supplier_return"
     | "stock_adjustment"
     | "manual";
   sourceId?: string;

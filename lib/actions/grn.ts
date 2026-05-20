@@ -14,16 +14,33 @@ const grnLineInput = z.object({
   unitCost: z.number().nonnegative(),
 });
 
+const purchasePaymentMethod = z.enum([
+  "cash",
+  "mpesa",
+  "bank_transfer",
+  "on_account",
+]);
+
 const receiveGoodsInput = z.object({
   outletId: z.string().uuid(),
   supplierId: z.string().uuid().nullable().optional(),
   referenceNo: z.string().max(100).optional(),
   invoiceNo: z.string().max(100).optional(),
   taxRate: z.number().min(0).max(100).default(18),
-  onAccount: z.boolean().default(true),
+  /** Legacy: false = cash */
+  onAccount: z.boolean().optional(),
+  paymentMethod: purchasePaymentMethod.optional(),
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   notes: z.string().max(2000).optional(),
   lines: z.array(grnLineInput).min(1),
 });
+
+function resolvePurchasePayment(
+  input: z.infer<typeof receiveGoodsInput>
+): z.infer<typeof purchasePaymentMethod> {
+  if (input.paymentMethod) return input.paymentMethod;
+  return input.onAccount === false ? "cash" : "on_account";
+}
 
 export type ReceiveGoodsInput = z.infer<typeof receiveGoodsInput>;
 
@@ -69,6 +86,10 @@ export async function receiveGoods(
     const taxAmount = computeVat(inventoryValue, input.taxRate);
     const totalAmount = roundMoney(inventoryValue + taxAmount);
 
+    const paymentMethod = resolvePurchasePayment(input);
+    const receivedDate =
+      input.businessDate ?? new Date().toISOString().slice(0, 10);
+
     const { data: grn, error: grnErr } = await supabase
       .from("grns")
       .insert({
@@ -77,6 +98,8 @@ export async function receiveGoods(
         supplier_id: input.supplierId ?? null,
         reference_no: input.referenceNo?.trim() || null,
         invoice_no: input.invoiceNo?.trim() || null,
+        received_date: receivedDate,
+        payment_method: paymentMethod,
         subtotal: inventoryValue,
         tax_amount: taxAmount,
         total_amount: totalAmount,
@@ -173,10 +196,11 @@ export async function receiveGoods(
       sourceType: "grn",
       sourceId: grn.id,
       outletId: input.outletId,
+      entryDate: receivedDate,
       lines: buildGrnJournalLines({
         inventoryValue,
         taxAmount,
-        onAccount: input.onAccount,
+        paymentMethod,
       }),
     });
     if (!journal.ok) {
@@ -186,6 +210,7 @@ export async function receiveGoods(
     revalidatePath("/inventory/stock");
     revalidatePath("/inventory/receive");
     revalidatePath("/inventory/products");
+    revalidatePath("/daily-closing");
     return { ok: true, grnId: grn.id };
   } catch (e) {
     if (grnId) {

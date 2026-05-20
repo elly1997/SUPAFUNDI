@@ -34,12 +34,15 @@ export function InvoicesPageClient() {
   const queryClient = useQueryClient();
 
   const tabConfig = INVOICE_TAB_TYPES.find((t) => t.id === tab)!;
+  const balanceDueMin =
+    "balanceDueMin" in tabConfig ? tabConfig.balanceDueMin : undefined;
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["sale-documents", tab],
     queryFn: () =>
       listSaleDocuments({
         saleTypes: [...tabConfig.types],
+        balanceDueMin,
         limit: 100,
       }),
   });
@@ -61,7 +64,8 @@ export function InvoicesPageClient() {
     },
   });
 
-  const canCreate = tab !== "invoices";
+  const canCreate = tab !== "invoices" && tab !== "credit";
+  const showDue = tab === "credit" || tab === "invoices";
 
   return (
     <div className="space-y-6">
@@ -155,8 +159,9 @@ export function InvoicesPageClient() {
                   <TableHead>Customer</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Status</TableHead>
+                  {showDue ? <TableHead>Due date</TableHead> : null}
                   <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="text-right">Due</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
                   <TableHead />
                 </TableRow>
               </TableHeader>
@@ -186,12 +191,18 @@ export function InvoicesPageClient() {
                           row.status === "completed" &&
                             "bg-inflow/15 text-inflow",
                           row.status === "cancelled" &&
-                            "bg-muted text-muted-foreground"
+                            "bg-muted text-muted-foreground",
+                          row.is_overdue && "bg-destructive/15 text-destructive"
                         )}
                       >
-                        {row.status}
+                        {row.is_overdue ? "overdue" : row.status}
                       </span>
                     </TableCell>
+                    {showDue ? (
+                      <TableCell className="text-xs text-muted-foreground">
+                        {row.due_date ?? "—"}
+                      </TableCell>
+                    ) : null}
                     <TableCell className="text-right font-money">
                       {formatTzs(row.total_amount)}
                     </TableCell>
