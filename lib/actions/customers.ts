@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { buildCustomerDepositJournalLines } from "@/lib/accounting/posting-rules";
+import { postJournalEntry } from "@/lib/actions/accounting";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
@@ -85,15 +87,45 @@ export async function recordCustomerDeposit(
       .eq("id", input.customerId);
     if (updErr) return { ok: false, message: updErr.message };
 
-    await supabase.from("payments").insert({
-      organization_id: ctx.organizationId,
-      outlet_id: input.outletId,
-      payment_method: input.paymentMethod,
-      amount: input.amount,
-      reference_no: input.notes?.trim() || `DEP-${customer.name}`,
-      status: "completed",
-      received_by: ctx.userId,
+    const { data: payment, error: payErr } = await supabase
+      .from("payments")
+      .insert({
+        organization_id: ctx.organizationId,
+        outlet_id: input.outletId,
+        payment_method: input.paymentMethod,
+        amount: input.amount,
+        reference_no: input.notes?.trim() || `DEP-${customer.name}`,
+        status: "completed",
+        received_by: ctx.userId,
+      })
+      .select("id")
+      .single();
+    if (payErr) {
+      await supabase
+        .from("customers")
+        .update({ deposit_balance: Number(customer.deposit_balance ?? 0) })
+        .eq("id", input.customerId);
+      return { ok: false, message: payErr.message };
+    }
+
+    const journal = await postJournalEntry({
+      description: `Customer deposit — ${customer.name}`,
+      sourceType: "payment",
+      sourceId: payment?.id,
+      outletId: input.outletId,
+      lines: buildCustomerDepositJournalLines(
+        input.amount,
+        input.paymentMethod
+      ),
     });
+    if (!journal.ok) {
+      await supabase.from("payments").delete().eq("id", payment?.id);
+      await supabase
+        .from("customers")
+        .update({ deposit_balance: Number(customer.deposit_balance ?? 0) })
+        .eq("id", input.customerId);
+      return { ok: false, message: journal.message };
+    }
 
     revalidatePath("/customers");
     revalidatePath(`/customers/${input.customerId}`);

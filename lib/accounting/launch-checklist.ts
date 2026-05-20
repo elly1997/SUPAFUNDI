@@ -52,7 +52,7 @@ export const LAUNCH_CHECKLIST: LaunchCheckItem[] = [
     area: "General ledger",
     quickBooksFeature: "Automatic journal from transactions",
     status: "done",
-    notes: "Sales, GRN, expenses, and customer payments post to GL",
+    notes: "Sales (incl. deposits), GRN, expenses, deposits, voids, cash variance post to GL",
     launchBlocker: false,
   },
   {
@@ -100,7 +100,7 @@ export const LAUNCH_CHECKLIST: LaunchCheckItem[] = [
     area: "Reports",
     quickBooksFeature: "P&L, Balance Sheet, Trial Balance",
     status: "partial",
-    notes: "Trial balance + P&L from GL; balance sheet export pending",
+    notes: "Trial balance, P&L, and balance sheet from GL; export/print pending",
     launchBlocker: false,
   },
   {

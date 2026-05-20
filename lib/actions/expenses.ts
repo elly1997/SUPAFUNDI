@@ -2,19 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { resolveExpenseAccountCode } from "@/lib/accounting/expense-coa";
 import { buildExpenseJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-
-const EXPENSE_ACCOUNT_MAP: Record<string, string> = {
-  rent: "6000",
-  utilities: "6010",
-  wages: "6020",
-  bank: "6030",
-  misc: "6040",
-  stock: "6040",
-};
 
 const recordExpenseInput = z.object({
   outletId: z.string().uuid().nullable().optional(),
@@ -81,9 +73,7 @@ export async function recordExpense(
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
 
-    const categoryKey = input.category.trim().toLowerCase();
-    const accountCode =
-      EXPENSE_ACCOUNT_MAP[categoryKey] ?? EXPENSE_ACCOUNT_MAP.misc;
+    const accountCode = await resolveExpenseAccountCode(input.category);
 
     const { data: expense, error: expErr } = await supabase
       .from("expenses")

@@ -19,6 +19,7 @@ export const DEFAULT_HARDWARE_COA: CoaTemplateRow[] = [
   { code: "1200", name: "Inventory Asset", account_type: "asset", account_subtype: "inventory", normal_balance: "debit", is_system: true },
   { code: "1300", name: "VAT Input (Purchases)", account_type: "asset", account_subtype: "tax", normal_balance: "debit", is_system: true },
   { code: "2000", name: "Accounts Payable", account_type: "liability", account_subtype: "ap", normal_balance: "credit", is_system: true },
+  { code: "2050", name: "Customer Deposits", account_type: "liability", account_subtype: "deposits", normal_balance: "credit", is_system: true },
   { code: "2100", name: "VAT Output (Sales)", account_type: "liability", account_subtype: "tax", normal_balance: "credit", is_system: true },
   { code: "3000", name: "Owner's Equity", account_type: "equity", account_subtype: "equity", normal_balance: "credit", is_system: true },
   { code: "3100", name: "Retained Earnings", account_type: "equity", account_subtype: "equity", normal_balance: "credit", is_system: true },
@@ -30,6 +31,7 @@ export const DEFAULT_HARDWARE_COA: CoaTemplateRow[] = [
   { code: "6020", name: "Wages & Salaries", account_type: "expense", account_subtype: "payroll", normal_balance: "debit", is_system: false },
   { code: "6030", name: "Bank Charges", account_type: "expense", account_subtype: "opex", normal_balance: "debit", is_system: false },
   { code: "6040", name: "Miscellaneous Expense", account_type: "expense", account_subtype: "opex", normal_balance: "debit", is_system: false },
+  { code: "6050", name: "Cash Over / Short", account_type: "expense", account_subtype: "cash_variance", normal_balance: "debit", is_system: true },
 ];
 
 /** System account codes used by automated posting rules. */
@@ -41,7 +43,9 @@ export const SYSTEM_ACCOUNT_CODES = {
   inventory: "1200",
   vatInput: "1300",
   ap: "2000",
+  customerDeposits: "2050",
   vatOutput: "2100",
+  cashOverShort: "6050",
   salesRevenue: "4000",
   salesDiscount: "4100",
   cogs: "5000",

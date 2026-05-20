@@ -3,9 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import {
+  buildReversingJournalLines,
   buildSaleJournalLines,
+  type JournalLineInput,
 } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { requireManagerContext } from "@/lib/server/require-manager";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
@@ -287,6 +290,7 @@ export async function completeSale(
         tax_amount: taxAmount,
         total_amount: totalAmount,
         amount_paid: roundMoney(Math.min(totalPaid, totalAmount)),
+        deposit_applied: depositApplied,
         change_given: changeGiven,
         balance_due: balanceDue,
         notes: input.notes?.trim() || null,
@@ -432,12 +436,15 @@ export async function completeSale(
         ? ("credit_account" as const)
         : input.paymentMethod;
 
+    const cashAmountPaid = roundMoney(Math.min(input.amountPaid, totalAmount));
+
     const journalLines = buildSaleJournalLines({
       subtotal,
       discountAmount,
       taxAmount,
       totalAmount,
-      amountPaid: roundMoney(Math.min(totalPaid, totalAmount)),
+      cashAmountPaid,
+      depositApplied,
       balanceDue,
       paymentMethod: glPaymentMethod,
       cogsAmount,
@@ -658,6 +665,183 @@ export type PosCustomer = {
   credit_limit: number;
   price_type: string;
 };
+
+async function loadSaleJournalLines(
+  supabase: Supabase,
+  saleId: string
+): Promise<JournalLineInput[]> {
+  const { data: entry } = await supabase
+    .from("journal_entries")
+    .select("id")
+    .eq("source_id", saleId)
+    .eq("source_type", "sale")
+    .eq("is_reversal", false)
+    .maybeSingle();
+  if (!entry) return [];
+
+  const { data: lines } = await supabase
+    .from("journal_entry_lines")
+    .select("debit, credit, account_id")
+    .eq("journal_entry_id", entry.id);
+  if (!lines?.length) return [];
+
+  const accountIds = Array.from(new Set(lines.map((l) => l.account_id)));
+  const { data: accounts } = await supabase
+    .from("chart_of_accounts")
+    .select("id, code")
+    .in("id", accountIds);
+  const codeById = new Map((accounts ?? []).map((a) => [a.id, a.code]));
+
+  return lines
+    .map((l) => {
+      const code = codeById.get(l.account_id);
+      if (!code) return null;
+      return {
+        accountCode: code,
+        debit: Number(l.debit),
+        credit: Number(l.credit),
+      };
+    })
+    .filter((l): l is JournalLineInput => l !== null);
+}
+
+/** Void a completed sale: reverse GL, restore stock, reverse AR/deposit effects. */
+export async function voidSale(
+  saleId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await requireManagerContext();
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: sale } = await supabase
+      .from("sales")
+      .select(
+        "id, invoice_no, status, outlet_id, customer_id, balance_due, deposit_applied"
+      )
+      .eq("id", saleId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!sale) return { ok: false, message: "Sale not found." };
+    if (sale.status !== "completed") {
+      return { ok: false, message: "Only completed sales can be voided." };
+    }
+
+    const { data: items } = await supabase
+      .from("sale_items")
+      .select("product_id, quantity")
+      .eq("sale_id", saleId);
+    if (!items?.length) {
+      return { ok: false, message: "Sale has no line items." };
+    }
+
+    const originalLines = await loadSaleJournalLines(supabase, saleId);
+    if (originalLines.length > 0) {
+      const reverseLines = buildReversingJournalLines(originalLines);
+      const journal = await postJournalEntry({
+        description: `Void sale ${sale.invoice_no}`,
+        sourceType: "sale_return",
+        sourceId: saleId,
+        outletId: sale.outlet_id ?? undefined,
+        lines: reverseLines,
+      });
+      if (!journal.ok) {
+        return { ok: false, message: journal.message };
+      }
+    }
+
+    for (const line of items) {
+      if (!line.product_id || !sale.outlet_id) continue;
+      const { data: stock } = await supabase
+        .from("stock")
+        .select("id, quantity")
+        .eq("outlet_id", sale.outlet_id)
+        .eq("product_id", line.product_id)
+        .maybeSingle();
+      const qty = Number(line.quantity);
+      if (stock?.id) {
+        await supabase
+          .from("stock")
+          .update({ quantity: roundMoney(Number(stock.quantity) + qty) })
+          .eq("id", stock.id);
+      }
+      await supabase.from("stock_movements").insert({
+        organization_id: ctx.organizationId,
+        outlet_id: sale.outlet_id,
+        product_id: line.product_id,
+        movement_type: "return_in",
+        quantity: qty,
+        reference_id: saleId,
+        reference_type: "sale_void",
+        notes: `Void ${sale.invoice_no}`,
+        created_by: ctx.userId,
+      });
+    }
+
+    const balanceDue = Number(sale.balance_due);
+    if (balanceDue > 0 && sale.customer_id) {
+      const { data: customer } = await supabase
+        .from("customers")
+        .select("outstanding_balance")
+        .eq("id", sale.customer_id)
+        .single();
+      const restored = roundMoney(
+        Math.max(0, Number(customer?.outstanding_balance ?? 0) - balanceDue)
+      );
+      await supabase
+        .from("customers")
+        .update({ outstanding_balance: restored })
+        .eq("id", sale.customer_id);
+      await supabase.from("credit_ledger").insert({
+        organization_id: ctx.organizationId,
+        customer_id: sale.customer_id,
+        entry_type: "credit_note",
+        reference_id: saleId,
+        reference_type: "sale_void",
+        debit: 0,
+        credit: balanceDue,
+        balance: restored,
+        description: `Void ${sale.invoice_no}`,
+        created_by: ctx.userId,
+      });
+    }
+
+    const depositApplied = Number(sale.deposit_applied ?? 0);
+    if (depositApplied > 0 && sale.customer_id) {
+      const { data: customer } = await supabase
+        .from("customers")
+        .select("deposit_balance")
+        .eq("id", sale.customer_id)
+        .single();
+      await supabase
+        .from("customers")
+        .update({
+          deposit_balance: roundMoney(
+            Number(customer?.deposit_balance ?? 0) + depositApplied
+          ),
+        })
+        .eq("id", sale.customer_id);
+    }
+
+    await supabase
+      .from("sales")
+      .update({ status: "cancelled" })
+      .eq("id", saleId);
+
+    revalidatePath("/sales");
+    revalidatePath(`/sales/${saleId}`);
+    revalidatePath("/pos");
+    revalidatePath("/inventory/stock");
+    revalidatePath("/finance/credit");
+    revalidatePath("/reports");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Void sale failed",
+    };
+  }
+}
 
 export async function listCustomersForPos(): Promise<PosCustomer[]> {
   const ctx = await requireOrgContext();

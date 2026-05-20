@@ -41,7 +41,7 @@ export function FinancialReports({ fromDate, toDate }: FinancialReportsProps) {
   }
   if (!data) return null;
 
-  const { trialBalance, profitAndLoss: pl } = data;
+  const { trialBalance, balanceSheet: bs, profitAndLoss: pl } = data;
 
   return (
     <div className="space-y-6">
@@ -67,6 +67,54 @@ export function FinancialReports({ fromDate, toDate }: FinancialReportsProps) {
             <span className={pl.netIncome >= 0 ? "text-inflow" : "text-destructive"}>
               {formatTzs(pl.netIncome)}
             </span>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="glass-card">
+        <CardHeader>
+          <CardTitle>Balance sheet (posted balances)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <div>
+            <p className="mb-2 font-medium text-foreground">Assets</p>
+            {bs.assets.length === 0 ? (
+              <p className="text-muted-foreground">—</p>
+            ) : (
+              <ul className="space-y-1">
+                {bs.assets.map((r) => (
+                  <li key={r.code} className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">
+                      {r.code} {r.name}
+                    </span>
+                    <span className="font-money">{formatTzs(r.balance)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-2 flex justify-between border-t pt-2 font-semibold">
+              <span>Total assets</span>
+              <span className="font-money">{formatTzs(bs.totalAssets)}</span>
+            </p>
+          </div>
+          <div>
+            <p className="mb-2 font-medium text-foreground">
+              Liabilities &amp; equity
+            </p>
+            {[...bs.liabilities, ...bs.equity].map((r) => (
+              <div key={r.code} className="flex justify-between gap-2 py-0.5">
+                <span className="text-muted-foreground">
+                  {r.code} {r.name}
+                </span>
+                <span className="font-money">{formatTzs(r.balance)}</span>
+              </div>
+            ))}
+            <p className="mt-2 flex justify-between border-t pt-2 font-semibold">
+              <span>Total L + E</span>
+              <span className="font-money">
+                {formatTzs(bs.totalLiabilities + bs.totalEquity)}
+              </span>
+            </p>
           </div>
         </CardContent>
       </Card>

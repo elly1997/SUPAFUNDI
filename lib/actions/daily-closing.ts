@@ -10,6 +10,8 @@ import {
   formatClosingReportText,
   type ClosingReportData,
 } from "@/lib/utils/closing-report";
+import { buildCashVarianceJournalLines } from "@/lib/accounting/posting-rules";
+import { postJournalEntry } from "@/lib/actions/accounting";
 import { getOrganizationSettings } from "@/lib/actions/settings";
 
 export type DayCashSummary = {
@@ -257,6 +259,24 @@ export async function reconcileDailyClosing(
       onConflict: "organization_id,outlet_id,business_date",
     });
     if (error) return { ok: false, message: error.message };
+
+    if (variance !== 0) {
+      const varianceLines = buildCashVarianceJournalLines(variance);
+      const journal = await postJournalEntry({
+        description: `Cash count variance ${input.businessDate} (${variance > 0 ? "over" : "short"})`,
+        sourceType: "manual",
+        sourceId: undefined,
+        outletId: input.outletId,
+        entryDate: input.businessDate,
+        lines: varianceLines,
+      });
+      if (!journal.ok) {
+        return {
+          ok: false,
+          message: `Reconciled but GL variance failed: ${journal.message}`,
+        };
+      }
+    }
 
     revalidatePath("/daily-closing");
     revalidatePath("/reports");

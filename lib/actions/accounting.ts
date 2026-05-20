@@ -2,7 +2,10 @@
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { DEFAULT_HARDWARE_COA } from "@/lib/accounting/coa-template";
+import {
+  DEFAULT_HARDWARE_COA,
+  type CoaTemplateRow,
+} from "@/lib/accounting/coa-template";
 import {
   assertBalanced,
   type JournalLineInput,
@@ -76,6 +79,34 @@ export async function seedAccountingForOrganization(
   }
 }
 
+const EXTENDED_COA_CODES = new Set(["2050", "6050"]);
+
+async function ensureExtendedCoaAccounts(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  organizationId: string,
+  existingCodes: Set<string>
+): Promise<void> {
+  const toInsert: CoaTemplateRow[] = DEFAULT_HARDWARE_COA.filter((a) =>
+    EXTENDED_COA_CODES.has(a.code)
+  );
+  for (const a of toInsert) {
+    if (existingCodes.has(a.code)) continue;
+    await supabase.from("chart_of_accounts").upsert(
+      {
+        organization_id: organizationId,
+        code: a.code,
+        name: a.name,
+        account_type: a.account_type,
+        account_subtype: a.account_subtype ?? null,
+        normal_balance: a.normal_balance,
+        is_system: a.is_system,
+        is_active: true,
+      },
+      { onConflict: "organization_id,code", ignoreDuplicates: true }
+    );
+  }
+}
+
 type PostJournalParams = {
   description: string;
   sourceType:
@@ -104,7 +135,7 @@ export async function postJournalEntry(
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
 
-    const { data: accounts } = await supabase
+    let { data: accounts } = await supabase
       .from("chart_of_accounts")
       .select("id, code")
       .eq("organization_id", ctx.organizationId)
@@ -115,6 +146,17 @@ export async function postJournalEntry(
         message: "Chart of accounts not initialized. Re-run organization setup or contact support.",
       };
     }
+    await ensureExtendedCoaAccounts(
+      supabase,
+      ctx.organizationId,
+      new Set(accounts.map((a) => a.code))
+    );
+    const refetch = await supabase
+      .from("chart_of_accounts")
+      .select("id, code")
+      .eq("organization_id", ctx.organizationId)
+      .eq("is_active", true);
+    accounts = refetch.data ?? accounts;
     const codeToId = new Map(accounts.map((a) => [a.code, a.id]));
 
     const entryNo = `JE-${Date.now().toString(36).toUpperCase()}`;

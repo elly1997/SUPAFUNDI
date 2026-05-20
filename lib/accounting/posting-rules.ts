@@ -21,33 +21,45 @@ export type SalePostingInput = {
   discountAmount: number;
   taxAmount: number;
   totalAmount: number;
-  amountPaid: number;
+  /** Cash/M-Pesa/bank collected at checkout (excludes deposit applied). */
+  cashAmountPaid: number;
+  depositApplied: number;
   balanceDue: number;
   paymentMethod: "cash" | "mpesa" | "card" | "bank_transfer" | "credit_account" | "cheque" | "loyalty_points";
   cogsAmount: number;
 };
 
-/** Cash retail sale (simplified). Credit sales post to AR instead of cash/mpesa. */
+function paymentAssetAccount(
+  paymentMethod: SalePostingInput["paymentMethod"]
+): string {
+  if (paymentMethod === "mpesa") return SYSTEM_ACCOUNT_CODES.mpesa;
+  if (paymentMethod === "bank_transfer" || paymentMethod === "card") {
+    return SYSTEM_ACCOUNT_CODES.bank;
+  }
+  if (paymentMethod === "credit_account") return SYSTEM_ACCOUNT_CODES.ar;
+  return SYSTEM_ACCOUNT_CODES.cash;
+}
+
+/** Retail sale: deposit liability, cash/M-Pesa/bank, AR, revenue, VAT, COGS. */
 export function buildSaleJournalLines(input: SalePostingInput): JournalLineInput[] {
   const netRevenue = input.subtotal - input.discountAmount;
   const lines: JournalLineInput[] = [];
 
-  const cashAccount =
-    input.paymentMethod === "mpesa"
-      ? SYSTEM_ACCOUNT_CODES.mpesa
-      : input.paymentMethod === "bank_transfer" || input.paymentMethod === "card"
-        ? SYSTEM_ACCOUNT_CODES.bank
-        : input.paymentMethod === "credit_account"
-          ? SYSTEM_ACCOUNT_CODES.ar
-          : SYSTEM_ACCOUNT_CODES.cash;
-
-  const immediatePay = input.amountPaid;
+  const cashAccount = paymentAssetAccount(input.paymentMethod);
   const onCredit = input.balanceDue;
 
-  if (immediatePay > 0) {
+  if (input.depositApplied > 0) {
+    lines.push({
+      accountCode: SYSTEM_ACCOUNT_CODES.customerDeposits,
+      debit: input.depositApplied,
+      credit: 0,
+      memo: "Customer deposit applied",
+    });
+  }
+  if (input.cashAmountPaid > 0) {
     lines.push({
       accountCode: cashAccount,
-      debit: immediatePay,
+      debit: input.cashAmountPaid,
       credit: 0,
       memo: "Payment received",
     });
@@ -104,6 +116,81 @@ export function buildSaleJournalLines(input: SalePostingInput): JournalLineInput
   }
 
   return lines;
+}
+
+/** Mirror an existing sale journal (debits ↔ credits) for voids/returns. */
+export function buildReversingJournalLines(
+  original: JournalLineInput[]
+): JournalLineInput[] {
+  return original.map((l) => ({
+    accountCode: l.accountCode,
+    debit: l.credit,
+    credit: l.debit,
+    memo: l.memo ? `Reversal: ${l.memo}` : "Reversal",
+  }));
+}
+
+/** Customer prepayment — Dr cash/M-Pesa/bank · Cr customer deposits liability. */
+export function buildCustomerDepositJournalLines(
+  amount: number,
+  paymentMethod: "cash" | "mpesa" | "bank_transfer"
+): JournalLineInput[] {
+  const asset =
+    paymentMethod === "mpesa"
+      ? SYSTEM_ACCOUNT_CODES.mpesa
+      : paymentMethod === "bank_transfer"
+        ? SYSTEM_ACCOUNT_CODES.bank
+        : SYSTEM_ACCOUNT_CODES.cash;
+  return [
+    {
+      accountCode: asset,
+      debit: amount,
+      credit: 0,
+      memo: "Customer deposit received",
+    },
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.customerDeposits,
+      debit: 0,
+      credit: amount,
+      memo: "Customer deposit liability",
+    },
+  ];
+}
+
+/** Daily cash count variance: positive = over, negative = short. */
+export function buildCashVarianceJournalLines(variance: number): JournalLineInput[] {
+  const amount = Math.abs(variance);
+  if (amount === 0) return [];
+  if (variance > 0) {
+    return [
+      {
+        accountCode: SYSTEM_ACCOUNT_CODES.cash,
+        debit: amount,
+        credit: 0,
+        memo: "Cash overage",
+      },
+      {
+        accountCode: SYSTEM_ACCOUNT_CODES.cashOverShort,
+        debit: 0,
+        credit: amount,
+        memo: "Cash over (credit to variance account)",
+      },
+    ];
+  }
+  return [
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.cashOverShort,
+      debit: amount,
+      credit: 0,
+      memo: "Cash shortage",
+    },
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.cash,
+      debit: 0,
+      credit: amount,
+      memo: "Cash short",
+    },
+  ];
 }
 
 export type PurchasePaymentMethod =

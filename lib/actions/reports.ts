@@ -22,8 +22,23 @@ export type ProfitLossRow = {
   amount: number;
 };
 
+export type BalanceSheetRow = {
+  code: string;
+  name: string;
+  account_type: string;
+  balance: number;
+};
+
 export type FinancialReportSummary = {
   trialBalance: TrialBalanceRow[];
+  balanceSheet: {
+    assets: BalanceSheetRow[];
+    liabilities: BalanceSheetRow[];
+    equity: BalanceSheetRow[];
+    totalAssets: number;
+    totalLiabilities: number;
+    totalEquity: number;
+  };
   profitAndLoss: {
     income: ProfitLossRow[];
     expenses: ProfitLossRow[];
@@ -55,6 +70,14 @@ export async function getFinancialReports(
   const entryIds = (entries ?? []).map((e) => e.id);
   const empty: FinancialReportSummary = {
     trialBalance: [],
+    balanceSheet: {
+      assets: [],
+      liabilities: [],
+      equity: [],
+      totalAssets: 0,
+      totalLiabilities: 0,
+      totalEquity: 0,
+    },
     profitAndLoss: {
       income: [],
       expenses: [],
@@ -141,8 +164,37 @@ export async function getFinancialReports(
   );
   const netIncome = roundMoney(totalIncome - totalCogs - totalExpenses);
 
+  const assets: BalanceSheetRow[] = [];
+  const liabilities: BalanceSheetRow[] = [];
+  const equity: BalanceSheetRow[] = [];
+  for (const row of trialBalance) {
+    if (row.balance === 0) continue;
+    const bs: BalanceSheetRow = {
+      code: row.code,
+      name: row.name,
+      account_type: row.account_type,
+      balance: row.balance,
+    };
+    if (row.account_type === "asset") assets.push(bs);
+    else if (row.account_type === "liability") liabilities.push(bs);
+    else if (row.account_type === "equity") equity.push(bs);
+  }
+  const totalAssets = roundMoney(assets.reduce((s, r) => s + r.balance, 0));
+  const totalLiabilities = roundMoney(
+    liabilities.reduce((s, r) => s + r.balance, 0)
+  );
+  const totalEquity = roundMoney(equity.reduce((s, r) => s + r.balance, 0));
+
   return {
     trialBalance,
+    balanceSheet: {
+      assets,
+      liabilities,
+      equity,
+      totalAssets,
+      totalLiabilities,
+      totalEquity,
+    },
     profitAndLoss: {
       income,
       expenses,

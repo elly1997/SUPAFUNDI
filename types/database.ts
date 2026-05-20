@@ -441,6 +441,7 @@ export type Database = {
           tax_amount: number;
           total_amount: number;
           amount_paid: number;
+          deposit_applied: number;
           change_given: number;
           balance_due: number;
           notes: string | null;
@@ -461,13 +462,18 @@ export type Database = {
           tax_amount?: number;
           total_amount: number;
           amount_paid?: number;
+          deposit_applied?: number;
           change_given?: number;
           balance_due?: number;
           notes?: string | null;
           cashier_id?: string | null;
           sale_date?: string;
         };
-        Update: Record<string, never>;
+        Update: {
+          status?: string;
+          notes?: string | null;
+          deposit_applied?: number;
+        };
         Relationships: [];
       };
       sale_items: {
