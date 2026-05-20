@@ -28,8 +28,8 @@ import {
   listOutletsSettings,
   setDefaultOutlet,
   updateOutlet,
-  type OutletRow,
 } from "@/lib/actions/settings";
+import type { OutletRow } from "@/lib/types/settings-team";
 
 export function OutletsSettingsClient() {
   const [open, setOpen] = useState(false);

@@ -1,4 +1,4 @@
-import type { UserInviteStatus } from "@/lib/actions/settings";
+import type { UserInviteStatus } from "@/lib/types/settings-team";
 import { cn } from "@/lib/utils";
 
 const LABELS: Record<UserInviteStatus, string> = {

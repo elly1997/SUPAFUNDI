@@ -38,8 +38,8 @@ import {
   inviteOrganizationUser,
   listOrganizationUsers,
   updateOrganizationUser,
-  type UserRow,
 } from "@/lib/actions/settings";
+import type { UserRow } from "@/lib/types/settings-team";
 
 export function UsersSettingsClient() {
   const [open, setOpen] = useState(false);
