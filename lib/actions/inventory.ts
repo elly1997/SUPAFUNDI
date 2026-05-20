@@ -192,164 +192,22 @@ export async function createProduct(
   }
 }
 
-const importRowSchema = z.object({
-  code: z.string().min(1),
-  name: z.string().min(1),
-  category: z.string().min(1),
-  quantity: z.number().nonnegative(),
-  cost: z.number().nonnegative().optional(),
-  retailPrice: z.number().nonnegative().optional(),
-  unit: z.string().min(1),
-  notes: z.string().optional(),
-});
-
-export type ImportInventoryResult = {
-  imported: number;
-  updated: number;
-  errors: { code: string; message: string }[];
-};
+export type { ImportInventoryResult } from "@/lib/inventory/run-import";
 
 export async function importInventoryRows(
   outletId: string,
   rows: InventoryImportRow[]
-): Promise<ImportInventoryResult> {
+): Promise<import("@/lib/inventory/run-import").ImportInventoryResult> {
   const ctx = await requireOrgContext();
-  const supabase = await createServerSupabaseClient();
-
-  const { data: outlet } = await supabase
-    .from("outlets")
-    .select("id")
-    .eq("id", outletId)
-    .eq("organization_id", ctx.organizationId)
-    .maybeSingle();
-  if (!outlet) {
-    return {
-      imported: 0,
-      updated: 0,
-      errors: [{ code: "-", message: "Invalid outlet for your organization." }],
-    };
-  }
-
-  const errors: { code: string; message: string }[] = [];
-  let imported = 0;
-  let updated = 0;
-
-  for (const raw of rows) {
-    const row = importRowSchema.safeParse({
-      code: raw.code,
-      name: raw.name,
-      category: raw.category,
-      quantity: raw.quantity,
-      cost: raw.cost,
-      retailPrice: raw.retailPrice,
-      unit: raw.unit,
-      notes: raw.notes,
-    });
-    if (!row.success) {
-      errors.push({
-        code: raw.code ?? "?",
-        message: row.error.issues.map((i) => i.message).join(", "),
-      });
-      continue;
-    }
-    const r = row.data;
-    try {
-      const categoryId = await ensureCategory(
-        supabase,
-        ctx.organizationId,
-        null,
-        r.category
-      );
-
-      const { data: existing } = await supabase
-        .from("products")
-        .select("id")
-        .eq("organization_id", ctx.organizationId)
-        .eq("code", r.code)
-        .maybeSingle();
-
-      let productId: string;
-
-      const description = r.notes?.trim() || null;
-
-      if (existing?.id) {
-        productId = existing.id;
-        const { error: uErr } = await supabase
-          .from("products")
-          .update({
-            name: r.name.trim(),
-            category_id: categoryId,
-            unit: r.unit.trim(),
-            is_active: true,
-            ...(description ? { description } : {}),
-          })
-          .eq("id", productId);
-        if (uErr) throw new Error(uErr.message);
-        updated += 1;
-      } else {
-        const { data: product, error: pErr } = await supabase
-          .from("products")
-          .insert({
-            organization_id: ctx.organizationId,
-            category_id: categoryId,
-            name: r.name.trim(),
-            unit: r.unit.trim(),
-            code: r.code,
-            is_active: true,
-            reorder_point: 0,
-            description,
-          })
-          .select("id")
-          .single();
-        if (pErr || !product) {
-          throw new Error(pErr?.message ?? "Insert failed");
-        }
-        productId = product.id;
-        imported += 1;
-      }
-
-      if (r.retailPrice !== undefined) {
-        await upsertRetailPrice(supabase, productId, r.retailPrice);
-      }
-
-      const { data: existingStock } = await supabase
-        .from("stock")
-        .select("id, cost_price")
-        .eq("outlet_id", outletId)
-        .eq("product_id", productId)
-        .maybeSingle();
-
-      if (existingStock?.id) {
-        const patch: { quantity: number; cost_price?: number } = {
-          quantity: r.quantity,
-        };
-        if (r.cost !== undefined) patch.cost_price = r.cost;
-        const { error: sErr } = await supabase
-          .from("stock")
-          .update(patch)
-          .eq("id", existingStock.id);
-        if (sErr) throw new Error(sErr.message);
-      } else {
-        const { error: sErr } = await supabase.from("stock").insert({
-          organization_id: ctx.organizationId,
-          outlet_id: outletId,
-          product_id: productId,
-          quantity: r.quantity,
-          cost_price: r.cost ?? 0,
-        });
-        if (sErr) throw new Error(sErr.message);
-      }
-    } catch (e) {
-      errors.push({
-        code: r.code,
-        message: e instanceof Error ? e.message : "Unknown error",
-      });
-    }
-  }
-
+  const { runInventoryImport } = await import("@/lib/inventory/run-import");
+  const result = await runInventoryImport(
+    ctx.organizationId,
+    outletId,
+    rows
+  );
   revalidatePath("/inventory/products");
   revalidatePath("/inventory/stock");
-  return { imported, updated, errors };
+  return result;
 }
 
 const adjustProductStockInput = z

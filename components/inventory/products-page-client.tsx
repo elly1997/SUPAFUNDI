@@ -45,9 +45,9 @@ import {
   adjustProductStock,
   createProduct,
   getProductStockSnapshot,
-  importInventoryRows,
   listCategoriesForOrg,
 } from "@/lib/actions/inventory";
+import { importInventoryInChunks } from "@/lib/api/inventory-import-fetch";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { formatTzs } from "@/lib/utils/currency";
@@ -123,6 +123,7 @@ export function ProductsPageClient() {
     null
   );
   const [importOutletId, setImportOutletId] = useState("");
+  const [importProgress, setImportProgress] = useState<string | null>(null);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustProduct, setAdjustProduct] = useState<ProductListRow | null>(
     null
@@ -213,9 +214,19 @@ export function ProductsPageClient() {
       if (!importOutletId || !importRows?.length) {
         throw new Error("Choose an outlet and a valid file.");
       }
-      return importInventoryRows(importOutletId, importRows);
+      setImportProgress("Starting…");
+      return importInventoryInChunks(
+        importOutletId,
+        importRows,
+        (done, total) => setImportProgress(`${done} / ${total} rows`)
+      );
     },
     onSuccess: (res) => {
+      setImportProgress(null);
+      if (!res || !Array.isArray(res.errors)) {
+        toast.error("Import failed — no response from server. Try again.");
+        return;
+      }
       const failed = res.errors.length;
       if (failed) {
         toast.warning(
@@ -230,8 +241,10 @@ export function ProductsPageClient() {
       setImportRows(null);
       void queryClient.invalidateQueries({ queryKey: ["products"] });
       void queryClient.invalidateQueries({ queryKey: ["categories"] });
+      void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
     },
     onError: (e) => {
+      setImportProgress(null);
       toast.error(e instanceof Error ? e.message : "Import failed");
     },
   });
@@ -722,7 +735,9 @@ export function ProductsPageClient() {
               {importMutation.isPending && (
                 <Loader2 className="mr-2 size-4 animate-spin" />
               )}
-              Import {importRows?.length ?? 0} rows
+              {importMutation.isPending && importProgress
+                ? importProgress
+                : `Import ${importRows?.length ?? 0} rows`}
             </Button>
           </DialogFooter>
         </DialogContent>
