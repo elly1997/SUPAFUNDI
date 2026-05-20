@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { InventoryImportRow } from "@/lib/excel/parse-inventory";
 import { normalizeProductName } from "@/lib/products/product-name";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { fetchAllPaginated } from "@/lib/supabase/query-chunks";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
@@ -94,14 +95,18 @@ export async function runInventoryImport(
     categoryCache.set(c.name.trim().toLowerCase(), c.id);
   }
 
-  const { data: existingProducts } = await supabase
-    .from("products")
-    .select("id, code, name")
-    .eq("organization_id", organizationId);
+  const existingProducts = await fetchAllPaginated(async (from, to) => {
+    const { data, error } = await supabase
+      .from("products")
+      .select("id, code, name")
+      .eq("organization_id", organizationId)
+      .range(from, to);
+    return { data, error };
+  });
 
   const byCode = new Map<string, { id: string; name: string }>();
   const byName = new Map<string, { id: string; code: string | null }>();
-  for (const p of existingProducts ?? []) {
+  for (const p of existingProducts) {
     if (p.code) byCode.set(p.code.trim().toUpperCase(), { id: p.id, name: p.name });
     byName.set(normalizeProductName(p.name), {
       id: p.id,

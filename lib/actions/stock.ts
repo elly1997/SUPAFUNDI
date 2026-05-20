@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { fetchByInChunks } from "@/lib/supabase/query-chunks";
 import { roundMoney } from "@/lib/utils/calculations";
 
 export type StockStatus = "out_of_stock" | "low" | "ok";
@@ -67,14 +68,17 @@ export async function listStockLevels(
       .eq("status", "completed")
       .gte("sale_date", sinceIso);
     const saleIds = (recentSales ?? []).map((s) => s.id);
+    const productIdSet = new Set(productIds);
     if (saleIds.length > 0) {
-      const { data: saleItems } = await supabase
-        .from("sale_items")
-        .select("product_id, quantity")
-        .in("sale_id", saleIds)
-        .in("product_id", productIds);
-      for (const item of saleItems ?? []) {
-        if (!item.product_id) continue;
+      const saleItems = await fetchByInChunks(saleIds, async (saleChunk) => {
+        const { data, error } = await supabase
+          .from("sale_items")
+          .select("product_id, quantity")
+          .in("sale_id", saleChunk);
+        return { data, error };
+      });
+      for (const item of saleItems) {
+        if (!item.product_id || !productIdSet.has(item.product_id)) continue;
         velocity.set(
           item.product_id,
           (velocity.get(item.product_id) ?? 0) + Number(item.quantity)
@@ -83,18 +87,25 @@ export async function listStockLevels(
     }
   }
 
-  const [productsRes, outletsRes] = await Promise.all([
-    supabase
-      .from("products")
-      .select("id, code, name, unit, reorder_point")
-      .in("id", productIds),
-    supabase.from("outlets").select("id, name").in("id", outletIds),
+  const [products, outlets] = await Promise.all([
+    fetchByInChunks(productIds, async (chunk) => {
+      const { data, error } = await supabase
+        .from("products")
+        .select("id, code, name, unit, reorder_point")
+        .in("id", chunk);
+      return { data, error };
+    }),
+    fetchByInChunks(outletIds, async (chunk) => {
+      const { data, error } = await supabase
+        .from("outlets")
+        .select("id, name")
+        .in("id", chunk);
+      return { data, error };
+    }),
   ]);
-  if (productsRes.error) throw new Error(productsRes.error.message);
-  if (outletsRes.error) throw new Error(outletsRes.error.message);
 
-  const productMap = new Map((productsRes.data ?? []).map((p) => [p.id, p]));
-  const outletMap = new Map((outletsRes.data ?? []).map((o) => [o.id, o]));
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  const outletMap = new Map(outlets.map((o) => [o.id, o]));
 
   return stockRows.map((row) => {
     const product = productMap.get(row.product_id);

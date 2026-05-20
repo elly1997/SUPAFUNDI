@@ -89,6 +89,7 @@ export function ProductsPriceListClient({
           <CardDescription>
             Catalogue only — name, code, unit, buying and selling prices. Edits
             save automatically. Import and quantities are on the Stock page.
+            {rows.length > 0 ? ` ${rows.length} products loaded.` : ""}
             {outletId
               ? " Buying price applies to your active outlet."
               : " Select an outlet in the header to edit buying price."}

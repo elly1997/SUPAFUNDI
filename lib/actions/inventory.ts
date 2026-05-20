@@ -6,6 +6,10 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { normalizeProductName } from "@/lib/products/product-name";
 import { generateProductCode } from "@/lib/products/sku";
 import { requireOrgContext } from "@/lib/server/org-context";
+import {
+  fetchAllPaginated,
+  fetchByInChunks,
+} from "@/lib/supabase/query-chunks";
 import type { InventoryImportRow } from "@/lib/excel/parse-inventory";
 
 const createProductInput = z.object({
@@ -379,40 +383,49 @@ export async function listProductPriceCatalog(
   const supabase = await createServerSupabaseClient();
   const costOutletId = outletId ?? ctx.outletId;
 
-  const { data: products, error } = await supabase
-    .from("products")
-    .select("id, name, code, unit")
-    .eq("organization_id", ctx.organizationId)
-    .eq("is_active", true)
-    .order("name");
-  if (error) throw new Error(error.message);
-  if (!products?.length) return [];
+  const products = await fetchAllPaginated(async (from, to) => {
+    const { data, error } = await supabase
+      .from("products")
+      .select("id, name, code, unit")
+      .eq("organization_id", ctx.organizationId)
+      .eq("is_active", true)
+      .order("name")
+      .range(from, to);
+    return { data, error };
+  });
+  if (!products.length) return [];
 
   const ids = products.map((p) => p.id);
-  const [{ data: prices }, { data: stockRows }] = await Promise.all([
-    supabase
-      .from("product_prices")
-      .select("product_id, price")
-      .in("product_id", ids)
-      .eq("price_type", "retail")
-      .is("effective_to", null),
+  const [prices, stockRows] = await Promise.all([
+    fetchByInChunks(ids, async (chunk) => {
+      const { data, error } = await supabase
+        .from("product_prices")
+        .select("product_id, price")
+        .in("product_id", chunk)
+        .eq("price_type", "retail")
+        .is("effective_to", null);
+      return { data, error };
+    }),
     costOutletId
-      ? supabase
-          .from("stock")
-          .select("product_id, cost_price")
-          .eq("outlet_id", costOutletId)
-          .in("product_id", ids)
-      : Promise.resolve({ data: [] as { product_id: string; cost_price: number }[] }),
+      ? fetchByInChunks(ids, async (chunk) => {
+          const { data, error } = await supabase
+            .from("stock")
+            .select("product_id, cost_price")
+            .eq("outlet_id", costOutletId)
+            .in("product_id", chunk);
+          return { data, error };
+        })
+      : Promise.resolve([] as { product_id: string; cost_price: number }[]),
   ]);
 
   const retailMap = new Map<string, number>();
-  for (const p of prices ?? []) {
+  for (const p of prices) {
     if (!retailMap.has(p.product_id)) {
       retailMap.set(p.product_id, Number(p.price));
     }
   }
   const costMap = new Map<string, number>();
-  for (const s of stockRows ?? []) {
+  for (const s of stockRows) {
     costMap.set(s.product_id, Number(s.cost_price));
   }
 
