@@ -505,21 +505,28 @@ async function buildOperationalResult(
   let paymentMix: OperationalReports["paymentMix"] = [];
 
   if (saleIds.length > 0) {
-    const [itemsRes, payRes] = await Promise.all([
-      supabase
-        .from("sale_items")
-        .select("product_name, quantity, total_price")
-        .in("sale_id", saleIds.slice(0, 500)),
-      supabase
-        .from("payments")
-        .select("payment_method, amount")
-        .eq("organization_id", organizationId)
-        .in("sale_id", saleIds.slice(0, 500)),
+    const { fetchByInChunks } = await import("@/lib/supabase/query-chunks");
+    const [saleItems, paymentRows] = await Promise.all([
+      fetchByInChunks(saleIds, async (chunk) => {
+        const { data, error } = await supabase
+          .from("sale_items")
+          .select("product_name, quantity, total_price")
+          .in("sale_id", chunk);
+        return { data, error };
+      }),
+      fetchByInChunks(saleIds, async (chunk) => {
+        const { data, error } = await supabase
+          .from("payments")
+          .select("payment_method, amount")
+          .eq("organization_id", organizationId)
+          .in("sale_id", chunk);
+        return { data, error };
+      }),
     ]);
 
-    if (!itemsRes.error && itemsRes.data) {
+    if (saleItems.length > 0) {
       const prodMap = new Map<string, { quantity: number; revenue: number }>();
-      for (const row of itemsRes.data) {
+      for (const row of saleItems) {
         const name = row.product_name ?? "Unknown";
         const prev = prodMap.get(name) ?? { quantity: 0, revenue: 0 };
         prodMap.set(name, {
@@ -533,9 +540,9 @@ async function buildOperationalResult(
         .slice(0, 8);
     }
 
-    if (!payRes.error && payRes.data) {
+    if (paymentRows.length > 0) {
       const payMap = new Map<string, { total: number; count: number }>();
-      for (const p of payRes.data) {
+      for (const p of paymentRows) {
         const m = p.payment_method ?? "other";
         const prev = payMap.get(m) ?? { total: 0, count: 0 };
         payMap.set(m, {
@@ -572,6 +579,36 @@ async function buildOperationalResult(
     ) + 1
   );
 
+  return buildOperationalPayload(
+    from,
+    to,
+    daySpan,
+    salesTotal,
+    salesCount,
+    expensesTotal,
+    expensesCount,
+    creditOutstanding,
+    lowStockCount,
+    topProducts,
+    salesByDay,
+    paymentMix
+  );
+}
+
+function buildOperationalPayload(
+  from: string,
+  to: string,
+  daySpan: number,
+  salesTotal: number,
+  salesCount: number,
+  expensesTotal: number,
+  expensesCount: number,
+  creditOutstanding: number,
+  lowStockCount: number,
+  topProducts: OperationalReports["topProducts"],
+  salesByDay: OperationalReports["salesByDay"],
+  paymentMix: OperationalReports["paymentMix"]
+): OperationalReports {
   return {
     period: {
       from,
@@ -590,4 +627,42 @@ async function buildOperationalResult(
     salesByDay,
     paymentMix,
   };
+}
+
+/** Client-side CSV export for operational report period. */
+export async function getOperationalExportCsv(
+  fromDate: string,
+  toDate: string,
+  outletId?: string | null,
+  reconciledDaysOnly = false
+): Promise<string> {
+  const data = await getOperationalReportsByRange(
+    fromDate,
+    toDate,
+    outletId,
+    reconciledDaysOnly
+  );
+  const lines = [
+    `Period,${data.period.from},${data.period.to}`,
+    `Sales total,${data.salesTotal}`,
+    `Sales count,${data.salesCount}`,
+    `Expenses,${data.expensesTotal}`,
+    `Net cash,${data.netCash}`,
+    "",
+    "Date,Sales,Transactions",
+    ...data.salesByDay.map(
+      (d) => `${d.date},${d.total},${d.count}`
+    ),
+    "",
+    "Payment method,Total,Count",
+    ...data.paymentMix.map(
+      (p) => `${p.method},${p.total},${p.count}`
+    ),
+    "",
+    "Product,Qty,Revenue",
+    ...data.topProducts.map(
+      (p) => `"${p.name.replace(/"/g, '""')}",${p.quantity},${p.revenue}`
+    ),
+  ];
+  return lines.join("\n");
 }

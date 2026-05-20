@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { buildGrnJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { createSupplierBillFromGrn } from "@/lib/actions/payables";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { computeVat, roundMoney } from "@/lib/utils/calculations";
@@ -207,7 +208,28 @@ export async function receiveGoods(
       throw new Error(journal.message);
     }
 
+    if (paymentMethod === "on_account" && input.supplierId) {
+      const bill = await createSupplierBillFromGrn({
+        grnId: grn.id,
+        supplierId: input.supplierId,
+        billDate: receivedDate,
+        subtotal: inventoryValue,
+        taxAmount,
+        totalAmount,
+        referenceNo: input.referenceNo,
+        lines: input.lines.map((l) => ({
+          productId: l.productId,
+          quantity: l.quantity,
+          unitCost: l.unitCost,
+        })),
+      });
+      if (!bill.ok) {
+        throw new Error(bill.message);
+      }
+    }
+
     revalidatePath("/inventory/stock");
+    revalidatePath("/finance/payables");
     revalidatePath("/inventory/receive");
     revalidatePath("/inventory/products");
     revalidatePath("/daily-closing");

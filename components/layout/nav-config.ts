@@ -6,6 +6,7 @@ import {
   ClipboardList,
   CreditCard,
   FileText,
+  FileStack,
   Landmark,
   Truck,
   LayoutDashboard,
@@ -80,6 +81,12 @@ export const PRIMARY_NAV_TABS: NavItem[] = [
     label: "Credit",
     href: "/finance/credit",
     icon: CreditCard,
+    roles: ["owner", "manager", "accountant"],
+  },
+  {
+    label: "Payables",
+    href: "/finance/payables",
+    icon: FileStack,
     roles: ["owner", "manager", "accountant"],
   },
   {
@@ -195,6 +202,12 @@ export const NAV_SECTIONS: NavSection[] = [
         roles: ["owner", "manager", "accountant"],
       },
       {
+        label: "Payables",
+        href: "/finance/payables",
+        icon: FileStack,
+        roles: ["owner", "manager", "accountant"],
+      },
+      {
         label: "Banking",
         href: "/finance/banking",
         icon: Landmark,
@@ -297,8 +310,8 @@ export function isNavItemActive(pathname: string, href: string): boolean {
       !pathname.startsWith("/inventory/returns")
     );
   }
-  if (href === "/finance/cash-sessions") {
-    return pathname.startsWith("/finance");
+  if (href.startsWith("/finance/")) {
+    return pathname === href || pathname.startsWith(`${href}/`);
   }
   return pathname === href || pathname.startsWith(`${href}/`);
 }

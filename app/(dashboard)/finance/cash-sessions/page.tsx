@@ -1,6 +1,6 @@
-import Link from "next/link";
+import { CashSessionsPageClient } from "@/components/finance/cash-sessions-page-client";
 import { PageHeader } from "@/components/ui/page-header";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -9,30 +9,14 @@ export default function CashSessionsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Cash drawer"
-        description="Open and close register sessions, track expected cash and variance."
+        description="Session history and variance. Open and close the register from POS."
         actions={
-          <Link href="/pos" className={cn(buttonVariants())}>
+          <Link href="/pos" className={cn(buttonVariants(), "rounded-xl")}>
             Manage on POS
           </Link>
         }
       />
-      <Card>
-        <CardHeader>
-          <CardTitle>Session control</CardTitle>
-          <CardDescription>
-            Cash sessions are opened and closed from the POS terminal. A dedicated
-            history view will be added in a later phase.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Link
-            href="/pos"
-            className={cn(buttonVariants({ variant: "outline" }))}
-          >
-            Go to POS Terminal
-          </Link>
-        </CardContent>
-      </Card>
+      <CashSessionsPageClient />
     </div>
   );
 }

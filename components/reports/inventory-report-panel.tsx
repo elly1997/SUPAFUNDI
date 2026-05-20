@@ -101,7 +101,11 @@ function CategoryRankList({
   );
 }
 
-export function InventoryReportPanel() {
+type InventoryReportPanelProps = {
+  enabled?: boolean;
+};
+
+export function InventoryReportPanel({ enabled = true }: InventoryReportPanelProps) {
   const outletId = useAuthStore((s) => s.activeOutletId);
   const [preset, setPreset] = useState<InventoryReportPreset>("1M");
   const range = useMemo(() => resolveInventoryReportRange(preset), [preset]);
@@ -109,6 +113,7 @@ export function InventoryReportPanel() {
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["inventory-analytics", preset, outletId],
     queryFn: () => getInventoryAnalyticsReport(preset, outletId),
+    enabled: enabled && !!outletId,
     staleTime: 120_000,
   });
 

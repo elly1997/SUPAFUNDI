@@ -22,9 +22,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { KpiCard } from "@/components/ui/kpi-card";
 import {
+  getOperationalExportCsv,
   getOperationalReportsByRange,
   getProfitLossStatement,
-  type OperationalReports,
   type ProfitLossStatement,
 } from "@/lib/actions/reports";
 import { listUnreconciledDays } from "@/lib/actions/daily-closing";
@@ -36,13 +36,18 @@ const REPORT_TABS = [
   { id: "overview", label: "Overview" },
   { id: "profit-loss", label: "Profit & Loss" },
   { id: "sales", label: "Sales Analysis" },
-  { id: "inventory", label: "Inventory Report" },
-  { id: "daily", label: "Daily Summary" },
-  { id: "cashflow", label: "Cash Flow" },
-  { id: "expenditures", label: "Expenditures" },
-  { id: "daily-closing", label: "Daily Closing" },
-  { id: "monthly-closing", label: "Monthly Closing" },
+  { id: "inventory", label: "Inventory" },
+  { id: "cash", label: "Cash & Payments" },
+  { id: "financials", label: "Financials (GL)" },
+  { id: "closing", label: "Daily Closing" },
 ] as const;
+
+const NEEDS_OPERATIONAL = new Set<ReportTabId>([
+  "overview",
+  "sales",
+  "cash",
+]);
+const NEEDS_PL = new Set<ReportTabId>(["overview", "profit-loss"]);
 
 type ReportTabId = (typeof REPORT_TABS)[number]["id"];
 
@@ -56,7 +61,7 @@ const PAYMENT_LABELS: Record<string, string> = {
 };
 
 function defaultFromDate() {
-  return format(subMonths(new Date(), 3), "yyyy-MM-dd");
+  return format(subMonths(new Date(), 1), "yyyy-MM-dd");
 }
 
 function defaultToDate() {
@@ -172,27 +177,17 @@ function ProfitLossPanel({
   );
 }
 
-type Props = {
-  initialOperational?: OperationalReports;
-  initialPl?: ProfitLossStatement;
-  initialFrom?: string;
-  initialTo?: string;
-};
-
-export function ReportsAnalyticsClient({
-  initialOperational,
-  initialPl,
-  initialFrom,
-  initialTo,
-}: Props) {
+export function ReportsAnalyticsClient() {
   const outletId = useAuthStore((s) => s.activeOutletId);
-  const [tab, setTab] = useState<ReportTabId>("profit-loss");
-  const [fromDate, setFromDate] = useState(initialFrom ?? defaultFromDate());
-  const [toDate, setToDate] = useState(initialTo ?? defaultToDate());
-  const [showGlDetail, setShowGlDetail] = useState(false);
+  const [tab, setTab] = useState<ReportTabId>("overview");
+  const [fromDate, setFromDate] = useState(defaultFromDate());
+  const [toDate, setToDate] = useState(defaultToDate());
   const [reconciledOnly, setReconciledOnly] = useState(true);
+  const [exporting, setExporting] = useState(false);
 
   const rangeKey = [fromDate, toDate, outletId, reconciledOnly];
+  const needsOperational = NEEDS_OPERATIONAL.has(tab);
+  const needsPl = NEEDS_PL.has(tab);
 
   const {
     data: operational,
@@ -203,13 +198,8 @@ export function ReportsAnalyticsClient({
     queryKey: ["reports-operational", ...rangeKey],
     queryFn: () =>
       getOperationalReportsByRange(fromDate, toDate, outletId, reconciledOnly),
-    initialData:
-      initialOperational &&
-      initialFrom === fromDate &&
-      initialTo === toDate
-        ? initialOperational
-        : undefined,
-    staleTime: 60_000,
+    enabled: needsOperational,
+    staleTime: 120_000,
   });
 
   const {
@@ -220,16 +210,15 @@ export function ReportsAnalyticsClient({
     queryKey: ["reports-pl", ...rangeKey],
     queryFn: () =>
       getProfitLossStatement(fromDate, toDate, outletId, reconciledOnly),
-    initialData:
-      initialPl && initialFrom === fromDate && initialTo === toDate
-        ? initialPl
-        : undefined,
-    staleTime: 60_000,
+    enabled: needsPl,
+    staleTime: 120_000,
   });
 
   const { data: unreconciled = [] } = useQuery({
     queryKey: ["reports-unreconciled", outletId],
     queryFn: () => listUnreconciledDays(outletId, 40),
+    enabled: tab === "closing",
+    staleTime: 120_000,
   });
 
   const generateReports = useCallback(() => {
@@ -237,6 +226,30 @@ export function ReportsAnalyticsClient({
     void refetchPl();
     toast.success("Reports updated");
   }, [refetchOp, refetchPl]);
+
+  const exportCsv = useCallback(async () => {
+    setExporting(true);
+    try {
+      const csv = await getOperationalExportCsv(
+        fromDate,
+        toDate,
+        outletId,
+        reconciledOnly
+      );
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `reports-${fromDate}-${toDate}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Export downloaded");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  }, [fromDate, toDate, outletId, reconciledOnly]);
 
   const chartMax = useMemo(
     () => Math.max(...(operational?.salesByDay.map((d) => d.total) ?? [0]), 1),
@@ -361,78 +374,90 @@ export function ReportsAnalyticsClient({
       case "sales":
         return renderSalesAnalysis();
       case "inventory":
-        return <InventoryReportPanel />;
-      case "daily":
+        return <InventoryReportPanel enabled={tab === "inventory"} />;
+      case "cash":
+        if (opLoading && !operational) {
+          return (
+            <div className="flex justify-center py-16">
+              <Loader2 className="size-10 animate-spin text-primary" />
+            </div>
+          );
+        }
         return (
-          <Card className="glass-card">
-            <CardHeader>
-              <CardTitle className="text-base">Daily summary</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-3">
-              <div>
-                <p className="text-xs text-muted-foreground">Transactions</p>
-                <p className="text-2xl font-bold">{operational?.salesCount ?? 0}</p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Gross sales</p>
-                <p className="font-money text-2xl font-bold">
-                  {formatTzs(operational?.salesTotal ?? 0)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Net cash</p>
-                <p className="font-money text-2xl font-bold text-inflow">
-                  {formatTzs(operational?.netCash ?? 0)}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card className="glass-card">
+              <CardHeader>
+                <CardTitle className="text-base">Period summary</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">Transactions</p>
+                  <p className="text-2xl font-bold">
+                    {operational?.salesCount ?? 0}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Gross sales</p>
+                  <p className="font-money text-2xl font-bold">
+                    {formatTzs(operational?.salesTotal ?? 0)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Net cash</p>
+                  <p className="font-money text-2xl font-bold text-inflow">
+                    {formatTzs(operational?.netCash ?? 0)}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="glass-card">
+              <CardHeader>
+                <CardTitle className="text-base">Payment mix</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {(operational?.paymentMix ?? []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No payments</p>
+                ) : (
+                  operational?.paymentMix.map((p) => (
+                    <div
+                      key={p.method}
+                      className="flex justify-between text-sm"
+                    >
+                      <span>{PAYMENT_LABELS[p.method] ?? p.method}</span>
+                      <span className="font-money font-semibold">
+                        {formatTzs(p.total)} ({p.count})
+                      </span>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+            <Card className="glass-card lg:col-span-2">
+              <CardHeader>
+                <CardTitle className="text-base">Expenditures</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className="font-money text-3xl font-bold text-outflow">
+                    {formatTzs(operational?.expensesTotal ?? 0)}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {operational?.expensesCount ?? 0} entries in period
+                  </p>
+                </div>
+                <Link
+                  href="/finance/expenses"
+                  className={cn(buttonVariants({ variant: "outline" }), "rounded-xl")}
+                >
+                  Manage expenses
+                </Link>
+              </CardContent>
+            </Card>
+          </div>
         );
-      case "cashflow":
-        return (
-          <Card className="glass-card">
-            <CardHeader>
-              <CardTitle className="text-base">Payment mix</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {(operational?.paymentMix ?? []).length === 0 ? (
-                <p className="text-sm text-muted-foreground">No payments</p>
-              ) : (
-                operational?.paymentMix.map((p) => (
-                  <div key={p.method} className="flex justify-between text-sm">
-                    <span>{PAYMENT_LABELS[p.method] ?? p.method}</span>
-                    <span className="font-money font-semibold">
-                      {formatTzs(p.total)} ({p.count})
-                    </span>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
-        );
-      case "expenditures":
-        return (
-          <Card className="glass-card">
-            <CardHeader>
-              <CardTitle className="text-base">Expenditures</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="font-money text-3xl font-bold text-outflow">
-                {formatTzs(operational?.expensesTotal ?? 0)}
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {operational?.expensesCount ?? 0} expense entries in period
-              </p>
-              <Link
-                href="/finance/expenses"
-                className={cn(buttonVariants({ variant: "outline" }), "mt-4 rounded-xl")}
-              >
-                Manage expenses
-              </Link>
-            </CardContent>
-          </Card>
-        );
-      case "daily-closing":
+      case "financials":
+        return <FinancialReports fromDate={fromDate} toDate={toDate} />;
+      case "closing":
         return (
           <div className="space-y-4">
             <Card className="glass-card border-primary/30">
@@ -480,22 +505,6 @@ export function ReportsAnalyticsClient({
               </CardContent>
             </Card>
           </div>
-        );
-      case "monthly-closing":
-        return (
-          <Card className="glass-card">
-            <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              Monthly closing workflow — use P&amp;L and trial balance below for period-end
-              review.
-              <button
-                type="button"
-                className="mt-4 block w-full text-primary hover:underline"
-                onClick={() => setShowGlDetail(true)}
-              >
-                Show GL detail
-              </button>
-            </CardContent>
-          </Card>
         );
       default:
         return null;
@@ -545,15 +554,13 @@ export function ReportsAnalyticsClient({
           <RefreshCw className="mr-2 size-4" />
           Generate Reports
         </Button>
-        <Button
-          type="button"
-          variant="default"
-          className="rounded-lg"
-          onClick={() => toast.message("Inventory rectification runs from stock receive & adjustments")}
+        <Link
+          href="/inventory/stock"
+          className={cn(buttonVariants({ variant: "outline" }), "rounded-lg")}
         >
           <Boxes className="mr-2 size-4" />
-          Rectify all Inventory
-        </Button>
+          Stock & adjustments
+        </Link>
         <Button
           type="button"
           variant="secondary"
@@ -567,27 +574,24 @@ export function ReportsAnalyticsClient({
           type="button"
           variant="secondary"
           className="rounded-lg"
-          onClick={() => toast.message("Export CSV — coming soon")}
+          disabled={exporting}
+          onClick={() => void exportCsv()}
         >
           <Download className="mr-2 size-4" />
-          Export
+          {exporting ? "Exporting…" : "Export CSV"}
         </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          className="rounded-lg"
-          onClick={() => toast.message("Reconcile from Sales and Payments modules")}
+        <Link
+          href="/daily-closing"
+          className={cn(buttonVariants({ variant: "secondary" }), "rounded-lg")}
         >
-          Reconcile sales
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          className="rounded-lg"
-          onClick={() => toast.message("Reconcile from Purchase orders & GRN")}
+          Daily closing
+        </Link>
+        <Link
+          href="/finance/payables"
+          className={cn(buttonVariants({ variant: "secondary" }), "rounded-lg")}
         >
-          Reconcile purchases
-        </Button>
+          Supplier payables
+        </Link>
       </div>
 
       <div className="scrollbar-thin flex gap-1.5 overflow-x-auto pb-1">
@@ -607,15 +611,6 @@ export function ReportsAnalyticsClient({
       </div>
 
       {renderTabBody()}
-
-      {(showGlDetail || tab === "monthly-closing") && (
-        <div className="border-t border-border pt-6">
-          <h2 className="mb-4 text-sm font-semibold text-muted-foreground">
-            General ledger detail
-          </h2>
-          <FinancialReports fromDate={fromDate} toDate={toDate} />
-        </div>
-      )}
     </div>
   );
 }

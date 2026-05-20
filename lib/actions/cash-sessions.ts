@@ -18,6 +18,39 @@ export type CashSessionRow = {
   closed_at: string | null;
 };
 
+export async function listCashSessionHistory(
+  outletId?: string | null,
+  limit = 30
+): Promise<CashSessionRow[]> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  let q = supabase
+    .from("cash_sessions")
+    .select(
+      "id, outlet_id, opening_balance, closing_balance, expected_balance, variance, status, opened_at, closed_at"
+    )
+    .eq("organization_id", ctx.organizationId)
+    .order("opened_at", { ascending: false })
+    .limit(limit);
+  const filterOutlet = outletId ?? ctx.outletId;
+  if (filterOutlet) q = q.eq("outlet_id", filterOutlet);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    outlet_id: row.outlet_id,
+    opening_balance: Number(row.opening_balance),
+    closing_balance: row.closing_balance ? Number(row.closing_balance) : null,
+    expected_balance: row.expected_balance
+      ? Number(row.expected_balance)
+      : null,
+    variance: row.variance ? Number(row.variance) : null,
+    status: row.status,
+    opened_at: row.opened_at,
+    closed_at: row.closed_at,
+  }));
+}
+
 export async function getOpenCashSession(
   outletId: string
 ): Promise<CashSessionRow | null> {
@@ -86,6 +119,7 @@ export async function openCashSession(
       return { ok: false, message: error?.message ?? "Open session failed" };
     }
     revalidatePath("/pos");
+    revalidatePath("/finance/cash-sessions");
     return { ok: true, sessionId: data.id };
   } catch (e) {
     return {
@@ -153,6 +187,7 @@ export async function closeCashSession(
       return { ok: false, message: error.message };
     }
     revalidatePath("/pos");
+    revalidatePath("/finance/cash-sessions");
     return { ok: true, variance };
   } catch (e) {
     return {
