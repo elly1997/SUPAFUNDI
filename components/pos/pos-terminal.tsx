@@ -17,6 +17,10 @@ import { toast } from "sonner";
 import { PosCartPanel } from "@/components/pos/pos-cart-panel";
 import { PosCategoryChips } from "@/components/pos/pos-category-chips";
 import { PosCheckoutDialog } from "@/components/pos/pos-checkout-dialog";
+import {
+  PosReceiptPreviewDialog,
+  type ReceiptPreviewLine,
+} from "@/components/pos/pos-receipt-preview-dialog";
 import { PosFavoritesRow } from "@/components/pos/pos-favorites-row";
 import { PosCashflowPanel } from "@/components/pos/pos-cashflow-panel";
 import { PosHeader, type PosOutletOption } from "@/components/pos/pos-header";
@@ -52,7 +56,7 @@ import { formatTzs } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
-import type { AddProductResult } from "@/stores/cartStore";
+import type { AddProductResult, CartLine } from "@/stores/cartStore";
 
 type ReceiptState = {
   invoiceNo: string;
@@ -61,8 +65,15 @@ type ReceiptState = {
   balanceDue: number;
   saleId: string;
   paymentMethod: PaymentMethod;
+  customerName: string;
   lines: { name: string; quantity: number; unitPrice: number }[];
 };
+
+function cartLineTotal(line: CartLine): number {
+  return Math.round(
+    line.quantity * line.unitPrice * (1 - line.discountPct / 100)
+  );
+}
 
 function stockToast(result: AddProductResult) {
   if (result.ok) return;
@@ -93,6 +104,9 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const [amountPaid, setAmountPaid] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [customerName, setCustomerName] = useState<string | null>(null);
+  const [walkInName, setWalkInName] = useState("");
+  const [receiptIssued, setReceiptIssued] = useState(false);
+  const [receiptPreviewOpen, setReceiptPreviewOpen] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptState | null>(null);
   const [mpesaPhone, setMpesaPhone] = useState("");
   const [stkPending, setStkPending] = useState(false);
@@ -193,6 +207,40 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     paymentMethod === "cash" && paidAmount > total
       ? Math.round(paidAmount - total)
       : 0;
+  const balanceDuePreview = Math.max(0, Math.round(total - paidAmount));
+  const needsCustomer =
+    !customerId &&
+    (paymentMethod === "credit_account" || balanceDuePreview > 0);
+
+  const customerLabel = customerId
+    ? (customerName ?? "Registered customer")
+    : walkInName.trim() || "Walk-in customer";
+
+  const receiptPreviewLines: ReceiptPreviewLine[] = useMemo(
+    () =>
+      lines.map((l) => ({
+        name: l.name,
+        unit: l.unit,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        lineTotal: cartLineTotal(l),
+      })),
+    [lines]
+  );
+
+  useEffect(() => {
+    setReceiptIssued(false);
+  }, [lines, customerId, paymentMethod, total, cartDiscount, amountPaid]);
+
+  useEffect(() => {
+    if (lines.length > 0 && paymentMethod === "cash") {
+      setAmountPaid((prev) => {
+        const n = Number(prev);
+        if (!prev || n === 0) return String(Math.round(total));
+        return prev;
+      });
+    }
+  }, [total, lines.length, paymentMethod]);
 
   const addFromProduct = useCallback(
     (p: PosProductRow, quantity = 1) => {
@@ -299,6 +347,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
         balanceDue: result.balanceDue,
         saleId: result.saleId,
         paymentMethod,
+        customerName: customerLabel,
         lines: receiptLines,
       });
       setCheckoutOpen(false);
@@ -308,6 +357,9 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       setAmountPaid("");
       setCustomerId("");
       setCustomerName(null);
+      setWalkInName("");
+      setReceiptIssued(false);
+      setReceiptPreviewOpen(false);
       setPaymentMethod("cash");
       clearPersisted();
       toast.success(
@@ -371,6 +423,75 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     }
   };
 
+  const buildPrintPayload = useCallback(
+    (invoiceNo: string, isPreview: boolean) => {
+      if (!session) return null;
+      const paid = Number(amountPaid) || 0;
+      return {
+        organizationName: session.organizationName,
+        invoiceNo,
+        totalAmount: total,
+        changeGiven:
+          paymentMethod === "cash" && paid > total
+            ? Math.round(paid - total)
+            : 0,
+        balanceDue: balanceDuePreview,
+        paymentMethod,
+        lines: lines.map((l) => ({
+          name: l.name,
+          quantity: l.quantity,
+          unitPrice: l.unitPrice,
+        })),
+        soldAt: new Date(),
+        customerName: customerLabel,
+        subtotal,
+        discountAmount,
+        taxAmount,
+        taxRate,
+        isPreview,
+      };
+    },
+    [
+      session,
+      amountPaid,
+      total,
+      paymentMethod,
+      balanceDuePreview,
+      lines,
+      customerLabel,
+      subtotal,
+      discountAmount,
+      taxAmount,
+      taxRate,
+    ]
+  );
+
+  const handleOpenReceiptPreview = useCallback(() => {
+    if (lines.length === 0) {
+      toast.error("Cart is empty");
+      return;
+    }
+    if (needsCustomer) {
+      toast.error("Select a registered customer for partial or on-account payment");
+      return;
+    }
+    setReceiptPreviewOpen(true);
+  }, [lines.length, needsCustomer]);
+
+  const handlePrintPreviewReceipt = useCallback(() => {
+    const payload = buildPrintPayload("PREVIEW", true);
+    if (!payload) return;
+    printPosReceipt(payload);
+    setReceiptIssued(true);
+    toast.success("Receipt sent to printer");
+  }, [buildPrintPayload]);
+
+  const handleConfirmReceipt = useCallback(() => {
+    setReceiptIssued(true);
+    setReceiptPreviewOpen(false);
+    toast.success("You can complete the sale when ready");
+  }, []);
+
   const handlePrintReceipt = () => {
     if (!receipt || !session) return;
     printPosReceipt({
@@ -382,8 +503,21 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       paymentMethod: receipt.paymentMethod,
       lines: receipt.lines,
       soldAt: new Date(),
+      customerName: receipt.customerName,
     });
   };
+
+  const handleCompleteSale = useCallback(() => {
+    if (!receiptIssued) {
+      toast.error("Issue and review the receipt before completing the sale");
+      return;
+    }
+    if (needsCustomer) {
+      toast.error("Select a registered customer for partial or on-account payment");
+      return;
+    }
+    checkout.mutate();
+  }, [receiptIssued, needsCustomer, checkout]);
 
   const cartSummary =
     lines.length > 0 ? `${itemCount} items · ${formatTzs(total)}` : null;
@@ -408,8 +542,16 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     onAmountPaidChange: setAmountPaid,
     cashChange,
     onSetExactAmount: () => setAmountPaid(String(Math.round(total))),
-    onCompleteSale: () => checkout.mutate(),
+    onIssueReceipt: handleOpenReceiptPreview,
+    onCompleteSale: handleCompleteSale,
+    receiptIssued,
+    needsCustomer,
     isCheckoutPending: checkout.isPending,
+    customerId,
+    onCustomerIdChange: setCustomerId,
+    walkInName,
+    onWalkInNameChange: setWalkInName,
+    onCustomerSelect: handleCustomerSelect,
   };
 
   if (outlets.length === 0) {
@@ -479,7 +621,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                       <div className="relative min-w-0 flex-1">
                       <Search className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
                       <Input
-                        className="pos-touch h-12 rounded-2xl border-0 bg-muted/70 pl-12 pr-4 text-base shadow-inner focus-visible:ring-primary/30"
+                        className="pos-search-input pos-touch h-12 rounded-2xl border border-border pl-12 pr-4 text-base shadow-inner focus-visible:ring-primary/30"
                         placeholder="Search or scan barcode..."
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
@@ -662,6 +804,22 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                 onComplete={() => checkout.mutate()}
                 isPending={checkout.isPending}
                 onCustomerSelect={handleCustomerSelect}
+              />
+
+              <PosReceiptPreviewDialog
+                open={receiptPreviewOpen}
+                onOpenChange={setReceiptPreviewOpen}
+                customerLabel={customerLabel}
+                lines={receiptPreviewLines}
+                subtotal={subtotal}
+                discountAmount={discountAmount}
+                taxAmount={taxAmount}
+                total={total}
+                taxRate={taxRate}
+                paymentMethod={paymentMethod}
+                amountPaid={paidAmount}
+                onPrint={handlePrintPreviewReceipt}
+                onConfirm={handleConfirmReceipt}
               />
 
               <Dialog open={!!receipt} onOpenChange={() => setReceipt(null)}>

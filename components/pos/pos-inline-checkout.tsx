@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Loader2, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,7 +15,10 @@ type Props = {
   onAmountPaidChange: (v: string) => void;
   cashChange: number;
   onSetExact: () => void;
+  onIssueReceipt: () => void;
   onComplete: () => void;
+  receiptIssued: boolean;
+  needsCustomer: boolean;
   disabled: boolean;
   isPending: boolean;
 };
@@ -28,25 +31,40 @@ export function PosInlineCheckout({
   onAmountPaidChange,
   cashChange,
   onSetExact,
+  onIssueReceipt,
   onComplete,
+  receiptIssued,
+  needsCustomer,
   disabled,
   isPending,
 }: Props) {
   return (
     <div className="space-y-3 border-t border-border pt-3">
       <PosPaymentChips value={paymentMethod} onChange={onPaymentMethodChange} />
+      {needsCustomer && (
+        <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+          Partial payment or on-account sale — select a registered customer above
+          (not walk-in).
+        </p>
+      )}
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">Amount paid</Label>
         <Input
           type="number"
           min={0}
-          className="h-11 rounded-xl text-center font-money text-lg font-bold"
+          className="h-11 rounded-xl bg-surface-1 text-center font-money text-lg font-bold text-foreground"
           value={amountPaid}
           onChange={(e) => onAmountPaidChange(e.target.value)}
         />
         {paymentMethod === "cash" && (
           <div className="flex gap-2">
-            <Button type="button" variant="secondary" size="sm" className="flex-1 rounded-lg" onClick={onSetExact}>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="flex-1 rounded-lg"
+              onClick={onSetExact}
+            >
               Exact
             </Button>
             {cashChange > 0 && (
@@ -59,12 +77,31 @@ export function PosInlineCheckout({
       </div>
       <Button
         type="button"
+        variant="secondary"
+        className="h-11 w-full rounded-xl text-sm font-semibold"
+        disabled={disabled}
+        onClick={onIssueReceipt}
+      >
+        <Printer className="mr-2 size-4" />
+        {receiptIssued ? "Review receipt again" : "Issue receipt"}
+      </Button>
+      <Button
+        type="button"
         className="h-12 w-full rounded-xl text-base font-semibold shadow-lg shadow-primary/25"
-        disabled={disabled || isPending}
+        disabled={disabled || !receiptIssued || isPending || needsCustomer}
         onClick={onComplete}
       >
-        {isPending ? <Loader2 className="size-5 animate-spin" /> : `Complete · ${formatTzs(total)}`}
+        {isPending ? (
+          <Loader2 className="size-5 animate-spin" />
+        ) : (
+          `Complete sale · ${formatTzs(total)}`
+        )}
       </Button>
+      {!receiptIssued && !disabled && (
+        <p className="text-center text-xs text-muted-foreground">
+          Issue and check the receipt before completing
+        </p>
+      )}
     </div>
   );
 }

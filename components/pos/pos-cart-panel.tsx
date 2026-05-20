@@ -1,6 +1,7 @@
 "use client";
 
 import { Minus, Plus, ShoppingBag, Trash2 } from "lucide-react";
+import { PosCartCustomer } from "@/components/pos/pos-cart-customer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { PosInlineCheckout } from "@/components/pos/pos-inline-checkout";
 import type { PaymentMethod } from "@/components/pos/pos-payment-chips";
+import type { PosCustomer } from "@/lib/actions/sales";
 import type { AddProductResult, CartLine } from "@/stores/cartStore";
 
 type Props = {
@@ -33,8 +35,16 @@ type Props = {
   onAmountPaidChange?: (v: string) => void;
   cashChange?: number;
   onSetExactAmount?: () => void;
+  onIssueReceipt?: () => void;
   onCompleteSale?: () => void;
+  receiptIssued?: boolean;
+  needsCustomer?: boolean;
   isCheckoutPending?: boolean;
+  customerId?: string;
+  onCustomerIdChange?: (id: string) => void;
+  walkInName?: string;
+  onWalkInNameChange?: (name: string) => void;
+  onCustomerSelect?: (customer: PosCustomer | null) => void;
 };
 
 export function PosCartPanel({
@@ -60,20 +70,38 @@ export function PosCartPanel({
   onAmountPaidChange,
   cashChange = 0,
   onSetExactAmount,
+  onIssueReceipt,
   onCompleteSale,
+  receiptIssued = false,
+  needsCustomer = false,
   isCheckoutPending = false,
+  customerId = "",
+  onCustomerIdChange,
+  walkInName = "",
+  onWalkInNameChange,
+  onCustomerSelect,
 }: Props) {
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col bg-card/40", className)}>
       <div className="flex items-center gap-2 border-b border-border bg-header/60 px-4 py-3">
         <ShoppingBag className="size-5 text-primary" />
-        <h2 className="text-base font-semibold">
+        <h2 className="text-base font-semibold text-foreground">
           Cart
           <span className="ml-1.5 rounded-full bg-primary/15 px-2 py-0.5 text-sm font-bold text-primary">
             {lines.length}
           </span>
         </h2>
       </div>
+
+      {inlineCheckout && onCustomerIdChange && onWalkInNameChange && (
+        <PosCartCustomer
+          customerId={customerId}
+          onCustomerIdChange={onCustomerIdChange}
+          walkInName={walkInName}
+          onWalkInNameChange={onWalkInNameChange}
+          onCustomerSelect={onCustomerSelect}
+        />
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {lines.length === 0 ? (
@@ -96,14 +124,14 @@ export function PosCartPanel({
               return (
                 <li
                   key={line.productId}
-                  className="rounded-2xl border bg-card p-3 shadow-sm"
+                  className="rounded-2xl border border-border bg-card p-3 shadow-sm"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">
+                      <p className="text-sm font-semibold leading-snug text-foreground">
                         {line.name}
                       </p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="mt-0.5 font-mono text-xs text-muted-foreground">
                         {formatTzs(line.unitPrice)} / {line.unit}
                       </p>
                     </div>
@@ -116,13 +144,13 @@ export function PosCartPanel({
                       <Trash2 className="size-4" />
                     </button>
                   </div>
-                  <div className="mt-3 flex items-center justify-between">
+                  <div className="mt-3 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1 rounded-xl bg-muted/80 p-1">
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="size-10 rounded-lg"
+                        className="size-10 rounded-lg text-foreground"
                         onClick={() => {
                           const r = onUpdateQuantity(
                             line.productId,
@@ -133,14 +161,14 @@ export function PosCartPanel({
                       >
                         <Minus className="size-4" />
                       </Button>
-                      <span className="min-w-[2rem] text-center text-base font-bold tabular-nums">
+                      <span className="min-w-[2rem] text-center text-base font-bold tabular-nums text-foreground">
                         {line.quantity}
                       </span>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="size-10 rounded-lg"
+                        className="size-10 rounded-lg text-foreground"
                         disabled={line.quantity >= line.availableStock}
                         onClick={() => {
                           const r = onUpdateQuantity(
@@ -153,7 +181,7 @@ export function PosCartPanel({
                         <Plus className="size-4" />
                       </Button>
                     </div>
-                    <span className="font-money text-base font-bold tabular-nums">
+                    <span className="font-money text-base font-bold tabular-nums text-foreground">
                       {formatTzs(lineTotal)}
                     </span>
                   </div>
@@ -165,7 +193,7 @@ export function PosCartPanel({
       </div>
 
       <div className="shrink-0 space-y-2 border-t bg-card/95 p-4 backdrop-blur-sm">
-        <div className="flex justify-between text-sm">
+        <div className="flex justify-between text-sm text-foreground">
           <span className="text-muted-foreground">Subtotal</span>
           <span className="font-money tabular-nums">{formatTzs(subtotal)}</span>
         </div>
@@ -177,7 +205,7 @@ export function PosCartPanel({
             id="pos-cart-discount"
             type="number"
             min={0}
-            className="h-10 w-28 rounded-xl text-right tabular-nums"
+            className="h-10 w-28 rounded-xl bg-surface-1 text-right tabular-nums text-foreground"
             value={cartDiscount || ""}
             onChange={(e) =>
               onCartDiscountChange(Math.max(0, Number(e.target.value) || 0))
@@ -190,7 +218,7 @@ export function PosCartPanel({
             <span className="tabular-nums">-{formatTzs(discountAmount)}</span>
           </div>
         )}
-        <div className="flex justify-between text-sm">
+        <div className="flex justify-between text-sm text-foreground">
           <span className="text-muted-foreground">VAT ({taxRate}%)</span>
           <span className="tabular-nums">{formatTzs(taxAmount)}</span>
         </div>
@@ -200,7 +228,11 @@ export function PosCartPanel({
             {formatTzs(total)}
           </span>
         </div>
-        {inlineCheckout && onPaymentMethodChange && onAmountPaidChange && onCompleteSale ? (
+        {inlineCheckout &&
+        onPaymentMethodChange &&
+        onAmountPaidChange &&
+        onCompleteSale &&
+        onIssueReceipt ? (
           <PosInlineCheckout
             total={total}
             paymentMethod={paymentMethod}
@@ -209,7 +241,10 @@ export function PosCartPanel({
             onAmountPaidChange={onAmountPaidChange}
             cashChange={cashChange}
             onSetExact={onSetExactAmount ?? (() => {})}
+            onIssueReceipt={onIssueReceipt}
             onComplete={onCompleteSale}
+            receiptIssued={receiptIssued}
+            needsCustomer={needsCustomer}
             disabled={lines.length === 0 || checkoutDisabled}
             isPending={isCheckoutPending}
           />

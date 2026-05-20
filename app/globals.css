@@ -45,6 +45,18 @@
     touch-action: manipulation;
   }
 
+  /* Search must stay readable on surface-1 (not light-on-light) */
+  .pos-search-input {
+    background-color: var(--surface-1, #334155);
+    color: var(--foreground, #f1f5f9);
+    caret-color: var(--primary, #f97316);
+  }
+
+  .pos-search-input::placeholder {
+    color: var(--muted-foreground, #94a3b8);
+    opacity: 1;
+  }
+
   .pos-product-grid {
     contain: layout style;
   }
