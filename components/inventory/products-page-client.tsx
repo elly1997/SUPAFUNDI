@@ -2,16 +2,8 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Copy,
-  Download,
-  FileSpreadsheet,
-  Loader2,
-  Plus,
-  RefreshCw,
-  Search,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Copy, Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import { useForm, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -26,27 +18,16 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { ProductsClearAllDialog } from "@/components/inventory/products-clear-all-dialog";
 import { ProductsDuplicatesDialog } from "@/components/inventory/products-duplicates-dialog";
 import { ProductsPriceListClient } from "@/components/inventory/products-price-list-client";
 import { createProduct, listCategoriesForOrg } from "@/lib/actions/inventory";
-import { importInventoryInChunks } from "@/lib/api/inventory-import-fetch";
+import { fetchProductPriceCatalog } from "@/lib/api/inventory-catalog-fetch";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
+import { canManageSettings, isUserRole } from "@/lib/auth/roles";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
-import { formatTzs } from "@/lib/utils/currency";
-import { downloadInventoryTemplate } from "@/lib/excel/inventory-template";
-import {
-  parseInventoryWorkbook,
-  type InventoryImportRow,
-} from "@/lib/excel/parse-inventory";
 import { generateProductCode } from "@/lib/products/sku";
+import { useAuthStore } from "@/stores/authStore";
 
 const addProductSchema = z
   .object({
@@ -82,49 +63,33 @@ type AddProductForm = z.infer<typeof addProductSchema>;
 
 export function ProductsPageClient() {
   const queryClient = useQueryClient();
+  const role = useAuthStore((s) => s.session?.role ?? null);
+  const outletId = useAuthStore((s) => s.activeOutletId);
+  const canManage = canManageSettings(isUserRole(role ?? "") ? role : null);
   const [search, setSearch] = useState("");
-  const {
-    data: outlets = [],
-    isError: outletsError,
-    error: outletsQueryError,
-  } = useQuery({
+  const { data: outlets = [] } = useQuery({
     queryKey: ["org-outlets"],
     queryFn: fetchOrgOutlets,
   });
 
-  useEffect(() => {
-    if (outletsError && outletsQueryError) {
-      toast.error(
-        outletsQueryError instanceof Error
-          ? outletsQueryError.message
-          : "Could not load outlets"
-      );
-    }
-  }, [outletsError, outletsQueryError]);
+  const { data: catalog = [] } = useQuery({
+    queryKey: ["product-price-catalog", outletId],
+    queryFn: () => fetchProductPriceCatalog(outletId),
+  });
+
   const { data: categories = [] } = useQuery({
     queryKey: ["categories", "org"],
     queryFn: listCategoriesForOrg,
   });
 
   const [addOpen, setAddOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
-  const [importRows, setImportRows] = useState<InventoryImportRow[] | null>(
-    null
-  );
-  const [importOutletId, setImportOutletId] = useState("");
-  const [importProgress, setImportProgress] = useState<string | null>(null);
   const [duplicatesOpen, setDuplicatesOpen] = useState(false);
+  const [clearAllOpen, setClearAllOpen] = useState(false);
 
   const defaultOutletId = useMemo(
     () => resolveDefaultOutletId(outlets) ?? "",
     [outlets]
   );
-
-  useEffect(() => {
-    if (importOpen && defaultOutletId && !importOutletId) {
-      setImportOutletId(defaultOutletId);
-    }
-  }, [importOpen, defaultOutletId, importOutletId]);
 
   const form = useForm<AddProductForm>({
     resolver: zodResolver(addProductSchema) as Resolver<AddProductForm>,
@@ -178,7 +143,9 @@ export function ProductsPageClient() {
           quantity: 0,
           outletId: defaultOutletId,
         });
-        void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
+        void queryClient.invalidateQueries({
+          queryKey: ["product-price-catalog"],
+        });
         void queryClient.invalidateQueries({ queryKey: ["categories"] });
         void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
       } else {
@@ -187,46 +154,6 @@ export function ProductsPageClient() {
     },
     onError: (e) => {
       toast.error(e instanceof Error ? e.message : "Save failed");
-    },
-  });
-
-  const importMutation = useMutation({
-    mutationFn: async () => {
-      if (!importOutletId || !importRows?.length) {
-        throw new Error("Choose an outlet and a valid file.");
-      }
-      setImportProgress("Starting…");
-      return importInventoryInChunks(
-        importOutletId,
-        importRows,
-        (done, total) => setImportProgress(`${done} / ${total} rows`)
-      );
-    },
-    onSuccess: (res) => {
-      setImportProgress(null);
-      if (!res || !Array.isArray(res.errors)) {
-        toast.error("Import failed — no response from server. Try again.");
-        return;
-      }
-      const failed = res.errors.length;
-      if (failed) {
-        toast.warning(
-          `Imported ${res.imported} new, updated ${res.updated}. ${failed} row(s) failed.`
-        );
-      } else {
-        toast.success(
-          `Done: ${res.imported} new products, ${res.updated} updated.`
-        );
-      }
-      setImportOpen(false);
-      setImportRows(null);
-      void queryClient.invalidateQueries({ queryKey: ["products"] });
-      void queryClient.invalidateQueries({ queryKey: ["categories"] });
-      void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
-    },
-    onError: (e) => {
-      setImportProgress(null);
-      toast.error(e instanceof Error ? e.message : "Import failed");
     },
   });
 
@@ -245,18 +172,11 @@ export function ProductsPageClient() {
     setAddOpen(true);
   }, [categories, defaultOutletId, form]);
 
-  const onFile = useCallback(async (file: File | null) => {
-    if (!file) return;
-    const buf = await file.arrayBuffer();
-    const parsed = parseInventoryWorkbook(buf);
-    if (!parsed.ok) {
-      toast.error(parsed.error);
-      setImportRows(null);
-      return;
-    }
-    setImportRows(parsed.rows);
-    toast.success(`Parsed ${parsed.rows.length} row(s). Review and import.`);
-  }, []);
+  const invalidateCatalog = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
+    void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+    void queryClient.invalidateQueries({ queryKey: ["categories"] });
+  }, [queryClient]);
 
   return (
     <div className="space-y-6">
@@ -264,9 +184,10 @@ export function ProductsPageClient() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Products</h1>
           <p className="text-sm text-muted-foreground">
-            Price list for codes and selling prices. Import stock via Excel
-            (duplicate names are rejected). Quantities and valuation live on{" "}
-            <strong className="font-medium text-foreground">Stock</strong>.
+            Price list for codes and selling prices. Import stock from Excel on
+            the{" "}
+            <strong className="font-medium text-foreground">Stock</strong> page.
+            Quantities and valuation are managed there too.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -274,40 +195,35 @@ export function ProductsPageClient() {
             type="button"
             variant="outline"
             onClick={() =>
-              queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] })
+              queryClient.invalidateQueries({
+                queryKey: ["product-price-catalog"],
+              })
             }
           >
             <RefreshCw className="mr-2 size-4" />
             Refresh
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={downloadInventoryTemplate}
-          >
-            <Download className="mr-2 size-4" />
-            Template
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setDuplicatesOpen(true)}
-          >
-            <Copy className="mr-2 size-4" />
-            Remove duplicates
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              setImportOutletId(defaultOutletId);
-              setImportRows(null);
-              setImportOpen(true);
-            }}
-          >
-            <FileSpreadsheet className="mr-2 size-4" />
-            Import Excel
-          </Button>
+          {canManage && (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDuplicatesOpen(true)}
+              >
+                <Copy className="mr-2 size-4" />
+                Remove duplicates
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setClearAllOpen(true)}
+              >
+                <Trash2 className="mr-2 size-4" />
+                Clear all items
+              </Button>
+            </>
+          )}
           <Button type="button" onClick={onOpenAdd}>
             <Plus className="mr-2 size-4" />
             Add product
@@ -325,11 +241,22 @@ export function ProductsPageClient() {
         />
       </div>
 
-      <ProductsPriceListClient search={search} />
+      <ProductsPriceListClient
+        search={search}
+        canManage={canManage}
+        onClearAll={canManage ? () => setClearAllOpen(true) : undefined}
+      />
 
       <ProductsDuplicatesDialog
         open={duplicatesOpen}
         onOpenChange={setDuplicatesOpen}
+      />
+
+      <ProductsClearAllDialog
+        open={clearAllOpen}
+        onOpenChange={setClearAllOpen}
+        productCount={catalog.length}
+        onCleared={invalidateCatalog}
       />
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
@@ -485,121 +412,6 @@ export function ProductsPageClient() {
           </form>
         </DialogContent>
       </Dialog>
-
-      <Dialog open={importOpen} onOpenChange={setImportOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Import from Excel</DialogTitle>
-            <DialogDescription>
-              Same layout as your General Stock list: Page, Code, Name,
-              Category, Quantity, Cost, Retail Price, Unit, Notes. Duplicate
-              product names are rejected. Blank code = auto-generated. Use the
-              same code as an existing item to update its stock only.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Target outlet (stock)</Label>
-              {outlets.length === 0 ? (
-                <p className="text-sm text-destructive">
-                  No outlets loaded — check you are signed in, or add an outlet
-                  in Settings.
-                </p>
-              ) : (
-                <select
-                  aria-label="Target outlet for import"
-                  className="flex h-9 w-full max-w-md rounded-lg border border-input bg-background px-3 text-sm"
-                  value={importOutletId}
-                  onChange={(e) => setImportOutletId(e.target.value)}
-                >
-                  <option value="">Select…</option>
-                  {outlets.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name}
-                      {o.is_default ? " (default)" : ""}
-                      {!o.is_active ? " — inactive" : ""}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="xlsx">Spreadsheet (.xlsx)</Label>
-              <Input
-                id="xlsx"
-                type="file"
-                accept=".xlsx,.xls"
-                onChange={(e) => void onFile(e.target.files?.[0] ?? null)}
-              />
-            </div>
-            {importRows && importRows.length > 0 && (
-              <div className="max-h-48 overflow-auto rounded-md border text-sm">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Code</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Category</TableHead>
-                      <TableHead>Qty</TableHead>
-                      <TableHead>Cost</TableHead>
-                      <TableHead>Retail</TableHead>
-                      <TableHead>Unit</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {importRows.slice(0, 50).map((r, i) => (
-                      <TableRow key={`${r.code}-${i}`}>
-                        <TableCell className="font-mono text-xs">{r.code}</TableCell>
-                        <TableCell>{r.name}</TableCell>
-                        <TableCell>{r.category}</TableCell>
-                        <TableCell>{r.quantity}</TableCell>
-                        <TableCell>
-                          {r.cost != null ? formatTzs(r.cost) : "—"}
-                        </TableCell>
-                        <TableCell>
-                          {r.retailPrice != null ? formatTzs(r.retailPrice) : "—"}
-                        </TableCell>
-                        <TableCell>{r.unit}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {importRows.length > 50 && (
-                  <p className="border-t p-2 text-muted-foreground">
-                    …and {importRows.length - 50} more rows (all will be imported).
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setImportOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={
-                importMutation.isPending ||
-                !importOutletId ||
-                !importRows?.length
-              }
-              onClick={() => importMutation.mutate()}
-            >
-              {importMutation.isPending && (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              )}
-              {importMutation.isPending && importProgress
-                ? importProgress
-                : `Import ${importRows?.length ?? 0} rows`}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
     </div>
   );
 }

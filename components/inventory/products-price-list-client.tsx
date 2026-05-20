@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,9 +24,15 @@ import { useAuthStore } from "@/stores/authStore";
 
 type Props = {
   search?: string;
+  canManage?: boolean;
+  onClearAll?: () => void;
 };
 
-export function ProductsPriceListClient({ search = "" }: Props) {
+export function ProductsPriceListClient({
+  search = "",
+  canManage = false,
+  onClearAll,
+}: Props) {
   const outletId = useAuthStore((s) => s.activeOutletId);
   const queryClient = useQueryClient();
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -76,15 +83,29 @@ export function ProductsPriceListClient({ search = "" }: Props) {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Price list</CardTitle>
-        <CardDescription>
-          Catalogue only — name, code, unit, buying and selling prices. Edits
-          save automatically. Stock quantities are managed on the Stock page.
-          {outletId
-            ? " Buying price applies to your active outlet."
-            : " Select an outlet in the header to edit buying price."}
-        </CardDescription>
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <CardTitle>Price list</CardTitle>
+          <CardDescription>
+            Catalogue only — name, code, unit, buying and selling prices. Edits
+            save automatically. Import and quantities are on the Stock page.
+            {outletId
+              ? " Buying price applies to your active outlet."
+              : " Select an outlet in the header to edit buying price."}
+          </CardDescription>
+        </div>
+        {canManage && onClearAll && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0 text-destructive hover:text-destructive"
+            onClick={onClearAll}
+          >
+            <Trash2 className="mr-2 size-4" />
+            Clear all items
+          </Button>
+        )}
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -113,7 +134,7 @@ export function ProductsPriceListClient({ search = "" }: Props) {
                   <TableRow>
                     <TableCell colSpan={5} className="text-muted-foreground">
                       {rows.length === 0
-                        ? "No products yet. Import a spreadsheet or add one manually."
+                        ? "No products yet. Import on Stock or add one manually."
                         : "No products match your search."}
                     </TableCell>
                   </TableRow>

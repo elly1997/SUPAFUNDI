@@ -56,6 +56,10 @@ export function ProductsDuplicatesDialog({ open, onOpenChange }: Props) {
   const deleteMut = useMutation({
     mutationFn: deleteDuplicateProducts,
     onSuccess: (res) => {
+      if (res.deleted === 0 && res.errors.length === 0) {
+        toast.info("Nothing to delete.");
+        return;
+      }
       if (res.errors.length > 0) {
         toast.warning(
           `Removed ${res.deleted} duplicate(s). ${res.errors.length} could not be deleted (linked to purchases or returns).`

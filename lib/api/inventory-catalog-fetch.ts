@@ -52,6 +52,15 @@ export async function fetchItemStatement(
   return body.lines ?? [];
 }
 
+export async function clearAllCatalogProducts(): Promise<{ deleted: number }> {
+  const res = await fetch("/api/inventory/catalog/clear", {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<{ deleted: number }>;
+}
+
 export async function patchStockQuantity(params: {
   productId: string;
   outletId: string;

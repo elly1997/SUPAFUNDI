@@ -4,13 +4,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ClipboardList,
+  Download,
+  FileSpreadsheet,
   FileText,
   Loader2,
+  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
 import { StockItemStatementDialog } from "@/components/inventory/stock-item-statement-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,7 +29,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { patchStockQuantity } from "@/lib/api/inventory-catalog-fetch";
+import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { suggestPurchaseOrderFromStock } from "@/lib/actions/purchase-orders";
+import { downloadInventoryTemplate } from "@/lib/excel/inventory-template";
+import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import {
   listStockLevels,
   type StockLevelRow,
@@ -53,6 +60,23 @@ export function StockPageClient() {
   const queryClient = useQueryClient();
   const [statementRow, setStatementRow] = useState<StockLevelRow | null>(null);
   const [savingQtyId, setSavingQtyId] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+
+  const { data: outlets = [] } = useQuery({
+    queryKey: ["org-outlets"],
+    queryFn: fetchOrgOutlets,
+  });
+
+  const defaultOutletId = useMemo(
+    () => resolveDefaultOutletId(outlets) ?? "",
+    [outlets]
+  );
+
+  const invalidateAfterImport = () => {
+    void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+    void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
+    void queryClient.invalidateQueries({ queryKey: ["categories"] });
+  };
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["stock-levels", outletId],
@@ -101,7 +125,45 @@ export function StockPageClient() {
   const lowStock = rows.filter((r) => r.stock_status !== "ok");
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Stock</h1>
+          <p className="text-sm text-muted-foreground">
+            Quantity on hand and inventory value by outlet. Use the same Excel
+            template as before to import or update products and stock.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() =>
+              queryClient.invalidateQueries({ queryKey: ["stock-levels"] })
+            }
+          >
+            <RefreshCw className="mr-2 size-4" />
+            Refresh
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={downloadInventoryTemplate}
+          >
+            <Download className="mr-2 size-4" />
+            Template
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setImportOpen(true)}
+          >
+            <FileSpreadsheet className="mr-2 size-4" />
+            Import Excel
+          </Button>
+        </div>
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard
           title="Stock valuation"
@@ -166,7 +228,8 @@ export function StockPageClient() {
             </div>
           ) : rows.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              No stock records. Import products or receive goods.
+              No stock records. Download the template and import Excel, or
+              receive goods.
             </p>
           ) : (
             <Table>
@@ -215,6 +278,14 @@ export function StockPageClient() {
         productId={statementRow?.product_id ?? null}
         productName={statementRow?.product_name ?? ""}
         outletId={outletId}
+      />
+
+      <InventoryImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        outlets={outlets}
+        defaultOutletId={defaultOutletId}
+        onImported={invalidateAfterImport}
       />
     </div>
   );

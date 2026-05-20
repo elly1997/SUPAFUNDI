@@ -8,6 +8,9 @@ import {
 } from "@/lib/inventory/duplicate-products";
 import { requireManagerContext } from "@/lib/server/require-manager";
 
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const { organizationId } = await requireManagerContext();

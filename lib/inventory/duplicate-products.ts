@@ -87,6 +87,8 @@ export async function findDuplicateProductGroups(
   return groups;
 }
 
+const DELETE_BATCH = 150;
+
 export async function deleteProductsByIds(
   organizationId: string,
   productIds: string[]
@@ -94,6 +96,9 @@ export async function deleteProductsByIds(
   deleted: number;
   errors: { id: string; code: string | null; name: string; message: string }[];
 }> {
+  const uniqueIds = Array.from(new Set(productIds));
+  if (uniqueIds.length === 0) return { deleted: 0, errors: [] };
+
   const supabase = await createServerSupabaseClient();
   const errors: {
     id: string;
@@ -103,38 +108,55 @@ export async function deleteProductsByIds(
   }[] = [];
   let deleted = 0;
 
-  for (const id of productIds) {
-    const { data: product } = await supabase
-      .from("products")
-      .select("id, code, name")
-      .eq("id", id)
-      .eq("organization_id", organizationId)
-      .maybeSingle();
-    if (!product) {
-      errors.push({
-        id,
-        code: null,
-        name: "—",
-        message: "Product not found.",
-      });
+  for (let i = 0; i < uniqueIds.length; i += DELETE_BATCH) {
+    const chunk = uniqueIds.slice(i, i + DELETE_BATCH);
+
+    const { error: returnErr } = await supabase
+      .from("supplier_return_items")
+      .delete()
+      .in("product_id", chunk);
+    if (returnErr) {
+      for (const id of chunk) {
+        errors.push({
+          id,
+          code: null,
+          name: "—",
+          message: `Supplier return link: ${returnErr.message}`,
+        });
+      }
       continue;
     }
 
-    const { error } = await supabase
+    const { data: removed, error: delErr } = await supabase
       .from("products")
       .delete()
-      .eq("id", id)
-      .eq("organization_id", organizationId);
+      .eq("organization_id", organizationId)
+      .in("id", chunk)
+      .select("id, code, name");
 
-    if (error) {
-      errors.push({
-        id,
-        code: product.code,
-        name: product.name,
-        message: error.message,
-      });
-    } else {
-      deleted += 1;
+    if (delErr) {
+      for (const id of chunk) {
+        errors.push({
+          id,
+          code: null,
+          name: "—",
+          message: delErr.message,
+        });
+      }
+      continue;
+    }
+
+    const removedIds = new Set((removed ?? []).map((r) => r.id));
+    deleted += removedIds.size;
+    for (const id of chunk) {
+      if (!removedIds.has(id)) {
+        errors.push({
+          id,
+          code: null,
+          name: "—",
+          message: "Product not found or could not be deleted.",
+        });
+      }
     }
   }
 
