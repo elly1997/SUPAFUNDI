@@ -85,12 +85,17 @@ export function StockPageClient() {
 
   const summary = useMemo(() => {
     const totalValue = rows.reduce((s, r) => s + r.stock_value, 0);
+    const totalRetailValue = rows.reduce((s, r) => s + r.retail_stock_value, 0);
+    const withQty = rows.filter((r) => r.quantity > 0);
     return {
       totalValue,
+      totalRetailValue,
       lineCount: rows.length,
+      skusWithQty: withQty.length,
       lowStockCount: rows.filter((r) => r.stock_status === "low").length,
-      outOfStockCount: rows.filter((r) => r.stock_status === "out_of_stock")
-        .length,
+      outOfStockCount: rows.filter(
+        (r) => r.quantity <= 0 && r.reorder_point > 0
+      ).length,
     };
   }, [rows]);
 
@@ -164,16 +169,22 @@ export function StockPageClient() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <KpiCard
           title="Stock valuation"
           value={formatTzs(summary?.totalValue ?? 0)}
-          subtitle="Qty × cost at active outlet"
+          subtitle="Qty × buying (same as price list)"
           variant="inflow"
         />
         <KpiCard
-          title="SKUs on hand"
-          value={String(summary?.lineCount ?? 0)}
+          title="Retail stock value"
+          value={formatTzs(summary?.totalRetailValue ?? 0)}
+          subtitle="Qty × selling from price list"
+        />
+        <KpiCard
+          title="SKUs with qty"
+          value={String(summary?.skusWithQty ?? 0)}
+          subtitle={`${summary?.lineCount ?? 0} products in catalogue`}
         />
         <KpiCard
           title="Low stock"
@@ -228,8 +239,8 @@ export function StockPageClient() {
             </div>
           ) : rows.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              No stock records. Download the template and import Excel, or
-              receive goods.
+              No active products. Add products under Inventory → Products, or
+              import Excel.
             </p>
           ) : (
             <Table>
@@ -239,8 +250,10 @@ export function StockPageClient() {
                   <TableHead>SKU</TableHead>
                   <TableHead>Product</TableHead>
                   <TableHead className="text-right">Qty</TableHead>
-                  <TableHead className="text-right">Unit cost</TableHead>
-                  <TableHead className="text-right">Line value</TableHead>
+                  <TableHead className="text-right">Buying</TableHead>
+                  <TableHead className="text-right">Selling</TableHead>
+                  <TableHead className="text-right">Cost value</TableHead>
+                  <TableHead className="text-right">Sell value</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -339,10 +352,16 @@ function StockRow({
         <span className="ml-1 text-xs text-muted-foreground">{row.unit}</span>
       </TableCell>
       <TableCell className="text-right font-money text-muted-foreground">
-        {formatTzs(row.cost_price)}
+        {row.cost_price > 0 ? formatTzs(row.cost_price) : "—"}
       </TableCell>
       <TableCell className="text-right font-money">
+        {row.retail_price > 0 ? formatTzs(row.retail_price) : "—"}
+      </TableCell>
+      <TableCell className="text-right font-money text-muted-foreground">
         {formatTzs(row.stock_value)}
+      </TableCell>
+      <TableCell className="text-right font-money">
+        {formatTzs(row.retail_stock_value)}
       </TableCell>
       <TableCell className="text-right">
         <div className="flex justify-end gap-1">

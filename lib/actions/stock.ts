@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { listProductPriceCatalog } from "@/lib/actions/inventory";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { fetchByInChunks } from "@/lib/supabase/query-chunks";
@@ -17,7 +18,9 @@ export type StockLevelRow = {
   unit: string;
   quantity: number;
   cost_price: number;
+  retail_price: number;
   stock_value: number;
+  retail_stock_value: number;
   reorder_point: number;
   needs_reorder: boolean;
   stock_status: StockStatus;
@@ -32,88 +35,90 @@ function stockStatus(qty: number, reorder: number): StockStatus {
   return "ok";
 }
 
+/** Stock on hand uses the same product + price rows as Products → Price list. */
 export async function listStockLevels(
   outletId?: string | null
 ): Promise<StockLevelRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
-
   const filterOutlet = outletId ?? ctx.outletId;
+  if (!filterOutlet) return [];
 
-  let stockQuery = supabase
-    .from("stock")
-    .select("outlet_id, product_id, quantity, cost_price")
-    .eq("organization_id", ctx.organizationId);
-  if (filterOutlet) {
-    stockQuery = stockQuery.eq("outlet_id", filterOutlet);
-  }
-  const { data: stockRows, error: stockErr } = await stockQuery;
-  if (stockErr) throw new Error(stockErr.message);
-  if (!stockRows?.length) return [];
+  const catalog = await listProductPriceCatalog(filterOutlet);
+  if (!catalog.length) return [];
 
-  const productIds = Array.from(new Set(stockRows.map((s) => s.product_id)));
-  const outletIds = Array.from(new Set(stockRows.map((s) => s.outlet_id)));
+  const productIds = catalog.map((p) => p.id);
 
   const since = new Date();
   since.setDate(since.getDate() - 30);
   const sinceIso = since.toISOString();
 
   const velocity = new Map<string, number>();
-  if (filterOutlet) {
-    const { data: recentSales } = await supabase
-      .from("sales")
-      .select("id")
-      .eq("organization_id", ctx.organizationId)
-      .eq("outlet_id", filterOutlet)
-      .eq("status", "completed")
-      .gte("sale_date", sinceIso);
-    const saleIds = (recentSales ?? []).map((s) => s.id);
-    const productIdSet = new Set(productIds);
-    if (saleIds.length > 0) {
-      const saleItems = await fetchByInChunks(saleIds, async (saleChunk) => {
-        const { data, error } = await supabase
-          .from("sale_items")
-          .select("product_id, quantity")
-          .in("sale_id", saleChunk);
-        return { data, error };
-      });
-      for (const item of saleItems) {
-        if (!item.product_id || !productIdSet.has(item.product_id)) continue;
-        velocity.set(
-          item.product_id,
-          (velocity.get(item.product_id) ?? 0) + Number(item.quantity)
-        );
-      }
+  const { data: recentSales } = await supabase
+    .from("sales")
+    .select("id")
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", filterOutlet)
+    .eq("status", "completed")
+    .gte("sale_date", sinceIso);
+  const saleIds = (recentSales ?? []).map((s) => s.id);
+  const productIdSet = new Set(productIds);
+  if (saleIds.length > 0) {
+    const saleItems = await fetchByInChunks(saleIds, async (saleChunk) => {
+      const { data, error } = await supabase
+        .from("sale_items")
+        .select("product_id, quantity")
+        .in("sale_id", saleChunk);
+      return { data, error };
+    });
+    for (const item of saleItems) {
+      if (!item.product_id || !productIdSet.has(item.product_id)) continue;
+      velocity.set(
+        item.product_id,
+        (velocity.get(item.product_id) ?? 0) + Number(item.quantity)
+      );
     }
   }
 
-  const [products, outlets] = await Promise.all([
+  const [stockRows, reorderRows, outletRow] = await Promise.all([
+    fetchByInChunks(productIds, async (chunk) => {
+      const { data, error } = await supabase
+        .from("stock")
+        .select("product_id, quantity")
+        .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", filterOutlet)
+        .in("product_id", chunk);
+      return { data, error };
+    }),
     fetchByInChunks(productIds, async (chunk) => {
       const { data, error } = await supabase
         .from("products")
-        .select("id, code, name, unit, reorder_point")
+        .select("id, reorder_point")
         .in("id", chunk);
       return { data, error };
     }),
-    fetchByInChunks(outletIds, async (chunk) => {
-      const { data, error } = await supabase
-        .from("outlets")
-        .select("id, name")
-        .in("id", chunk);
-      return { data, error };
-    }),
+    supabase
+      .from("outlets")
+      .select("id, name")
+      .eq("id", filterOutlet)
+      .maybeSingle(),
   ]);
 
-  const productMap = new Map(products.map((p) => [p.id, p]));
-  const outletMap = new Map(outlets.map((o) => [o.id, o]));
+  const qtyMap = new Map<string, number>();
+  for (const s of stockRows) {
+    qtyMap.set(s.product_id, Number(s.quantity));
+  }
+  const reorderMap = new Map(
+    reorderRows.map((p) => [p.id, Number(p.reorder_point ?? 0)])
+  );
+  const outletName = outletRow.data?.name ?? "—";
 
-  return stockRows.map((row) => {
-    const product = productMap.get(row.product_id);
-    const outlet = outletMap.get(row.outlet_id);
-    const qty = Number(row.quantity);
-    const cost = Number(row.cost_price);
-    const reorder = Number(product?.reorder_point ?? 0);
-    const sold30 = velocity.get(row.product_id) ?? 0;
+  return catalog.map((item) => {
+    const qty = qtyMap.get(item.id) ?? 0;
+    const cost = item.costPrice;
+    const retail = item.retailPrice;
+    const reorder = reorderMap.get(item.id) ?? 0;
+    const sold30 = velocity.get(item.id) ?? 0;
     const avgDaily = roundMoney(sold30 / 30);
     const daysOfCover =
       avgDaily > 0 ? Math.round((qty / avgDaily) * 10) / 10 : null;
@@ -121,15 +126,17 @@ export async function listStockLevels(
     const suggested = Math.max(0, roundMoney(targetQty - qty));
 
     return {
-      outlet_id: row.outlet_id,
-      outlet_name: outlet?.name ?? "—",
-      product_id: row.product_id,
-      code: product?.code ?? null,
-      product_name: product?.name ?? "—",
-      unit: product?.unit ?? "pcs",
+      outlet_id: filterOutlet,
+      outlet_name: outletName,
+      product_id: item.id,
+      code: item.code,
+      product_name: item.name,
+      unit: item.unit,
       quantity: qty,
       cost_price: cost,
-      stock_value: Math.round(qty * cost * 100) / 100,
+      retail_price: retail,
+      stock_value: roundMoney(qty * cost),
+      retail_stock_value: roundMoney(qty * retail),
       reorder_point: reorder,
       needs_reorder: qty <= reorder,
       stock_status: stockStatus(qty, reorder),
@@ -155,8 +162,9 @@ export async function getStockValuationSummary(
     totalValue: roundMoney(rows.reduce((s, r) => s + r.stock_value, 0)),
     lineCount: rows.length,
     lowStockCount: rows.filter((r) => r.stock_status === "low").length,
-    outOfStockCount: rows.filter((r) => r.stock_status === "out_of_stock")
-      .length,
+    outOfStockCount: rows.filter(
+      (r) => r.quantity <= 0 && r.reorder_point > 0
+    ).length,
   };
 }
 

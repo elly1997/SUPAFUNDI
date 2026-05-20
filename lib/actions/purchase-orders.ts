@@ -585,6 +585,7 @@ export async function suggestPurchaseOrderFromStock(
   const lines = levels
     .filter(
       (r) =>
+        r.reorder_point > 0 &&
         r.stock_status !== "ok" &&
         r.suggested_order_qty > 0 &&
         r.cost_price >= 0
