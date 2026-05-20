@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Store } from "lucide-react";
+import { Loader2, Plus, Store, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { fetchSettingsOutlets } from "@/lib/api/settings-team-fetch";
-import { createOutlet, setDefaultOutlet, updateOutlet } from "@/lib/actions/settings";
+import {
+  createOutlet,
+  deleteOutlet,
+  setDefaultOutlet,
+  updateOutlet,
+} from "@/lib/actions/settings";
 import type { OutletRow } from "@/lib/types/settings-team";
 
 export function OutletsSettingsClient() {
@@ -35,6 +40,7 @@ export function OutletsSettingsClient() {
   const [address, setAddress] = useState("");
   const [phone, setPhone] = useState("");
   const [isActive, setIsActive] = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState<OutletRow | null>(null);
   const queryClient = useQueryClient();
 
   const {
@@ -83,6 +89,18 @@ export function OutletsSettingsClient() {
     },
   });
 
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => deleteOutlet(id),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Outlet deleted");
+        setDeleteTarget(null);
+        queryClient.invalidateQueries({ queryKey: ["settings-outlets"] });
+        queryClient.invalidateQueries({ queryKey: ["outlets"] });
+      } else toast.error(r.message);
+    },
+  });
+
   const saveMut = useMutation({
     mutationFn: async () => {
       const payload = {
@@ -121,7 +139,8 @@ export function OutletsSettingsClient() {
       <CardContent>
         <p className="mb-4 text-sm text-muted-foreground">
           Branch codes appear on invoices and POs (e.g. MAIN-2026-00001). Use
-          unique 2–8 character codes per outlet.
+          unique 2–8 character codes per outlet. The main default outlet cannot
+          be deleted; other branches can be removed from this panel.
         </p>
         {isError ? (
           <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm">
@@ -187,9 +206,22 @@ export function OutletsSettingsClient() {
                   </TableCell>
                   <TableCell>{o.is_active ? "Active" : "Inactive"}</TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" onClick={() => openEdit(o)}>
-                      Edit
-                    </Button>
+                    <div className="flex justify-end gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => openEdit(o)}>
+                        Edit
+                      </Button>
+                      {!o.is_default ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => setDeleteTarget(o)}
+                        >
+                          <Trash2 className="mr-1 size-3.5" />
+                          Delete
+                        </Button>
+                      ) : null}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -197,6 +229,36 @@ export function OutletsSettingsClient() {
           </Table>
         )}
       </CardContent>
+
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(v) => {
+          if (!v) setDeleteTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete outlet?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Remove <strong className="text-foreground">{deleteTarget?.name}</strong>
+            {deleteTarget?.code ? ` (${deleteTarget.code})` : ""}? Stock and
+            records for this branch will be removed. This cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMut.isPending || !deleteTarget}
+              onClick={() => deleteTarget && deleteMut.mutate(deleteTarget.id)}
+            >
+              {deleteMut.isPending ? "Deleting…" : "Delete outlet"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={open}

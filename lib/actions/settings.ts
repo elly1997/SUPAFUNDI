@@ -235,6 +235,56 @@ export async function updateOutlet(
   }
 }
 
+export async function deleteOutlet(
+  outletId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const { organizationId } = await requireManager();
+    const admin = createAdminSupabaseClient();
+    const outlets = await loadOutletsForSettings(organizationId);
+    const target = outlets.find((o) => o.id === outletId);
+    if (!target) {
+      return { ok: false, message: "Outlet not found." };
+    }
+    if (target.is_default) {
+      return {
+        ok: false,
+        message: "Cannot delete the main default outlet. Set another branch as default first, or delete other branches only.",
+      };
+    }
+
+    const { count: userCount } = await admin
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", organizationId)
+      .eq("outlet_id", outletId);
+    if ((userCount ?? 0) > 0) {
+      return {
+        ok: false,
+        message:
+          "Reassign or remove users on this outlet before deleting it.",
+      };
+    }
+
+    const { error } = await admin
+      .from("outlets")
+      .delete()
+      .eq("id", outletId)
+      .eq("organization_id", organizationId);
+    if (error) return { ok: false, message: error.message };
+
+    revalidatePath("/settings/outlets");
+    revalidatePath("/settings/general");
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Delete outlet failed",
+    };
+  }
+}
+
 const inviteUserSchema = z.object({
   email: z.string().email(),
   fullName: z.string().min(2).max(200),
