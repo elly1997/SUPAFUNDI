@@ -28,16 +28,12 @@ import { formatTzs } from "@/lib/utils/currency";
 type Props = {
   customerId: string;
   onCustomerIdChange: (id: string) => void;
-  walkInName: string;
-  onWalkInNameChange: (name: string) => void;
   onCustomerSelect?: (customer: PosCustomer | null) => void;
 };
 
 export function PosCartCustomer({
   customerId,
   onCustomerIdChange,
-  walkInName,
-  onWalkInNameChange,
   onCustomerSelect,
 }: Props) {
   const queryClient = useQueryClient();
@@ -88,76 +84,55 @@ export function PosCartCustomer({
   });
 
   const selected = customers.find((c) => c.id === customerId) ?? null;
-  const isWalkIn = !customerId;
+  const displayLabel = selected?.name ?? "Walk-in";
 
   return (
-    <div className="space-y-2 border-b border-border bg-header/40 px-3 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Customer
-        </Label>
+    <>
+      <div className="flex items-center gap-2">
+        <Select
+          value={customerId || "__walkin__"}
+          onValueChange={(v) => {
+            const id = !v || v === "__walkin__" ? "" : v;
+            onCustomerIdChange(id);
+            const c = customers.find((x) => x.id === id) ?? null;
+            onCustomerSelect?.(c);
+          }}
+        >
+          <SelectTrigger
+            className="h-9 min-w-0 flex-1 rounded-lg border-border bg-surface-1 text-sm text-foreground"
+            aria-label="Customer"
+          >
+            <SelectValue>{displayLabel}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__walkin__">Walk-in</SelectItem>
+            {isLoading ? (
+              <SelectItem value="__loading" disabled>
+                Loading…
+              </SelectItem>
+            ) : (
+              customers.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
+                  {c.outstanding_balance > 0
+                    ? ` · ${formatTzs(c.outstanding_balance)}`
+                    : ""}
+                </SelectItem>
+              ))
+            )}
+          </SelectContent>
+        </Select>
         <Button
           type="button"
-          variant="ghost"
-          size="sm"
-          className="h-8 gap-1 text-xs text-primary"
+          variant="outline"
+          size="icon"
+          className="size-9 shrink-0 rounded-lg"
+          title="Add customer"
           onClick={() => setAddOpen(true)}
         >
-          <UserPlus className="size-3.5" />
-          Add new
+          <UserPlus className="size-4" />
         </Button>
       </div>
-      <Select
-        value={customerId || "__walkin__"}
-        onValueChange={(v) => {
-          const id = !v || v === "__walkin__" ? "" : v;
-          onCustomerIdChange(id);
-          const c = customers.find((x) => x.id === id) ?? null;
-          onCustomerSelect?.(c);
-        }}
-      >
-        <SelectTrigger className="h-11 rounded-xl border-border bg-surface-1 text-foreground">
-          <SelectValue placeholder="Select customer" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__walkin__">Walk-in customer</SelectItem>
-          {isLoading ? (
-            <SelectItem value="__loading" disabled>
-              Loading…
-            </SelectItem>
-          ) : (
-            customers.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.name}
-                {c.outstanding_balance > 0
-                  ? ` · owed ${formatTzs(c.outstanding_balance)}`
-                  : ""}
-              </SelectItem>
-            ))
-          )}
-        </SelectContent>
-      </Select>
-      {isWalkIn ? (
-        <div className="space-y-1">
-          <Label htmlFor="pos-walkin-name" className="text-xs text-muted-foreground">
-            Walk-in name (optional, for receipt)
-          </Label>
-          <Input
-            id="pos-walkin-name"
-            className="h-10 rounded-xl bg-surface-1 text-foreground"
-            placeholder="e.g. Walk-in, John Doe"
-            value={walkInName}
-            onChange={(e) => onWalkInNameChange(e.target.value)}
-          />
-        </div>
-      ) : selected ? (
-        <p className="text-xs text-muted-foreground">
-          {selected.price_type === "wholesale" ? "Wholesale pricing" : "Retail pricing"}
-          {selected.credit_limit > 0
-            ? ` · Credit limit ${formatTzs(selected.credit_limit)}`
-            : ""}
-        </p>
-      ) : null}
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="sm:max-w-md">
@@ -201,6 +176,6 @@ export function PosCartCustomer({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

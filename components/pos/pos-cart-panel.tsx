@@ -42,8 +42,6 @@ type Props = {
   isCheckoutPending?: boolean;
   customerId?: string;
   onCustomerIdChange?: (id: string) => void;
-  walkInName?: string;
-  onWalkInNameChange?: (name: string) => void;
   onCustomerSelect?: (customer: PosCustomer | null) => void;
 };
 
@@ -77,45 +75,45 @@ export function PosCartPanel({
   isCheckoutPending = false,
   customerId = "",
   onCustomerIdChange,
-  walkInName = "",
-  onWalkInNameChange,
   onCustomerSelect,
 }: Props) {
+  const itemCount = lines.reduce((s, l) => s + l.quantity, 0);
+
   return (
-    <div className={cn("flex min-h-0 flex-1 flex-col bg-card/40", className)}>
-      <div className="flex items-center gap-2 border-b border-border bg-header/60 px-4 py-3">
-        <ShoppingBag className="size-5 text-primary" />
-        <h2 className="text-base font-semibold text-foreground">
-          Cart
-          <span className="ml-1.5 rounded-full bg-primary/15 px-2 py-0.5 text-sm font-bold text-primary">
-            {lines.length}
+    <div
+      className={cn(
+        "pos-cart-panel grid h-full min-h-0 w-full grid-rows-[auto_minmax(8rem,1fr)_auto_auto] overflow-hidden bg-card/50",
+        className
+      )}
+    >
+      {/* Header */}
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-header/80 px-3 py-2.5">
+        <div className="flex items-center gap-2">
+          <ShoppingBag className="size-5 text-primary" />
+          <h2 className="text-sm font-semibold text-foreground">Cart</h2>
+          <span className="rounded-full bg-primary/20 px-2 py-0.5 text-xs font-bold text-primary">
+            {itemCount}
           </span>
-        </h2>
+        </div>
+        {lines.length > 0 && (
+          <span className="font-money text-sm font-bold text-primary tabular-nums">
+            {formatTzs(total)}
+          </span>
+        )}
       </div>
 
-      {inlineCheckout && onCustomerIdChange && onWalkInNameChange && (
-        <PosCartCustomer
-          customerId={customerId}
-          onCustomerIdChange={onCustomerIdChange}
-          walkInName={walkInName}
-          onWalkInNameChange={onWalkInNameChange}
-          onCustomerSelect={onCustomerSelect}
-        />
-      )}
-
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+      {/* Line items — primary scroll region */}
+      <div className="pos-scroll-area min-h-[8rem] border-b border-border/60 px-2 py-2">
         {lines.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="mb-3 flex size-16 items-center justify-center rounded-2xl bg-muted">
-              <ShoppingBag className="size-8 text-muted-foreground/60" />
-            </div>
-            <p className="font-medium text-foreground">Cart is empty</p>
-            <p className="mt-1 max-w-[200px] text-sm text-muted-foreground">
-              Tap a product to add it to this sale
+          <div className="flex h-full min-h-[8rem] flex-col items-center justify-center px-4 text-center">
+            <ShoppingBag className="mb-2 size-10 text-muted-foreground/40" />
+            <p className="text-sm font-medium text-foreground">No items yet</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Tap products to add them here
             </p>
           </div>
         ) : (
-          <ul className="space-y-2">
+          <ul className="space-y-1.5">
             {lines.map((line) => {
               const lineTotal =
                 line.quantity *
@@ -124,33 +122,33 @@ export function PosCartPanel({
               return (
                 <li
                   key={line.productId}
-                  className="rounded-2xl border border-border bg-card p-3 shadow-sm"
+                  className="rounded-xl border border-border/80 bg-card px-2.5 py-2"
                 >
-                  <div className="flex items-start justify-between gap-2">
+                  <div className="flex gap-2">
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold leading-snug text-foreground">
+                      <p className="line-clamp-2 text-sm font-semibold leading-tight text-foreground">
                         {line.name}
                       </p>
-                      <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-                        {formatTzs(line.unitPrice)} / {line.unit}
+                      <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+                        {formatTzs(line.unitPrice)} × {line.unit}
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => onRemoveLine(line.productId)}
-                      className="flex size-10 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive touch-manipulation"
+                      className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/15 hover:text-destructive touch-manipulation"
                       aria-label={`Remove ${line.name}`}
                     >
-                      <Trash2 className="size-4" />
+                      <Trash2 className="size-3.5" />
                     </button>
                   </div>
-                  <div className="mt-3 flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1 rounded-xl bg-muted/80 p-1">
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <div className="inline-flex items-center rounded-lg border border-border bg-muted/50">
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="size-10 rounded-lg text-foreground"
+                        className="size-8 rounded-l-lg"
                         onClick={() => {
                           const r = onUpdateQuantity(
                             line.productId,
@@ -159,16 +157,16 @@ export function PosCartPanel({
                           if (!r.ok) onStockError(r);
                         }}
                       >
-                        <Minus className="size-4" />
+                        <Minus className="size-3.5" />
                       </Button>
-                      <span className="min-w-[2rem] text-center text-base font-bold tabular-nums text-foreground">
+                      <span className="min-w-[2.25rem] text-center text-sm font-bold tabular-nums text-foreground">
                         {line.quantity}
                       </span>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="size-10 rounded-lg text-foreground"
+                        className="size-8 rounded-r-lg"
                         disabled={line.quantity >= line.availableStock}
                         onClick={() => {
                           const r = onUpdateQuantity(
@@ -178,10 +176,10 @@ export function PosCartPanel({
                           if (!r.ok) onStockError(r);
                         }}
                       >
-                        <Plus className="size-4" />
+                        <Plus className="size-3.5" />
                       </Button>
                     </div>
-                    <span className="font-money text-base font-bold tabular-nums text-foreground">
+                    <span className="font-money text-sm font-bold tabular-nums text-foreground">
                       {formatTzs(lineTotal)}
                     </span>
                   </div>
@@ -192,20 +190,44 @@ export function PosCartPanel({
         )}
       </div>
 
-      <div className="shrink-0 space-y-2 border-t bg-card/95 p-4 backdrop-blur-sm">
-        <div className="flex justify-between text-sm text-foreground">
-          <span className="text-muted-foreground">Subtotal</span>
-          <span className="font-money tabular-nums">{formatTzs(subtotal)}</span>
+      {/* Customer — compact, below items */}
+      {inlineCheckout && onCustomerIdChange && (
+        <div className="shrink-0 space-y-1 border-b border-border/60 px-3 py-2">
+          <Label className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Customer
+          </Label>
+          <PosCartCustomer
+            customerId={customerId}
+            onCustomerIdChange={onCustomerIdChange}
+            onCustomerSelect={onCustomerSelect}
+          />
         </div>
-        <div className="flex items-center justify-between gap-2 text-sm">
-          <Label htmlFor="pos-cart-discount" className="text-muted-foreground">
-            Discount (TZS)
+      )}
+
+      {/* Totals + checkout — shrink only, scroll inside panel above */}
+      <div className="pos-cart-footer shrink-0 space-y-2 overflow-y-auto border-t border-border bg-card/95 px-3 py-2.5">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+          <span className="text-muted-foreground">Subtotal</span>
+          <span className="text-right font-money tabular-nums text-foreground">
+            {formatTzs(subtotal)}
+          </span>
+          <span className="text-muted-foreground">VAT {taxRate}%</span>
+          <span className="text-right tabular-nums text-foreground">
+            {formatTzs(taxAmount)}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Label
+            htmlFor="pos-cart-discount"
+            className="shrink-0 text-xs text-muted-foreground"
+          >
+            Discount
           </Label>
           <Input
             id="pos-cart-discount"
             type="number"
             min={0}
-            className="h-10 w-28 rounded-xl bg-surface-1 text-right tabular-nums text-foreground"
+            className="h-8 flex-1 rounded-lg bg-surface-1 text-right text-sm tabular-nums text-foreground"
             value={cartDiscount || ""}
             onChange={(e) =>
               onCartDiscountChange(Math.max(0, Number(e.target.value) || 0))
@@ -213,18 +235,14 @@ export function PosCartPanel({
           />
         </div>
         {discountAmount > 0 && (
-          <div className="flex justify-between text-sm text-outflow">
-            <span>Discount</span>
+          <div className="flex justify-between text-xs text-outflow">
+            <span>Applied</span>
             <span className="tabular-nums">-{formatTzs(discountAmount)}</span>
           </div>
         )}
-        <div className="flex justify-between text-sm text-foreground">
-          <span className="text-muted-foreground">VAT ({taxRate}%)</span>
-          <span className="tabular-nums">{formatTzs(taxAmount)}</span>
-        </div>
-        <div className="flex items-baseline justify-between pt-1">
-          <span className="text-sm font-medium text-muted-foreground">Total</span>
-          <span className="font-money text-2xl font-bold tabular-nums tracking-tight text-primary">
+        <div className="flex items-baseline justify-between border-t border-border/60 pt-2">
+          <span className="text-xs font-medium text-muted-foreground">Total</span>
+          <span className="font-money text-xl font-bold tabular-nums text-primary">
             {formatTzs(total)}
           </span>
         </div>
@@ -250,8 +268,7 @@ export function PosCartPanel({
           />
         ) : showCheckoutButton ? (
           <Button
-            className="mt-2 h-12 w-full rounded-xl text-base font-semibold shadow-lg shadow-primary/20"
-            size="lg"
+            className="h-11 w-full rounded-xl text-sm font-semibold"
             disabled={lines.length === 0 || checkoutDisabled}
             onClick={onCheckout}
           >

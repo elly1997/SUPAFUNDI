@@ -39,7 +39,7 @@ export function PosInlineCheckout({
   isPending,
 }: Props) {
   return (
-    <div className="space-y-3 border-t border-border pt-3">
+    <div className="space-y-2 border-t border-border/60 pt-2">
       <PosPaymentChips value={paymentMethod} onChange={onPaymentMethodChange} />
       {needsCustomer && (
         <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
@@ -52,7 +52,7 @@ export function PosInlineCheckout({
         <Input
           type="number"
           min={0}
-          className="h-11 rounded-xl bg-surface-1 text-center font-money text-lg font-bold text-foreground"
+          className="h-9 rounded-lg bg-surface-1 text-center font-money text-base font-bold text-foreground"
           value={amountPaid}
           onChange={(e) => onAmountPaidChange(e.target.value)}
         />
@@ -78,7 +78,7 @@ export function PosInlineCheckout({
       <Button
         type="button"
         variant="secondary"
-        className="h-11 w-full rounded-xl text-sm font-semibold"
+        className="h-9 w-full rounded-lg text-sm font-semibold"
         disabled={disabled}
         onClick={onIssueReceipt}
       >
@@ -87,7 +87,7 @@ export function PosInlineCheckout({
       </Button>
       <Button
         type="button"
-        className="h-12 w-full rounded-xl text-base font-semibold shadow-lg shadow-primary/25"
+        className="h-10 w-full rounded-lg text-sm font-semibold shadow-md shadow-primary/20"
         disabled={disabled || !receiptIssued || isPending || needsCustomer}
         onClick={onComplete}
       >

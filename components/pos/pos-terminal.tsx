@@ -104,7 +104,6 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const [amountPaid, setAmountPaid] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [customerName, setCustomerName] = useState<string | null>(null);
-  const [walkInName, setWalkInName] = useState("");
   const [receiptIssued, setReceiptIssued] = useState(false);
   const [receiptPreviewOpen, setReceiptPreviewOpen] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptState | null>(null);
@@ -214,7 +213,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
 
   const customerLabel = customerId
     ? (customerName ?? "Registered customer")
-    : walkInName.trim() || "Walk-in customer";
+    : "Walk-in";
 
   const receiptPreviewLines: ReceiptPreviewLine[] = useMemo(
     () =>
@@ -357,7 +356,6 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       setAmountPaid("");
       setCustomerId("");
       setCustomerName(null);
-      setWalkInName("");
       setReceiptIssued(false);
       setReceiptPreviewOpen(false);
       setPaymentMethod("cash");
@@ -549,8 +547,6 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     isCheckoutPending: checkout.isPending,
     customerId,
     onCustomerIdChange: setCustomerId,
-    walkInName,
-    onWalkInNameChange: setWalkInName,
     onCustomerSelect: handleCustomerSelect,
   };
 
@@ -601,13 +597,13 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
             <>
               <PosWholesaleBanner mode={pricingMode} customerName={customerName} />
 
-              <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(220px,24%)_minmax(0,1fr)_minmax(260px,28%)]">
+              <div className="pos-workspace">
                 <PosCashflowPanel
                   outletId={effectiveOutletId}
                   products={products}
-                  className="hidden lg:flex"
+                  className="hidden min-h-0 overflow-hidden lg:flex"
                 />
-                <section className="flex min-h-0 flex-col border-x border-border pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
+                <section className="pos-catalog-column border-x border-border pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
                   {effectiveOutletId && (
                     <PosFavoritesRow
                       outletId={effectiveOutletId}
@@ -655,7 +651,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                     <PosCategoryChips value={categoryId} onChange={setCategoryId} />
                   </div>
 
-                  <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                  <div className="pos-scroll-area flex-1 p-3">
                     {productsLoading ? (
                       <div className="flex flex-col items-center justify-center gap-3 py-20 text-muted-foreground">
                         <Loader2 className="size-8 animate-spin text-primary" />
@@ -688,9 +684,10 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                   </div>
                 </section>
 
-                <aside className="hidden min-h-0 flex-col bg-muted/20 lg:flex">
+                <aside className="hidden min-h-0 overflow-hidden bg-muted/20 lg:block">
                   <PosCartPanel
                     {...cartPanelProps}
+                    className="h-full"
                     checkoutDisabled={!canSell}
                     showCheckoutButton={false}
                   />
@@ -747,9 +744,10 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                   )}
                 >
                   <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/30" />
-                  <div className="flex min-h-0 flex-1 flex-col">
+                  <div className="flex h-[min(92vh,720px)] min-h-0 flex-col overflow-hidden">
                     <PosCartPanel
                       {...cartPanelProps}
+                      className="h-full"
                       checkoutDisabled={!canSell}
                     />
                   </div>
