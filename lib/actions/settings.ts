@@ -31,6 +31,61 @@ async function requireManager(): Promise<{
   return { userId: ctx.userId, organizationId: ctx.organizationId };
 }
 
+const MIGRATION_HINT =
+  "Run Supabase migrations (outlet is_default + expense categories) in SQL Editor.";
+
+/** Manager settings: service role so lists are reliable and not blocked by RLS edge cases. */
+async function adminListOutletsForOrg(organizationId: string): Promise<OutletRow[]> {
+  const admin = createAdminSupabaseClient();
+  const { data, error } = await admin
+    .from("outlets")
+    .select("id, name, code, address, phone, is_active, is_default")
+    .eq("organization_id", organizationId)
+    .order("is_default", { ascending: false })
+    .order("name");
+
+  if (error?.message?.includes("is_default")) {
+    const { data: fallback, error: err2 } = await admin
+      .from("outlets")
+      .select("id, name, code, address, phone, is_active")
+      .eq("organization_id", organizationId)
+      .order("name");
+    if (err2) {
+      throw new Error(`${err2.message}. ${MIGRATION_HINT}`);
+    }
+    return (fallback ?? []).map((o) => ({
+      ...o,
+      is_default: false,
+    }));
+  }
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+export type UserInviteStatus = "active" | "pending_invite" | "inactive";
+
+function deriveInviteStatus(
+  isActive: boolean,
+  authUser: {
+    invited_at?: string;
+    email_confirmed_at?: string;
+    last_sign_in_at?: string;
+  } | null
+): UserInviteStatus {
+  if (!isActive) return "inactive";
+  if (
+    authUser?.invited_at &&
+    !authUser.email_confirmed_at &&
+    !authUser.last_sign_in_at
+  ) {
+    return "pending_invite";
+  }
+  if (authUser?.invited_at && !authUser.email_confirmed_at) {
+    return "pending_invite";
+  }
+  return "active";
+}
+
 export type OrganizationSettings = {
   id: string;
   name: string;
@@ -156,16 +211,8 @@ export type OutletRow = {
 };
 
 export async function listOutletsSettings(): Promise<OutletRow[]> {
-  const ctx = await requireOrgContext();
-  const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
-    .from("outlets")
-    .select("id, name, code, address, phone, is_active, is_default")
-    .eq("organization_id", ctx.organizationId)
-    .order("is_default", { ascending: false })
-    .order("name");
-  if (error) throw new Error(error.message);
-  return data ?? [];
+  const { organizationId } = await requireManager();
+  return adminListOutletsForOrg(organizationId);
 }
 
 const outletSchema = z.object({
@@ -186,31 +233,47 @@ export async function createOutlet(
   try {
     const input = outletSchema.parse(raw);
     const { organizationId } = await requireManager();
-    const supabase = await createServerSupabaseClient();
+    const admin = createAdminSupabaseClient();
     const code = input.code?.trim().toUpperCase() || null;
-    const { count } = await supabase
-      .from("outlets")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", organizationId);
-    const isFirst = (count ?? 0) === 0;
+    const existing = await adminListOutletsForOrg(organizationId);
+    const isFirst = existing.length === 0;
 
-    const { data, error } = await supabase
+    const baseInsert = {
+      organization_id: organizationId,
+      name: input.name.trim(),
+      code,
+      address: input.address?.trim() || null,
+      phone: input.phone?.trim() || null,
+      is_active: true,
+    };
+
+    let { data, error } = await admin
       .from("outlets")
-      .insert({
-        organization_id: organizationId,
-        name: input.name.trim(),
-        code,
-        address: input.address?.trim() || null,
-        phone: input.phone?.trim() || null,
-        is_active: true,
-        is_default: isFirst,
-      })
+      .insert({ ...baseInsert, is_default: isFirst })
       .select("id")
       .single();
+
+    if (error?.message?.includes("is_default")) {
+      const retry = await admin
+        .from("outlets")
+        .insert(baseInsert)
+        .select("id")
+        .single();
+      data = retry.data;
+      error = retry.error;
+    }
+
     if (error || !data) {
-      return { ok: false, message: error?.message ?? "Create failed" };
+      return {
+        ok: false,
+        message: error?.message
+          ? `${error.message}${error.message.includes("is_default") ? ` ${MIGRATION_HINT}` : ""}`
+          : "Create failed",
+      };
     }
     revalidatePath("/settings/outlets");
+    revalidatePath("/settings/general");
+    revalidatePath("/", "layout");
     return { ok: true, id: data.id };
   } catch (e) {
     return {
@@ -227,9 +290,9 @@ export async function updateOutlet(
   try {
     const input = outletSchema.extend({ isActive: z.boolean() }).parse(raw);
     const { organizationId } = await requireManager();
-    const supabase = await createServerSupabaseClient();
+    const admin = createAdminSupabaseClient();
     const code = input.code?.trim().toUpperCase() || null;
-    const { error } = await supabase
+    const { error } = await admin
       .from("outlets")
       .update({
         name: input.name.trim(),
@@ -242,6 +305,7 @@ export async function updateOutlet(
       .eq("organization_id", organizationId);
     if (error) return { ok: false, message: error.message };
     revalidatePath("/settings/outlets");
+    revalidatePath("/settings/general");
     return { ok: true };
   } catch (e) {
     return {
@@ -259,40 +323,62 @@ export type UserRow = {
   outlet_id: string | null;
   outlet_name: string | null;
   is_active: boolean;
+  invite_status: UserInviteStatus;
+  invited_at: string | null;
 };
 
 export async function listOrganizationUsers(): Promise<UserRow[]> {
-  await requireManager();
-  const ctx = await requireOrgContext();
-  const supabase = await createServerSupabaseClient();
-  const { data: profiles, error } = await supabase
+  const { organizationId } = await requireManager();
+  const admin = createAdminSupabaseClient();
+
+  const { data: profiles, error } = await admin
     .from("profiles")
     .select("id, email, full_name, role, outlet_id, is_active")
-    .eq("organization_id", ctx.organizationId)
+    .eq("organization_id", organizationId)
     .order("full_name");
   if (error) throw new Error(error.message);
 
-  const outletIds = Array.from(
-    new Set(
-      (profiles ?? [])
-        .map((p) => p.outlet_id)
-        .filter((id): id is string => !!id)
-    )
-  );
-  const { data: outlets } = outletIds.length
-    ? await supabase.from("outlets").select("id, name").in("id", outletIds)
-    : { data: [] };
-  const outletMap = new Map((outlets ?? []).map((o) => [o.id, o.name]));
+  const allOutlets = await adminListOutletsForOrg(organizationId);
+  const outletMap = new Map(allOutlets.map((o) => [o.id, o.name]));
 
-  return (profiles ?? []).map((p) => ({
-    id: p.id,
-    email: p.email,
-    full_name: p.full_name,
-    role: p.role,
-    outlet_id: p.outlet_id,
-    outlet_name: p.outlet_id ? (outletMap.get(p.outlet_id) ?? null) : null,
-    is_active: p.is_active,
-  }));
+  const authById = new Map<
+    string,
+    {
+      invited_at?: string;
+      email_confirmed_at?: string;
+      last_sign_in_at?: string;
+    }
+  >();
+
+  await Promise.all(
+    (profiles ?? []).map(async (p) => {
+      const { data: authData, error: authErr } =
+        await admin.auth.admin.getUserById(p.id);
+      if (!authErr && authData?.user) {
+        authById.set(p.id, {
+          invited_at: authData.user.invited_at ?? undefined,
+          email_confirmed_at: authData.user.email_confirmed_at ?? undefined,
+          last_sign_in_at: authData.user.last_sign_in_at ?? undefined,
+        });
+      }
+    })
+  );
+
+  return (profiles ?? []).map((p) => {
+    const authUser = authById.get(p.id) ?? null;
+    const invite_status = deriveInviteStatus(p.is_active, authUser);
+    return {
+      id: p.id,
+      email: p.email,
+      full_name: p.full_name,
+      role: p.role,
+      outlet_id: p.outlet_id,
+      outlet_name: p.outlet_id ? (outletMap.get(p.outlet_id) ?? null) : null,
+      is_active: p.is_active,
+      invite_status,
+      invited_at: authUser?.invited_at ?? null,
+    };
+  });
 }
 
 const inviteUserSchema = z.object({
@@ -351,6 +437,7 @@ export async function inviteOrganizationUser(
     });
 
     revalidatePath("/settings/users");
+    revalidatePath("/settings/general");
     return { ok: true };
   } catch (e) {
     return {
@@ -428,22 +515,22 @@ export async function setDefaultOutlet(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const { organizationId } = await requireManager();
-    const supabase = await createServerSupabaseClient();
+    const admin = createAdminSupabaseClient();
 
-    const { data: outlet } = await supabase
-      .from("outlets")
-      .select("id")
-      .eq("id", outletId)
-      .eq("organization_id", organizationId)
-      .maybeSingle();
-    if (!outlet) return { ok: false, message: "Outlet not found." };
+    const outlets = await adminListOutletsForOrg(organizationId);
+    if (!outlets.some((o) => o.id === outletId)) {
+      return { ok: false, message: "Outlet not found." };
+    }
 
-    await supabase
+    const clear = await admin
       .from("outlets")
       .update({ is_default: false })
       .eq("organization_id", organizationId);
+    if (clear.error?.message?.includes("is_default")) {
+      return { ok: false, message: MIGRATION_HINT };
+    }
 
-    const { error } = await supabase
+    const { error } = await admin
       .from("outlets")
       .update({ is_default: true })
       .eq("id", outletId)

@@ -33,6 +33,7 @@ import {
 import { USER_ROLES } from "@/lib/auth/roles";
 import { listOutletsForOrg } from "@/lib/actions/inventory";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
+import { UserInviteStatusBadge } from "@/components/settings/user-invite-status-badge";
 import {
   inviteOrganizationUser,
   listOrganizationUsers,
@@ -50,7 +51,13 @@ export function UsersSettingsClient() {
   const [isActive, setIsActive] = useState(true);
   const queryClient = useQueryClient();
 
-  const { data: users = [], isLoading } = useQuery({
+  const {
+    data: users = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ["settings-users"],
     queryFn: listOrganizationUsers,
   });
@@ -93,6 +100,7 @@ export function UsersSettingsClient() {
         setOpen(false);
         reset();
         queryClient.invalidateQueries({ queryKey: ["settings-users"] });
+        queryClient.invalidateQueries({ queryKey: ["outlets"] });
       } else toast.error(r.message);
     },
   });
@@ -112,10 +120,25 @@ export function UsersSettingsClient() {
         </Button>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
+        {isError ? (
+          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm">
+            <p className="font-medium text-destructive">Could not load team</p>
+            <p className="mt-1 text-muted-foreground">
+              {error instanceof Error ? error.message : "Unknown error"}
+            </p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>
+              Retry
+            </Button>
+          </div>
+        ) : isLoading ? (
           <div className="flex justify-center py-8">
             <Loader2 className="h-6 w-6 animate-spin" />
           </div>
+        ) : users.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            No team members yet. Use <strong>Invite user</strong> to add staff;
+            pending invites appear here with status.
+          </p>
         ) : (
           <Table>
             <TableHeader>
@@ -135,7 +158,12 @@ export function UsersSettingsClient() {
                   <TableCell>{u.email ?? "—"}</TableCell>
                   <TableCell className="capitalize">{u.role}</TableCell>
                   <TableCell>{u.outlet_name ?? "—"}</TableCell>
-                  <TableCell>{u.is_active ? "Active" : "Inactive"}</TableCell>
+                  <TableCell>
+                    <UserInviteStatusBadge
+                      status={u.invite_status}
+                      invitedAt={u.invited_at}
+                    />
+                  </TableCell>
                   <TableCell className="text-right">
                     <Button
                       variant="ghost"

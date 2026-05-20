@@ -41,7 +41,13 @@ export function OutletsSettingsClient() {
   const [isActive, setIsActive] = useState(true);
   const queryClient = useQueryClient();
 
-  const { data: outlets = [], isLoading } = useQuery({
+  const {
+    data: outlets = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ["settings-outlets"],
     queryFn: listOutletsSettings,
   });
@@ -121,10 +127,33 @@ export function OutletsSettingsClient() {
           Branch codes appear on invoices and POs (e.g. MAIN-2026-00001). Use
           unique 2–8 character codes per outlet.
         </p>
-        {isLoading ? (
+        {isError ? (
+          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm">
+            <p className="font-medium text-destructive">Could not load outlets</p>
+            <p className="mt-1 text-muted-foreground">
+              {error instanceof Error ? error.message : "Unknown error"}
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              If this mentions <code className="text-foreground">is_default</code>,
+              run the Supabase migration{" "}
+              <code className="text-foreground">
+                20260520120000_outlet_default_expense_categories.sql
+              </code>{" "}
+              in the SQL Editor.
+            </p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>
+              Retry
+            </Button>
+          </div>
+        ) : isLoading ? (
           <div className="flex justify-center py-8">
             <Loader2 className="h-6 w-6 animate-spin" />
           </div>
+        ) : outlets.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            No outlets yet. Add your main store and other branches with{" "}
+            <strong>Add outlet</strong>.
+          </p>
         ) : (
           <Table>
             <TableHeader>

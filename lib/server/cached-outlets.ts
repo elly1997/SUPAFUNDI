@@ -22,6 +22,21 @@ export const getCachedOutlets = cache(
       .eq("is_active", true)
       .order("is_default", { ascending: false })
       .order("name");
+    if (error?.message?.includes("is_default")) {
+      const { data: fallback, error: err2 } = await supabase
+        .from("outlets")
+        .select("id, name, code")
+        .eq("organization_id", organizationId)
+        .eq("is_active", true)
+        .order("name");
+      if (err2) throw new Error(err2.message);
+      return (fallback ?? []).map((o) => ({
+        id: o.id,
+        name: o.name,
+        code: o.code,
+        is_default: false,
+      }));
+    }
     if (error) throw new Error(error.message);
     return data ?? [];
   }
