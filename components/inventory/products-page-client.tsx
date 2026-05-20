@@ -3,6 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Copy,
   Download,
   FileSpreadsheet,
   Loader2,
@@ -33,6 +34,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ProductsDuplicatesDialog } from "@/components/inventory/products-duplicates-dialog";
 import { ProductsPriceListClient } from "@/components/inventory/products-price-list-client";
 import { createProduct, listCategoriesForOrg } from "@/lib/actions/inventory";
 import { importInventoryInChunks } from "@/lib/api/inventory-import-fetch";
@@ -111,6 +113,7 @@ export function ProductsPageClient() {
   );
   const [importOutletId, setImportOutletId] = useState("");
   const [importProgress, setImportProgress] = useState<string | null>(null);
+  const [duplicatesOpen, setDuplicatesOpen] = useState(false);
 
   const defaultOutletId = useMemo(
     () => resolveDefaultOutletId(outlets) ?? "",
@@ -288,6 +291,14 @@ export function ProductsPageClient() {
           <Button
             type="button"
             variant="outline"
+            onClick={() => setDuplicatesOpen(true)}
+          >
+            <Copy className="mr-2 size-4" />
+            Remove duplicates
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
             onClick={() => {
               setImportOutletId(defaultOutletId);
               setImportRows(null);
@@ -315,6 +326,11 @@ export function ProductsPageClient() {
       </div>
 
       <ProductsPriceListClient search={search} />
+
+      <ProductsDuplicatesDialog
+        open={duplicatesOpen}
+        onOpenChange={setDuplicatesOpen}
+      />
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
