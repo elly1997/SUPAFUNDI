@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { listOutletsForOrg } from "@/lib/actions/inventory";
+import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { listSuppliersForOrg } from "@/lib/actions/grn";
 import { createSupplierReturn } from "@/lib/actions/supplier-returns";
 import { usePosProducts } from "@/hooks/usePosProducts";
@@ -34,8 +34,8 @@ export function SupplierReturnsClient() {
   >("on_account");
 
   const { data: outlets = [] } = useQuery({
-    queryKey: ["outlets"],
-    queryFn: listOutletsForOrg,
+    queryKey: ["org-outlets"],
+    queryFn: fetchOrgOutlets,
   });
   const { data: suppliers = [] } = useQuery({
     queryKey: ["suppliers"],

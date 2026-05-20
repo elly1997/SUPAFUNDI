@@ -31,7 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { listOutletsForOrg } from "@/lib/actions/inventory";
+import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { listSuppliersForOrg } from "@/lib/actions/grn";
 import {
@@ -71,8 +71,8 @@ export function PurchaseOrdersPageClient() {
     queryFn: listPurchaseOrders,
   });
   const { data: outlets = [], isLoading: outletsLoading } = useQuery({
-    queryKey: ["outlets"],
-    queryFn: listOutletsForOrg,
+    queryKey: ["org-outlets"],
+    queryFn: fetchOrgOutlets,
   });
   const { data: suppliers = [], refetch: refetchSuppliers } = useQuery({
     queryKey: ["suppliers"],

@@ -31,7 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { listOutletsForOrg } from "@/lib/actions/inventory";
+import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { createStockTransfer, listStockTransfers } from "@/lib/actions/transfers";
 import { usePosProducts } from "@/hooks/usePosProducts";
 import { useAuthStore } from "@/stores/authStore";
@@ -61,8 +61,8 @@ export function TransfersPageClient() {
     queryFn: listStockTransfers,
   });
   const { data: outlets = [] } = useQuery({
-    queryKey: ["outlets"],
-    queryFn: listOutletsForOrg,
+    queryKey: ["org-outlets"],
+    queryFn: fetchOrgOutlets,
   });
   const { data: products = [] } = usePosProducts(fromOutletId || null);
 

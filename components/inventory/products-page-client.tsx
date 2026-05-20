@@ -47,8 +47,8 @@ import {
   getProductStockSnapshot,
   importInventoryRows,
   listCategoriesForOrg,
-  listOutletsForOrg,
 } from "@/lib/actions/inventory";
+import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { formatTzs } from "@/lib/utils/currency";
 import type { ProductListRow } from "@/hooks/useProducts";
@@ -94,10 +94,24 @@ type AddProductForm = z.infer<typeof addProductSchema>;
 export function ProductsPageClient() {
   const queryClient = useQueryClient();
   const { data: rows = [], isLoading, isError, error, refetch } = useProducts();
-  const { data: outlets = [] } = useQuery({
-    queryKey: ["outlets", "org"],
-    queryFn: listOutletsForOrg,
+  const {
+    data: outlets = [],
+    isError: outletsError,
+    error: outletsQueryError,
+  } = useQuery({
+    queryKey: ["org-outlets"],
+    queryFn: fetchOrgOutlets,
   });
+
+  useEffect(() => {
+    if (outletsError && outletsQueryError) {
+      toast.error(
+        outletsQueryError instanceof Error
+          ? outletsQueryError.message
+          : "Could not load outlets"
+      );
+    }
+  }, [outletsError, outletsQueryError]);
   const { data: categories = [] } = useQuery({
     queryKey: ["categories", "org"],
     queryFn: listCategoriesForOrg,
@@ -616,19 +630,28 @@ export function ProductsPageClient() {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Target outlet (stock)</Label>
-              <select
-                aria-label="Target outlet for import"
-                className="flex h-9 w-full max-w-md rounded-lg border border-input bg-background px-3 text-sm"
-                value={importOutletId}
-                onChange={(e) => setImportOutletId(e.target.value)}
-              >
-                <option value="">Select…</option>
-                {outlets.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name}
-                  </option>
-                ))}
-              </select>
+              {outlets.length === 0 ? (
+                <p className="text-sm text-destructive">
+                  No outlets loaded — check you are signed in, or add an outlet
+                  in Settings.
+                </p>
+              ) : (
+                <select
+                  aria-label="Target outlet for import"
+                  className="flex h-9 w-full max-w-md rounded-lg border border-input bg-background px-3 text-sm"
+                  value={importOutletId}
+                  onChange={(e) => setImportOutletId(e.target.value)}
+                >
+                  <option value="">Select…</option>
+                  {outlets.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.name}
+                      {o.is_default ? " (default)" : ""}
+                      {!o.is_active ? " — inactive" : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="xlsx">Spreadsheet (.xlsx)</Label>

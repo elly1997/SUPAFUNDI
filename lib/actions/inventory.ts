@@ -493,28 +493,18 @@ export async function listOutletsForOrg(): Promise<
   { id: string; name: string; code: string | null; is_default: boolean }[]
 > {
   const ctx = await requireOrgContext();
-  const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
-    .from("outlets")
-    .select("id, name, code, is_default")
-    .eq("organization_id", ctx.organizationId)
-    .eq("is_active", true)
-    .order("is_default", { ascending: false })
-    .order("name");
-  if (error?.message?.includes("is_default")) {
-    const { data: fallback, error: err2 } = await supabase
-      .from("outlets")
-      .select("id, name, code")
-      .eq("organization_id", ctx.organizationId)
-      .eq("is_active", true)
-      .order("name");
-    if (err2) throw new Error(err2.message);
-    return (fallback ?? []).map((o) => ({ ...o, is_default: false }));
-  }
-  if (error) {
-    throw new Error(error.message);
-  }
-  return data ?? [];
+  const { loadOrgOutlets, outletsForOperations } = await import(
+    "@/lib/data/org-outlets"
+  );
+  const outlets = outletsForOperations(
+    await loadOrgOutlets(ctx.organizationId)
+  );
+  return outlets.map(({ id, name, code, is_default }) => ({
+    id,
+    name,
+    code,
+    is_default,
+  }));
 }
 
 export async function listCategoriesForOrg(): Promise<

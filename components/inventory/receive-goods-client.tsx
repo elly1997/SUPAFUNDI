@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { listOutletsForOrg } from "@/lib/actions/inventory";
+import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { listSuppliersForOrg, receiveGoods } from "@/lib/actions/grn";
 import { usePosProducts } from "@/hooks/usePosProducts";
 import { formatTzs } from "@/lib/utils/currency";
@@ -36,8 +36,8 @@ export function ReceiveGoodsClient() {
   const [unitCost, setUnitCost] = useState(0);
 
   const { data: outlets = [] } = useQuery({
-    queryKey: ["outlets"],
-    queryFn: listOutletsForOrg,
+    queryKey: ["org-outlets"],
+    queryFn: fetchOrgOutlets,
   });
   const { data: suppliers = [] } = useQuery({
     queryKey: ["suppliers"],
