@@ -34,9 +34,9 @@ import { USER_ROLES } from "@/lib/auth/roles";
 import { listOutletsForOrg } from "@/lib/actions/inventory";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { UserInviteStatusBadge } from "@/components/settings/user-invite-status-badge";
+import { fetchSettingsUsers } from "@/lib/api/settings-team-fetch";
 import {
   inviteOrganizationUser,
-  listOrganizationUsers,
   updateOrganizationUser,
 } from "@/lib/actions/settings";
 import type { UserRow } from "@/lib/types/settings-team";
@@ -59,7 +59,7 @@ export function UsersSettingsClient() {
     refetch,
   } = useQuery({
     queryKey: ["settings-users"],
-    queryFn: listOrganizationUsers,
+    queryFn: fetchSettingsUsers,
   });
   const { data: outlets = [] } = useQuery({
     queryKey: ["outlets"],

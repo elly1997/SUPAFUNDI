@@ -23,12 +23,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  createOutlet,
-  listOutletsSettings,
-  setDefaultOutlet,
-  updateOutlet,
-} from "@/lib/actions/settings";
+import { fetchSettingsOutlets } from "@/lib/api/settings-team-fetch";
+import { createOutlet, setDefaultOutlet, updateOutlet } from "@/lib/actions/settings";
 import type { OutletRow } from "@/lib/types/settings-team";
 
 export function OutletsSettingsClient() {
@@ -49,7 +45,7 @@ export function OutletsSettingsClient() {
     refetch,
   } = useQuery({
     queryKey: ["settings-outlets"],
-    queryFn: listOutletsSettings,
+    queryFn: fetchSettingsOutlets,
   });
 
   const resetForm = () => {

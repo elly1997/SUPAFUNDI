@@ -9,128 +9,17 @@ import {
   slugifyExpenseCategory,
   type ExpenseCategory,
 } from "@/lib/constants/expense-categories";
-import { USER_ROLES, canManageSettings, isUserRole } from "@/lib/auth/roles";
-import type { OutletRow, UserInviteStatus, UserRow } from "@/lib/types/settings-team";
+import { USER_ROLES } from "@/lib/auth/roles";
+import { loadOutletsForSettings } from "@/lib/data/settings-team";
 import { requireOrgContext } from "@/lib/server/org-context";
+import { requireManagerContext } from "@/lib/server/require-manager";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { toPlainJson } from "@/lib/utils/plain-json";
-
-export type { OutletRow, UserInviteStatus, UserRow } from "@/lib/types/settings-team";
-
-async function requireManager(): Promise<{
-  userId: string;
-  organizationId: string;
-}> {
-  const ctx = await requireOrgContext();
-  const supabase = await createServerSupabaseClient();
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", ctx.userId)
-    .maybeSingle();
-  if (!profile?.role || !canManageSettings(isUserRole(profile.role) ? profile.role : null)) {
-    throw new Error("Only owners and managers can change settings.");
-  }
-  return { userId: ctx.userId, organizationId: ctx.organizationId };
-}
 
 const MIGRATION_HINT =
   "Run Supabase migrations (outlet is_default + expense categories) in SQL Editor.";
 
-function toPlainOutlet(row: {
-  id: string;
-  name: string;
-  code?: string | null;
-  address?: string | null;
-  phone?: string | null;
-  is_active: boolean;
-  is_default?: boolean;
-}): OutletRow {
-  return {
-    id: String(row.id),
-    name: String(row.name),
-    code: row.code != null ? String(row.code) : null,
-    address: row.address != null ? String(row.address) : null,
-    phone: row.phone != null ? String(row.phone) : null,
-    is_active: Boolean(row.is_active),
-    is_default: Boolean(row.is_default),
-  };
-}
-
-async function fetchAuthInviteMeta(userId: string): Promise<{
-  invited_at?: string;
-  email_confirmed_at?: string;
-  last_sign_in_at?: string;
-} | null> {
-  try {
-    const { createAdminSupabaseClient } = await import("@/lib/supabase/admin");
-    const admin = createAdminSupabaseClient();
-    const { data, error } = await admin.auth.admin.getUserById(userId);
-    if (error || !data?.user) return null;
-    const u = data.user;
-    return {
-      invited_at: u.invited_at ? String(u.invited_at) : undefined,
-      email_confirmed_at: u.email_confirmed_at
-        ? String(u.email_confirmed_at)
-        : undefined,
-      last_sign_in_at: u.last_sign_in_at ? String(u.last_sign_in_at) : undefined,
-    };
-  } catch {
-    return null;
-  }
-}
-
-/** Manager settings outlet list (session client + plain JSON for Server Actions). */
-async function listOutletsForSettingsOrg(
-  organizationId: string
-): Promise<OutletRow[]> {
-  const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
-    .from("outlets")
-    .select("id, name, code, address, phone, is_active, is_default")
-    .eq("organization_id", organizationId)
-    .order("is_default", { ascending: false })
-    .order("name");
-
-  if (error?.message?.includes("is_default")) {
-    const { data: fallback, error: err2 } = await supabase
-      .from("outlets")
-      .select("id, name, code, address, phone, is_active")
-      .eq("organization_id", organizationId)
-      .order("name");
-    if (err2) {
-      throw new Error(`${err2.message}. ${MIGRATION_HINT}`);
-    }
-    return toPlainJson(
-      (fallback ?? []).map((o) => toPlainOutlet({ ...o, is_default: false }))
-    );
-  }
-  if (error) throw new Error(error.message);
-  return toPlainJson((data ?? []).map(toPlainOutlet));
-}
-
-function deriveInviteStatus(
-  isActive: boolean,
-  authUser: {
-    invited_at?: string;
-    email_confirmed_at?: string;
-    last_sign_in_at?: string;
-  } | null
-): UserInviteStatus {
-  if (!isActive) return "inactive";
-  if (
-    authUser?.invited_at &&
-    !authUser.email_confirmed_at &&
-    !authUser.last_sign_in_at
-  ) {
-    return "pending_invite";
-  }
-  if (authUser?.invited_at && !authUser.email_confirmed_at) {
-    return "pending_invite";
-  }
-  return "active";
-}
+const requireManager = requireManagerContext;
 
 export type OrganizationSettings = {
   id: string;
@@ -246,11 +135,6 @@ export async function updateOrganizationSettings(
   }
 }
 
-export async function listOutletsSettings(): Promise<OutletRow[]> {
-  const { organizationId } = await requireManager();
-  return listOutletsForSettingsOrg(organizationId);
-}
-
 const outletSchema = z.object({
   name: z.string().min(2).max(200),
   code: z
@@ -271,7 +155,7 @@ export async function createOutlet(
     const { organizationId } = await requireManager();
     const admin = createAdminSupabaseClient();
     const code = input.code?.trim().toUpperCase() || null;
-    const existing = await listOutletsForSettingsOrg(organizationId);
+    const existing = await loadOutletsForSettings(organizationId);
     const isFirst = existing.length === 0;
 
     const baseInsert = {
@@ -349,47 +233,6 @@ export async function updateOutlet(
       message: e instanceof Error ? e.message : "Update outlet failed",
     };
   }
-}
-
-export async function listOrganizationUsers(): Promise<UserRow[]> {
-  const { organizationId } = await requireManager();
-  const supabase = await createServerSupabaseClient();
-
-  const { data: profiles, error } = await supabase
-    .from("profiles")
-    .select("id, email, full_name, role, outlet_id, is_active")
-    .eq("organization_id", organizationId)
-    .order("full_name");
-  if (error) throw new Error(error.message);
-
-  const allOutlets = await listOutletsForSettingsOrg(organizationId);
-  const outletMap = new Map(allOutlets.map((o) => [o.id, o.name]));
-
-  const authMeta = await Promise.all(
-    (profiles ?? []).map(async (p) => ({
-      id: p.id,
-      meta: await fetchAuthInviteMeta(p.id),
-    }))
-  );
-  const authById = new Map(authMeta.map((a) => [a.id, a.meta]));
-
-  const rows: UserRow[] = (profiles ?? []).map((p) => {
-    const authUser = authById.get(p.id) ?? null;
-    const invite_status = deriveInviteStatus(p.is_active, authUser);
-    return {
-      id: String(p.id),
-      email: p.email != null ? String(p.email) : null,
-      full_name: p.full_name != null ? String(p.full_name) : null,
-      role: String(p.role),
-      outlet_id: p.outlet_id != null ? String(p.outlet_id) : null,
-      outlet_name: p.outlet_id ? (outletMap.get(p.outlet_id) ?? null) : null,
-      is_active: Boolean(p.is_active),
-      invite_status,
-      invited_at: authUser?.invited_at ?? null,
-    };
-  });
-
-  return toPlainJson(rows);
 }
 
 const inviteUserSchema = z.object({
@@ -528,7 +371,7 @@ export async function setDefaultOutlet(
     const { organizationId } = await requireManager();
     const admin = createAdminSupabaseClient();
 
-    const outlets = await listOutletsForSettingsOrg(organizationId);
+    const outlets = await loadOutletsForSettings(organizationId);
     if (!outlets.some((o) => o.id === outletId)) {
       return { ok: false, message: "Outlet not found." };
     }
