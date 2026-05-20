@@ -17,16 +17,17 @@ import { toast } from "sonner";
 import { PosCartPanel } from "@/components/pos/pos-cart-panel";
 import { PosCategoryChips } from "@/components/pos/pos-category-chips";
 import { PosCheckoutDialog } from "@/components/pos/pos-checkout-dialog";
-import {
-  PosReceiptPreviewDialog,
-  type ReceiptPreviewLine,
-} from "@/components/pos/pos-receipt-preview-dialog";
 import { PosFavoritesRow } from "@/components/pos/pos-favorites-row";
 import { PosCashflowPanel } from "@/components/pos/pos-cashflow-panel";
 import { PosHeader, type PosOutletOption } from "@/components/pos/pos-header";
 import { PosProductCard } from "@/components/pos/pos-product-card";
 import { PosQuantityDialog } from "@/components/pos/pos-quantity-dialog";
-import { printPosReceipt } from "@/components/pos/pos-receipt-print";
+import {
+  formatPaymentMethodLabel,
+  getReceiptStamp,
+  printPosReceipt,
+  type ReceiptPrintData,
+} from "@/components/pos/pos-receipt-print";
 import { PosSessionGate } from "@/components/pos/pos-session-gate";
 import { PosWholesaleBanner } from "@/components/pos/pos-wholesale-banner";
 import type { PaymentMethod } from "@/components/pos/pos-payment-chips";
@@ -56,7 +57,7 @@ import { formatTzs } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
-import type { AddProductResult, CartLine } from "@/stores/cartStore";
+import type { AddProductResult } from "@/stores/cartStore";
 
 type ReceiptState = {
   invoiceNo: string;
@@ -67,13 +68,11 @@ type ReceiptState = {
   paymentMethod: PaymentMethod;
   customerName: string;
   lines: { name: string; quantity: number; unitPrice: number }[];
+  subtotal: number;
+  discountAmount: number;
+  taxAmount: number;
+  taxRate: number;
 };
-
-function cartLineTotal(line: CartLine): number {
-  return Math.round(
-    line.quantity * line.unitPrice * (1 - line.discountPct / 100)
-  );
-}
 
 function stockToast(result: AddProductResult) {
   if (result.ok) return;
@@ -104,8 +103,6 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const [amountPaid, setAmountPaid] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [customerName, setCustomerName] = useState<string | null>(null);
-  const [receiptIssued, setReceiptIssued] = useState(false);
-  const [receiptPreviewOpen, setReceiptPreviewOpen] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptState | null>(null);
   const [mpesaPhone, setMpesaPhone] = useState("");
   const [stkPending, setStkPending] = useState(false);
@@ -215,22 +212,6 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     ? (customerName ?? "Registered customer")
     : "Walk-in";
 
-  const receiptPreviewLines: ReceiptPreviewLine[] = useMemo(
-    () =>
-      lines.map((l) => ({
-        name: l.name,
-        unit: l.unit,
-        quantity: l.quantity,
-        unitPrice: l.unitPrice,
-        lineTotal: cartLineTotal(l),
-      })),
-    [lines]
-  );
-
-  useEffect(() => {
-    setReceiptIssued(false);
-  }, [lines, customerId, paymentMethod, total, cartDiscount, amountPaid]);
-
   useEffect(() => {
     if (lines.length > 0 && paymentMethod === "cash") {
       setAmountPaid((prev) => {
@@ -339,7 +320,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
         quantity: l.quantity,
         unitPrice: l.unitPrice,
       }));
-      setReceipt({
+      const saleReceipt: ReceiptState = {
         invoiceNo: result.invoiceNo,
         totalAmount: result.totalAmount,
         changeGiven: result.changeGiven,
@@ -348,7 +329,36 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
         paymentMethod,
         customerName: customerLabel,
         lines: receiptLines,
-      });
+        subtotal,
+        discountAmount,
+        taxAmount,
+        taxRate,
+      };
+      setReceipt(saleReceipt);
+
+      if (session) {
+        const printData: ReceiptPrintData = {
+          organizationName: session.organizationName,
+          invoiceNo: saleReceipt.invoiceNo,
+          totalAmount: saleReceipt.totalAmount,
+          changeGiven: saleReceipt.changeGiven,
+          balanceDue: saleReceipt.balanceDue,
+          paymentMethod: saleReceipt.paymentMethod,
+          lines: saleReceipt.lines,
+          soldAt: new Date(),
+          customerName: saleReceipt.customerName,
+          subtotal: saleReceipt.subtotal,
+          discountAmount: saleReceipt.discountAmount,
+          taxAmount: saleReceipt.taxAmount,
+          taxRate: saleReceipt.taxRate,
+        };
+        if (!printPosReceipt(printData)) {
+          toast.error(
+            "Allow pop-ups to print the receipt, or use Print receipt below"
+          );
+        }
+      }
+
       setCheckoutOpen(false);
       setCartSheetOpen(false);
       clear();
@@ -356,9 +366,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       setAmountPaid("");
       setCustomerId("");
       setCustomerName(null);
-      setReceiptIssued(false);
-      setReceiptPreviewOpen(false);
-      setPaymentMethod("cash");
+        setPaymentMethod("cash");
       clearPersisted();
       toast.success(
         businessDate !== new Date().toISOString().slice(0, 10)
@@ -421,101 +429,42 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     }
   };
 
-  const buildPrintPayload = useCallback(
-    (invoiceNo: string, isPreview: boolean) => {
-      if (!session) return null;
-      const paid = Number(amountPaid) || 0;
-      return {
-        organizationName: session.organizationName,
-        invoiceNo,
-        totalAmount: total,
-        changeGiven:
-          paymentMethod === "cash" && paid > total
-            ? Math.round(paid - total)
-            : 0,
-        balanceDue: balanceDuePreview,
-        paymentMethod,
-        lines: lines.map((l) => ({
-          name: l.name,
-          quantity: l.quantity,
-          unitPrice: l.unitPrice,
-        })),
-        soldAt: new Date(),
-        customerName: customerLabel,
-        subtotal,
-        discountAmount,
-        taxAmount,
-        taxRate,
-        isPreview,
-      };
-    },
-    [
-      session,
-      amountPaid,
-      total,
-      paymentMethod,
-      balanceDuePreview,
-      lines,
-      customerLabel,
-      subtotal,
-      discountAmount,
-      taxAmount,
-      taxRate,
-    ]
-  );
-
-  const handleOpenReceiptPreview = useCallback(() => {
-    if (lines.length === 0) {
-      toast.error("Cart is empty");
-      return;
-    }
-    if (needsCustomer) {
-      toast.error("Select a registered customer for partial or on-account payment");
-      return;
-    }
-    setReceiptPreviewOpen(true);
-  }, [lines.length, needsCustomer]);
-
-  const handlePrintPreviewReceipt = useCallback(() => {
-    const payload = buildPrintPayload("PREVIEW", true);
-    if (!payload) return;
-    printPosReceipt(payload);
-    setReceiptIssued(true);
-    toast.success("Receipt sent to printer");
-  }, [buildPrintPayload]);
-
-  const handleConfirmReceipt = useCallback(() => {
-    setReceiptIssued(true);
-    setReceiptPreviewOpen(false);
-    toast.success("You can complete the sale when ready");
-  }, []);
-
   const handlePrintReceipt = () => {
     if (!receipt || !session) return;
-    printPosReceipt({
-      organizationName: session.organizationName,
-      invoiceNo: receipt.invoiceNo,
-      totalAmount: receipt.totalAmount,
-      changeGiven: receipt.changeGiven,
-      balanceDue: receipt.balanceDue,
-      paymentMethod: receipt.paymentMethod,
-      lines: receipt.lines,
-      soldAt: new Date(),
-      customerName: receipt.customerName,
-    });
+    if (
+      !printPosReceipt({
+        organizationName: session.organizationName,
+        invoiceNo: receipt.invoiceNo,
+        totalAmount: receipt.totalAmount,
+        changeGiven: receipt.changeGiven,
+        balanceDue: receipt.balanceDue,
+        paymentMethod: receipt.paymentMethod,
+        lines: receipt.lines,
+        soldAt: new Date(),
+        customerName: receipt.customerName,
+        subtotal: receipt.subtotal,
+        discountAmount: receipt.discountAmount,
+        taxAmount: receipt.taxAmount,
+        taxRate: receipt.taxRate,
+      })
+    ) {
+      toast.error("Allow pop-ups to print the receipt");
+    }
   };
 
   const handleCompleteSale = useCallback(() => {
-    if (!receiptIssued) {
-      toast.error("Issue and review the receipt before completing the sale");
-      return;
-    }
     if (needsCustomer) {
       toast.error("Select a registered customer for partial or on-account payment");
       return;
     }
     checkout.mutate();
-  }, [receiptIssued, needsCustomer, checkout]);
+  }, [needsCustomer, checkout]);
+
+  const showAmountPaid =
+    paymentMethod === "credit_account" ||
+    (paymentMethod === "cash" &&
+      paidAmount > 0 &&
+      Math.round(paidAmount) !== Math.round(total));
 
   const cartSummary =
     lines.length > 0 ? `${itemCount} items · ${formatTzs(total)}` : null;
@@ -538,12 +487,9 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     onPaymentMethodChange: setPaymentMethod,
     amountPaid,
     onAmountPaidChange: setAmountPaid,
-    cashChange,
-    onSetExactAmount: () => setAmountPaid(String(Math.round(total))),
-    onIssueReceipt: handleOpenReceiptPreview,
     onCompleteSale: handleCompleteSale,
-    receiptIssued,
     needsCustomer,
+    showAmountPaid,
     isCheckoutPending: checkout.isPending,
     customerId,
     onCustomerIdChange: setCustomerId,
@@ -804,22 +750,6 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                 onCustomerSelect={handleCustomerSelect}
               />
 
-              <PosReceiptPreviewDialog
-                open={receiptPreviewOpen}
-                onOpenChange={setReceiptPreviewOpen}
-                customerLabel={customerLabel}
-                lines={receiptPreviewLines}
-                subtotal={subtotal}
-                discountAmount={discountAmount}
-                taxAmount={taxAmount}
-                total={total}
-                taxRate={taxRate}
-                paymentMethod={paymentMethod}
-                amountPaid={paidAmount}
-                onPrint={handlePrintPreviewReceipt}
-                onConfirm={handleConfirmReceipt}
-              />
-
               <Dialog open={!!receipt} onOpenChange={() => setReceipt(null)}>
                 <DialogContent className="overflow-hidden p-0 sm:max-w-sm">
                   <div className="bg-inflow-muted px-6 pb-8 pt-10 text-center">
@@ -830,12 +760,30 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                       <DialogTitle className="text-xl">Sale complete</DialogTitle>
                     </DialogHeader>
                     {receipt && (
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        Invoice{" "}
-                        <strong className="text-foreground">
-                          {receipt.invoiceNo}
-                        </strong>
-                      </p>
+                      <>
+                        <p
+                          className={cn(
+                            "mt-3 inline-block rounded-lg border-2 px-4 py-1.5 text-sm font-extrabold tracking-wider",
+                            getReceiptStamp(receipt) === "credit_sale"
+                              ? "border-warning text-warning"
+                              : "border-foreground text-foreground"
+                          )}
+                        >
+                          {getReceiptStamp(receipt) === "credit_sale"
+                            ? "CREDIT SALE"
+                            : "PAID"}
+                        </p>
+                        <p className="mt-1 text-xs font-semibold text-foreground">
+                          Payment:{" "}
+                          {formatPaymentMethodLabel(receipt.paymentMethod)}
+                        </p>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          Invoice{" "}
+                          <strong className="text-foreground">
+                            {receipt.invoiceNo}
+                          </strong>
+                        </p>
+                      </>
                     )}
                   </div>
                   {receipt && (
@@ -873,7 +821,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                         onClick={handlePrintReceipt}
                       >
                         <Printer className="mr-2 size-4" />
-                        Print receipt
+                        Print again
                       </Button>
                     )}
                     {receipt && receipt.paymentMethod === "mpesa" && (

@@ -26,7 +26,6 @@ const POS_MODULE_HREFS = new Set([
   "/inventory/products",
   "/inventory/stock",
   "/reports",
-  "/finance/expenses",
 ]);
 
 function pickPosModules(tabs: NavItem[]): NavItem[] {

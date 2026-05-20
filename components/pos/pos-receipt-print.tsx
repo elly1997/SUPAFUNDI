@@ -20,6 +20,8 @@ export type ReceiptPrintData = {
   isPreview?: boolean;
 };
 
+export type ReceiptStamp = "paid" | "credit_sale";
+
 const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   cash: "Cash",
   mpesa: "M-Pesa",
@@ -29,7 +31,27 @@ const PAYMENT_LABELS: Record<PaymentMethod, string> = {
   cheque: "Cheque",
 };
 
-export function printPosReceipt(data: ReceiptPrintData) {
+/** Credit stamp when on-account or any balance remains after payment. */
+export function formatPaymentMethodLabel(method: PaymentMethod): string {
+  return PAYMENT_LABELS[method];
+}
+
+export function getReceiptStamp(data: {
+  paymentMethod: PaymentMethod;
+  balanceDue: number;
+}): ReceiptStamp {
+  if (data.paymentMethod === "credit_account" || data.balanceDue > 0) {
+    return "credit_sale";
+  }
+  return "paid";
+}
+
+export function printPosReceipt(data: ReceiptPrintData): boolean {
+  const stamp = getReceiptStamp(data);
+  const stampLabel = stamp === "credit_sale" ? "CREDIT SALE" : "PAID";
+  const stampClass = stamp === "credit_sale" ? "stamp-credit" : "stamp-paid";
+  const paymentLabel = PAYMENT_LABELS[data.paymentMethod];
+
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"/><title>${data.invoiceNo}</title>
 <style>
@@ -41,10 +63,21 @@ export function printPosReceipt(data: ReceiptPrintData) {
   td { padding: 2px 0; vertical-align: top; }
   .right { text-align: right; }
   .total { font-size: 14px; font-weight: bold; }
+  .stamp { text-align: center; font-weight: 800; font-size: 15px; letter-spacing: 0.12em; margin: 10px auto 6px; padding: 6px 14px; border: 2px solid #111; display: inline-block; width: auto; }
+  .stamp-wrap { text-align: center; }
+  .stamp-paid { border-color: #111; }
+  .stamp-credit { border-color: #b45309; color: #b45309; }
+  .pay-method { text-align: center; font-size: 12px; font-weight: 700; margin: 0 0 8px; }
 </style></head><body>
 <h1>${escapeHtml(data.organizationName)}</h1>
 ${data.isPreview ? '<p class="muted" style="font-weight:bold">*** PREVIEW — NOT A TAX INVOICE ***</p>' : ""}
 <p class="muted">${data.soldAt.toLocaleString()}<br/>${escapeHtml(data.invoiceNo)}</p>
+${
+  data.isPreview
+    ? ""
+    : `<div class="stamp-wrap"><div class="stamp ${stampClass}">${stampLabel}</div></div>
+<p class="pay-method">Payment: ${escapeHtml(paymentLabel)}</p>`
+}
 ${data.customerName ? `<p class="muted">Customer: ${escapeHtml(data.customerName)}</p>` : ""}
 <hr/>
 <table>
@@ -73,7 +106,6 @@ ${
     : ""
 }
 <table>
-<tr><td>Payment</td><td class="right">${PAYMENT_LABELS[data.paymentMethod]}</td></tr>
 <tr><td class="total">TOTAL</td><td class="right total">${formatTzs(data.totalAmount)}</td></tr>
 ${
   data.changeGiven > 0
@@ -91,9 +123,10 @@ ${
 </body></html>`;
 
   const w = window.open("", "_blank", "width=320,height=600");
-  if (!w) return;
+  if (!w) return false;
   w.document.write(html);
   w.document.close();
+  return true;
 }
 
 function escapeHtml(s: string) {

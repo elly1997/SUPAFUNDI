@@ -33,12 +33,9 @@ type Props = {
   onPaymentMethodChange?: (m: PaymentMethod) => void;
   amountPaid?: string;
   onAmountPaidChange?: (v: string) => void;
-  cashChange?: number;
-  onSetExactAmount?: () => void;
-  onIssueReceipt?: () => void;
   onCompleteSale?: () => void;
-  receiptIssued?: boolean;
   needsCustomer?: boolean;
+  showAmountPaid?: boolean;
   isCheckoutPending?: boolean;
   customerId?: string;
   onCustomerIdChange?: (id: string) => void;
@@ -66,12 +63,9 @@ export function PosCartPanel({
   onPaymentMethodChange,
   amountPaid = "",
   onAmountPaidChange,
-  cashChange = 0,
-  onSetExactAmount,
-  onIssueReceipt,
   onCompleteSale,
-  receiptIssued = false,
   needsCustomer = false,
+  showAmountPaid = false,
   isCheckoutPending = false,
   customerId = "",
   onCustomerIdChange,
@@ -235,20 +229,16 @@ export function PosCartPanel({
         {inlineCheckout &&
         onPaymentMethodChange &&
         onAmountPaidChange &&
-        onCompleteSale &&
-        onIssueReceipt ? (
+        onCompleteSale ? (
           <PosInlineCheckout
             total={total}
             paymentMethod={paymentMethod}
             onPaymentMethodChange={onPaymentMethodChange}
             amountPaid={amountPaid}
             onAmountPaidChange={onAmountPaidChange}
-            cashChange={cashChange}
-            onSetExact={onSetExactAmount ?? (() => {})}
-            onIssueReceipt={onIssueReceipt}
             onComplete={onCompleteSale}
-            receiptIssued={receiptIssued}
             needsCustomer={needsCustomer}
+            showAmountPaid={showAmountPaid}
             disabled={lines.length === 0 || checkoutDisabled}
             isPending={isCheckoutPending}
           />

@@ -8,16 +8,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { PosBusinessDateStrip } from "@/components/pos/pos-business-date-strip";
 import { PosExpenseCategorySelect } from "@/components/pos/pos-expense-category-select";
-import { PosDaySalesPanel } from "@/components/pos/pos-day-sales-panel";
+import { PosRecordDate } from "@/components/pos/pos-record-date";
 import { listExpenses, recordExpense } from "@/lib/actions/expenses";
 import { listSuppliersForOrg, receiveGoods } from "@/lib/actions/grn";
 import { cn } from "@/lib/utils";
@@ -33,7 +25,7 @@ const EXPENSE_PRESETS = [
   { label: "Fuel", category: "misc", amount: 20000 },
 ] as const;
 
-type Tab = "expense" | "stock" | "sales";
+type Tab = "expense" | "stock";
 
 type Props = {
   outletId: string;
@@ -44,8 +36,6 @@ type Props = {
 export function PosCashflowPanel({ outletId, products, className }: Props) {
   const [tab, setTab] = useState<Tab>("expense");
   const businessDate = useBusinessDateStore((s) => s.businessDate);
-  const [viewFrom, setViewFrom] = useState(businessDate);
-  const [viewTo, setViewTo] = useState(businessDate);
   const [category, setCategory] = useState<string>("misc");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
@@ -57,9 +47,13 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
   const queryClient = useQueryClient();
 
   const { data: expenses = [], isLoading: expensesLoading } = useQuery({
-    queryKey: ["pos-expenses", outletId, viewFrom, viewTo],
+    queryKey: ["pos-expenses", outletId, businessDate],
     queryFn: () =>
-      listExpenses(80, { outletId, fromDate: viewFrom, toDate: viewTo }),
+      listExpenses(80, {
+        outletId,
+        fromDate: businessDate,
+        toDate: businessDate,
+      }),
   });
 
   const { data: suppliers = [] } = useQuery({
@@ -68,10 +62,8 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
     enabled: tab === "stock",
   });
 
-  const rangeExpenses = expenses.filter(
-    (e) => e.expense_date >= viewFrom && e.expense_date <= viewTo
-  );
-  const rangeTotal = rangeExpenses.reduce((s, e) => s + e.amount, 0);
+  const dayExpenses = expenses.filter((e) => e.expense_date === businessDate);
+  const dayTotal = dayExpenses.reduce((s, e) => s + e.amount, 0);
 
   const recordMut = useMutation({
     mutationFn: recordExpense,
@@ -114,22 +106,17 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
           <div className="min-w-0 flex-1">
             <h2 className="text-sm font-semibold text-foreground">Cash out</h2>
             <p className="truncate font-money text-xs text-muted-foreground">
-              Range total {formatTzs(rangeTotal)}
+              {businessDate} · {formatTzs(dayTotal)}
             </p>
           </div>
         </div>
       </div>
 
-      <div className="shrink-0 border-b border-border p-2">
-        <PosBusinessDateStrip
-          viewFrom={viewFrom}
-          viewTo={viewTo}
-          onViewFromChange={setViewFrom}
-          onViewToChange={setViewTo}
-        />
+      <div className="shrink-0 border-b border-border px-2 py-2">
+        <PosRecordDate />
       </div>
 
-      <div className="grid shrink-0 grid-cols-3 gap-1 border-b border-border p-2">
+      <div className="grid shrink-0 grid-cols-2 gap-1 border-b border-border p-2">
         <button
           type="button"
           onClick={() => setTab("expense")}
@@ -152,30 +139,12 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
               : "text-muted-foreground hover:bg-muted/50"
           )}
         >
-          Stock
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("sales")}
-          className={cn(
-            "rounded-lg py-2 text-xs font-semibold touch-manipulation",
-            tab === "sales"
-              ? "bg-inflow/15 text-inflow"
-              : "text-muted-foreground hover:bg-muted/50"
-          )}
-        >
-          Sales
+          Stock buy
         </button>
       </div>
 
       <div className="pos-scroll-area min-h-0 flex-1 p-3">
-        {tab === "sales" ? (
-          <PosDaySalesPanel
-            outletId={outletId}
-            viewFrom={viewFrom}
-            viewTo={viewTo}
-          />
-        ) : tab === "expense" ? (
+        {tab === "expense" ? (
           <div className="space-y-4">
             <form
               className="space-y-3"
@@ -264,17 +233,17 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
 
             <div>
               <p className="mb-2 text-xs font-medium text-muted-foreground">
-                Recent in range
+                Recorded on {businessDate}
               </p>
               {expensesLoading ? (
                 <p className="text-xs text-muted-foreground">Loading…</p>
-              ) : rangeExpenses.length === 0 ? (
+              ) : dayExpenses.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  No expenses in this range
+                  No expenses on this date
                 </p>
               ) : (
                 <ul className="space-y-1.5">
-                  {rangeExpenses.map((e) => (
+                  {dayExpenses.map((e) => (
                     <li
                       key={e.id}
                       className="rounded-lg border border-border bg-card px-2.5 py-2 text-xs"
@@ -335,42 +304,35 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
             >
               <div className="space-y-1">
                 <Label className="text-xs">Supplier</Label>
-                <Select
-                  value={supplierId || "__none__"}
-                  onValueChange={(v) =>
-                    setSupplierId(!v || v === "__none__" ? "" : v)
-                  }
+                <select
+                  aria-label="Supplier"
+                  className="h-9 w-full rounded-lg border border-input bg-surface-1 px-2.5 text-sm text-foreground"
+                  value={supplierId || ""}
+                  onChange={(e) => setSupplierId(e.target.value)}
                 >
-                  <SelectTrigger className="h-9 rounded-lg">
-                    <SelectValue placeholder="No supplier" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-56">
-                    <SelectItem value="__none__">No supplier</SelectItem>
-                    {suppliers.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <option value="">No supplier</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Product</Label>
-                <Select
-                  value={productId || undefined}
-                  onValueChange={(v) => setProductId(v ?? "")}
+                <select
+                  aria-label="Product"
+                  className="h-9 w-full rounded-lg border border-input bg-surface-1 px-2.5 text-sm text-foreground"
+                  value={productId}
+                  onChange={(e) => setProductId(e.target.value)}
                 >
-                  <SelectTrigger className="h-9 rounded-lg">
-                    <SelectValue placeholder="Select product" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-56">
-                    {products.slice(0, 200).map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <option value="">Select product</option>
+                  {products.slice(0, 200).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
