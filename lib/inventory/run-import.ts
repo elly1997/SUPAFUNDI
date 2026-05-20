@@ -2,6 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 import type { InventoryImportRow } from "@/lib/excel/parse-inventory";
+import { normalizeProductName } from "@/lib/products/product-name";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -93,6 +94,21 @@ export async function runInventoryImport(
     categoryCache.set(c.name.trim().toLowerCase(), c.id);
   }
 
+  const { data: existingProducts } = await supabase
+    .from("products")
+    .select("id, code, name")
+    .eq("organization_id", organizationId);
+
+  const byCode = new Map<string, { id: string; name: string }>();
+  const byName = new Map<string, { id: string; code: string | null }>();
+  for (const p of existingProducts ?? []) {
+    if (p.code) byCode.set(p.code.trim().toUpperCase(), { id: p.id, name: p.name });
+    byName.set(normalizeProductName(p.name), {
+      id: p.id,
+      code: p.code,
+    });
+  }
+
   const errors: { code: string; message: string }[] = [];
   let imported = 0;
   let updated = 0;
@@ -132,18 +148,25 @@ export async function runInventoryImport(
         categoryCache.set(name.toLowerCase(), categoryId);
       }
 
-      const { data: existing } = await supabase
-        .from("products")
-        .select("id")
-        .eq("organization_id", organizationId)
-        .eq("code", r.code)
-        .maybeSingle();
+      const nameKey = normalizeProductName(r.name);
+      const codeKey = r.code.trim().toUpperCase();
+      const existingByCode = byCode.get(codeKey);
+      const existingByName = byName.get(nameKey);
+
+      if (
+        existingByName &&
+        (!existingByCode || existingByName.id !== existingByCode.id)
+      ) {
+        throw new Error(
+          `Product name "${r.name}" already exists (code ${existingByName.code ?? "—"}). Use the same code to update stock only.`
+        );
+      }
 
       let productId: string;
       const description = r.notes?.trim() || null;
 
-      if (existing?.id) {
-        productId = existing.id;
+      if (existingByCode?.id) {
+        productId = existingByCode.id;
         const { error: uErr } = await supabase
           .from("products")
           .update({
@@ -176,6 +199,8 @@ export async function runInventoryImport(
         }
         productId = product.id;
         imported += 1;
+        byCode.set(codeKey, { id: productId, name: r.name });
+        byName.set(nameKey, { id: productId, code: r.code });
       }
 
       if (r.retailPrice !== undefined) {

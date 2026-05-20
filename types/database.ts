@@ -539,6 +539,7 @@ export type Database = {
           reference_type: string | null;
           notes: string | null;
           created_by: string | null;
+          created_at: string;
         };
         Insert: {
           id?: string;
@@ -552,6 +553,7 @@ export type Database = {
           reference_type?: string | null;
           notes?: string | null;
           created_by?: string | null;
+          created_at?: string;
         };
         Update: Record<string, never>;
         Relationships: [];

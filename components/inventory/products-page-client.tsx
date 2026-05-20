@@ -6,22 +6,15 @@ import {
   Download,
   FileSpreadsheet,
   Loader2,
-  Pencil,
   Plus,
   RefreshCw,
+  Search,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -40,18 +33,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useProducts } from "@/hooks/useProducts";
-import {
-  adjustProductStock,
-  createProduct,
-  getProductStockSnapshot,
-  listCategoriesForOrg,
-} from "@/lib/actions/inventory";
+import { ProductsPriceListClient } from "@/components/inventory/products-price-list-client";
+import { createProduct, listCategoriesForOrg } from "@/lib/actions/inventory";
 import { importInventoryInChunks } from "@/lib/api/inventory-import-fetch";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { formatTzs } from "@/lib/utils/currency";
-import type { ProductListRow } from "@/hooks/useProducts";
 import { downloadInventoryTemplate } from "@/lib/excel/inventory-template";
 import {
   parseInventoryWorkbook,
@@ -93,7 +80,7 @@ type AddProductForm = z.infer<typeof addProductSchema>;
 
 export function ProductsPageClient() {
   const queryClient = useQueryClient();
-  const { data: rows = [], isLoading, isError, error, refetch } = useProducts();
+  const [search, setSearch] = useState("");
   const {
     data: outlets = [],
     isError: outletsError,
@@ -124,16 +111,6 @@ export function ProductsPageClient() {
   );
   const [importOutletId, setImportOutletId] = useState("");
   const [importProgress, setImportProgress] = useState<string | null>(null);
-  const [adjustOpen, setAdjustOpen] = useState(false);
-  const [adjustProduct, setAdjustProduct] = useState<ProductListRow | null>(
-    null
-  );
-  const [adjustOutletId, setAdjustOutletId] = useState("");
-  const [adjustQty, setAdjustQty] = useState("");
-  const [adjustCost, setAdjustCost] = useState("");
-  const [adjustRetail, setAdjustRetail] = useState("");
-  const [adjustUnit, setAdjustUnit] = useState("");
-  const [adjustLoading, setAdjustLoading] = useState(false);
 
   const defaultOutletId = useMemo(
     () => resolveDefaultOutletId(outlets) ?? "",
@@ -198,8 +175,9 @@ export function ProductsPageClient() {
           quantity: 0,
           outletId: defaultOutletId,
         });
-        void queryClient.invalidateQueries({ queryKey: ["products"] });
+        void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
         void queryClient.invalidateQueries({ queryKey: ["categories"] });
+        void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
       } else {
         toast.error(res.message);
       }
@@ -264,87 +242,6 @@ export function ProductsPageClient() {
     setAddOpen(true);
   }, [categories, defaultOutletId, form]);
 
-  const adjustMutation = useMutation({
-    mutationFn: async () => {
-      if (!adjustProduct || !adjustOutletId) {
-        throw new Error("Choose an outlet.");
-      }
-      const quantity =
-        adjustQty.trim() === "" ? undefined : Number(adjustQty);
-      const costPrice =
-        adjustCost.trim() === "" ? undefined : Number(adjustCost);
-      const retailPrice =
-        adjustRetail.trim() === "" ? undefined : Number(adjustRetail);
-      const unit = adjustUnit.trim() === "" ? undefined : adjustUnit.trim();
-      if (
-        quantity === undefined &&
-        costPrice === undefined &&
-        retailPrice === undefined &&
-        unit === undefined
-      ) {
-        throw new Error("Enter at least one value to update.");
-      }
-      return adjustProductStock({
-        productId: adjustProduct.id,
-        outletId: adjustOutletId,
-        quantity,
-        costPrice,
-        retailPrice,
-        unit,
-      });
-    },
-    onSuccess: (res) => {
-      if (res.ok) {
-        toast.success("Stock and pricing updated");
-        setAdjustOpen(false);
-        setAdjustProduct(null);
-        void queryClient.invalidateQueries({ queryKey: ["products"] });
-        void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
-      } else {
-        toast.error(res.message);
-      }
-    },
-    onError: (e) => {
-      toast.error(e instanceof Error ? e.message : "Update failed");
-    },
-  });
-
-  const openAdjust = useCallback(
-    async (row: ProductListRow) => {
-      const outletId = defaultOutletId;
-      if (!outletId) {
-        toast.error("Add an outlet in Settings first.");
-        return;
-      }
-      setAdjustProduct(row);
-      setAdjustOutletId(outletId);
-      setAdjustUnit(row.unit);
-      setAdjustQty("");
-      setAdjustCost("");
-      setAdjustRetail("");
-      setAdjustOpen(true);
-      setAdjustLoading(true);
-      try {
-        const snap = await getProductStockSnapshot(row.id, outletId);
-        if (snap) {
-          setAdjustQty(String(snap.quantity));
-          setAdjustCost(
-            snap.costPrice > 0 ? String(snap.costPrice) : ""
-          );
-          setAdjustRetail(
-            snap.retailPrice != null && snap.retailPrice > 0
-              ? String(snap.retailPrice)
-              : ""
-          );
-          setAdjustUnit(snap.unit);
-        }
-      } finally {
-        setAdjustLoading(false);
-      }
-    },
-    [defaultOutletId]
-  );
-
   const onFile = useCallback(async (file: File | null) => {
     if (!file) return;
     const buf = await file.arrayBuffer();
@@ -364,15 +261,19 @@ export function ProductsPageClient() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Products</h1>
           <p className="text-sm text-muted-foreground">
-            Import your stock list (Page, Code, Name, Category, Quantity, Cost,
-            Retail Price, Unit, Notes). Blank codes auto-generate; missing cost
-            or retail prices are OK — use{" "}
-            <strong className="font-medium text-foreground">Adjust</strong> to
-            fill them in later.
+            Price list for codes and selling prices. Import stock via Excel
+            (duplicate names are rejected). Quantities and valuation live on{" "}
+            <strong className="font-medium text-foreground">Stock</strong>.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={() => refetch()}>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() =>
+              queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] })
+            }
+          >
             <RefreshCw className="mr-2 size-4" />
             Refresh
           </Button>
@@ -403,76 +304,17 @@ export function ProductsPageClient() {
         </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Catalogue</CardTitle>
-          <CardDescription>
-            Showing up to 500 products. Larger catalogues will use search and
-            pagination in a follow-up.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-              Loading products…
-            </div>
-          ) : isError ? (
-            <p className="text-sm text-destructive">
-              {error instanceof Error ? error.message : "Could not load products."}
-            </p>
-          ) : (
-            <div className="overflow-x-auto rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Code</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Unit</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={6} className="text-muted-foreground">
-                        No products yet. Import a spreadsheet or add one manually.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    rows.map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell className="font-mono text-xs">
-                          {r.code ?? "—"}
-                        </TableCell>
-                        <TableCell>{r.name}</TableCell>
-                        <TableCell>{r.categoryName}</TableCell>
-                        <TableCell>{r.unit}</TableCell>
-                        <TableCell>
-                          {r.is_active ? "Active" : "Inactive"}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void openAdjust(r)}
-                          >
-                            <Pencil className="mr-1 size-3.5" />
-                            Adjust
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <div className="relative max-w-md">
+        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          className="pl-9"
+          placeholder="Search name or code…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+
+      <ProductsPriceListClient search={search} />
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
@@ -634,10 +476,9 @@ export function ProductsPageClient() {
             <DialogTitle>Import from Excel</DialogTitle>
             <DialogDescription>
               Same layout as your General Stock list: Page, Code, Name,
-              Category, Quantity, Cost, Retail Price, Unit, Notes. Cost and
-              retail may be blank; quantities like{" "}
-              <code className="text-xs">22+</code> are accepted. Blank code =
-              auto-generated.
+              Category, Quantity, Cost, Retail Price, Unit, Notes. Duplicate
+              product names are rejected. Blank code = auto-generated. Use the
+              same code as an existing item to update its stock only.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -743,148 +584,6 @@ export function ProductsPageClient() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={adjustOpen} onOpenChange={setAdjustOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Adjust stock &amp; pricing</DialogTitle>
-            <DialogDescription>
-              {adjustProduct ? (
-                <>
-                  <span className="font-medium text-foreground">
-                    {adjustProduct.name}
-                  </span>
-                  {adjustProduct.code ? (
-                    <>
-                      {" "}
-                      (<code className="text-xs">{adjustProduct.code}</code>)
-                    </>
-                  ) : null}
-                  . Leave a field blank to keep its current value.
-                </>
-              ) : (
-                "Update quantity, cost, retail price, or unit for the selected outlet."
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          {adjustLoading ? (
-            <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-              Loading current stock…
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Outlet</Label>
-                <select
-                  aria-label="Outlet for adjustment"
-                  className="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                  value={adjustOutletId}
-                  onChange={async (e) => {
-                    const id = e.target.value;
-                    setAdjustOutletId(id);
-                    if (adjustProduct && id) {
-                      setAdjustLoading(true);
-                      try {
-                        const snap = await getProductStockSnapshot(
-                          adjustProduct.id,
-                          id
-                        );
-                        if (snap) {
-                          setAdjustQty(String(snap.quantity));
-                          setAdjustCost(
-                            snap.costPrice > 0 ? String(snap.costPrice) : ""
-                          );
-                          setAdjustRetail(
-                            snap.retailPrice != null && snap.retailPrice > 0
-                              ? String(snap.retailPrice)
-                              : ""
-                          );
-                          setAdjustUnit(snap.unit);
-                        }
-                      } finally {
-                        setAdjustLoading(false);
-                      }
-                    }
-                  }}
-                >
-                  <option value="">Select…</option>
-                  {outlets.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="adjust-unit">Unit</Label>
-                <Input
-                  id="adjust-unit"
-                  value={adjustUnit}
-                  onChange={(e) => setAdjustUnit(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="adjust-qty">Quantity</Label>
-                <Input
-                  id="adjust-qty"
-                  type="number"
-                  min={0}
-                  step="0.001"
-                  value={adjustQty}
-                  onChange={(e) => setAdjustQty(e.target.value)}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="adjust-cost">Cost (TZS)</Label>
-                  <Input
-                    id="adjust-cost"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="Optional"
-                    value={adjustCost}
-                    onChange={(e) => setAdjustCost(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="adjust-retail">Retail (TZS)</Label>
-                  <Input
-                    id="adjust-retail"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="Optional"
-                    value={adjustRetail}
-                    onChange={(e) => setAdjustRetail(e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setAdjustOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={
-                adjustMutation.isPending || adjustLoading || !adjustOutletId
-              }
-              onClick={() => adjustMutation.mutate()}
-            >
-              {adjustMutation.isPending && (
-                <Loader2 className="mr-2 size-4 animate-spin" />
-              )}
-              Save changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

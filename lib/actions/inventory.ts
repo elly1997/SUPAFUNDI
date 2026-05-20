@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { normalizeProductName } from "@/lib/products/product-name";
 import { generateProductCode } from "@/lib/products/sku";
 import { requireOrgContext } from "@/lib/server/org-context";
 import type { InventoryImportRow } from "@/lib/excel/parse-inventory";
@@ -139,6 +140,21 @@ export async function createProduct(
 
       if (existing?.id) {
         return { ok: false, message: `Product code "${code}" already exists.` };
+      }
+
+      const { data: allNames } = await supabase
+        .from("products")
+        .select("id, name")
+        .eq("organization_id", ctx.organizationId);
+      const nameKey = normalizeProductName(input.name);
+      const nameClash = (allNames ?? []).find(
+        (p) => normalizeProductName(p.name) === nameKey
+      );
+      if (nameClash) {
+        return {
+          ok: false,
+          message: `Product name "${input.name.trim()}" already exists.`,
+        };
       }
 
       const { data: product, error: pErr } = await supabase
@@ -345,6 +361,161 @@ export async function getProductStockSnapshot(
     retailPrice: price?.price != null ? Number(price.price) : null,
     unit: product.unit,
   };
+}
+
+export type ProductPriceCatalogRow = {
+  id: string;
+  name: string;
+  code: string | null;
+  unit: string;
+  costPrice: number;
+  retailPrice: number;
+};
+
+export async function listProductPriceCatalog(
+  outletId?: string | null
+): Promise<ProductPriceCatalogRow[]> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const costOutletId = outletId ?? ctx.outletId;
+
+  const { data: products, error } = await supabase
+    .from("products")
+    .select("id, name, code, unit")
+    .eq("organization_id", ctx.organizationId)
+    .eq("is_active", true)
+    .order("name");
+  if (error) throw new Error(error.message);
+  if (!products?.length) return [];
+
+  const ids = products.map((p) => p.id);
+  const [{ data: prices }, { data: stockRows }] = await Promise.all([
+    supabase
+      .from("product_prices")
+      .select("product_id, price")
+      .in("product_id", ids)
+      .eq("price_type", "retail")
+      .is("effective_to", null),
+    costOutletId
+      ? supabase
+          .from("stock")
+          .select("product_id, cost_price")
+          .eq("outlet_id", costOutletId)
+          .in("product_id", ids)
+      : Promise.resolve({ data: [] as { product_id: string; cost_price: number }[] }),
+  ]);
+
+  const retailMap = new Map<string, number>();
+  for (const p of prices ?? []) {
+    if (!retailMap.has(p.product_id)) {
+      retailMap.set(p.product_id, Number(p.price));
+    }
+  }
+  const costMap = new Map<string, number>();
+  for (const s of stockRows ?? []) {
+    costMap.set(s.product_id, Number(s.cost_price));
+  }
+
+  return products.map((p) => ({
+    id: p.id,
+    name: p.name,
+    code: p.code,
+    unit: p.unit,
+    costPrice: costMap.get(p.id) ?? 0,
+    retailPrice: retailMap.get(p.id) ?? 0,
+  }));
+}
+
+const catalogPatchInput = z.object({
+  productId: z.string().uuid(),
+  outletId: z.string().uuid().optional(),
+  field: z.enum(["code", "unit", "costPrice", "retailPrice"]),
+  value: z.union([z.string(), z.number()]),
+});
+
+export async function patchProductCatalogField(
+  raw: z.infer<typeof catalogPatchInput>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const input = catalogPatchInput.parse(raw);
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: product } = await supabase
+      .from("products")
+      .select("id, name, code")
+      .eq("id", input.productId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!product) return { ok: false, message: "Product not found." };
+
+    if (input.field === "code") {
+      const code = String(input.value).trim();
+      if (!code) return { ok: false, message: "Code cannot be empty." };
+      const { data: clash } = await supabase
+        .from("products")
+        .select("id")
+        .eq("organization_id", ctx.organizationId)
+        .eq("code", code)
+        .neq("id", input.productId)
+        .maybeSingle();
+      if (clash) return { ok: false, message: `Code "${code}" is already used.` };
+      const { error } = await supabase
+        .from("products")
+        .update({ code })
+        .eq("id", input.productId);
+      if (error) return { ok: false, message: error.message };
+    } else if (input.field === "unit") {
+      const unit = String(input.value).trim();
+      if (!unit) return { ok: false, message: "Unit cannot be empty." };
+      const { error } = await supabase
+        .from("products")
+        .update({ unit })
+        .eq("id", input.productId);
+      if (error) return { ok: false, message: error.message };
+    } else if (input.field === "retailPrice") {
+      const price = Number(input.value);
+      if (!Number.isFinite(price) || price < 0) {
+        return { ok: false, message: "Invalid retail price." };
+      }
+      await upsertRetailPrice(supabase, input.productId, price);
+    } else if (input.field === "costPrice") {
+      const outletId = input.outletId ?? ctx.outletId;
+      if (!outletId) {
+        return { ok: false, message: "Select an active outlet for cost price." };
+      }
+      const cost = Number(input.value);
+      if (!Number.isFinite(cost) || cost < 0) {
+        return { ok: false, message: "Invalid cost price." };
+      }
+      const { data: stock } = await supabase
+        .from("stock")
+        .select("id, quantity")
+        .eq("outlet_id", outletId)
+        .eq("product_id", input.productId)
+        .maybeSingle();
+      const { error } = await supabase.from("stock").upsert(
+        {
+          organization_id: ctx.organizationId,
+          outlet_id: outletId,
+          product_id: input.productId,
+          quantity: Number(stock?.quantity ?? 0),
+          cost_price: cost,
+        },
+        { onConflict: "outlet_id,product_id" }
+      );
+      if (error) return { ok: false, message: error.message };
+    }
+
+    revalidatePath("/inventory/products");
+    revalidatePath("/inventory/stock");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Update failed",
+    };
+  }
 }
 
 export async function listOutletsForOrg(): Promise<

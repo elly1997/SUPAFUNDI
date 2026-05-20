@@ -1,12 +1,21 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ClipboardList, Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  ClipboardList,
+  FileText,
+  Loader2,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { StockItemStatementDialog } from "@/components/inventory/stock-item-statement-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { KpiCard } from "@/components/ui/kpi-card";
 import {
   Table,
   TableBody,
@@ -15,8 +24,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { patchStockQuantity } from "@/lib/api/inventory-catalog-fetch";
 import { suggestPurchaseOrderFromStock } from "@/lib/actions/purchase-orders";
-import { listStockLevels, type StockStatus } from "@/lib/actions/stock";
+import {
+  listStockLevels,
+  type StockLevelRow,
+  type StockStatus,
+} from "@/lib/actions/stock";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
@@ -37,9 +51,37 @@ export function StockPageClient() {
   const outletId = useAuthStore((s) => s.activeOutletId);
   const router = useRouter();
   const queryClient = useQueryClient();
+  const [statementRow, setStatementRow] = useState<StockLevelRow | null>(null);
+  const [savingQtyId, setSavingQtyId] = useState<string | null>(null);
+
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["stock-levels", outletId],
     queryFn: () => listStockLevels(outletId),
+  });
+
+  const summary = useMemo(() => {
+    const totalValue = rows.reduce((s, r) => s + r.stock_value, 0);
+    return {
+      totalValue,
+      lineCount: rows.length,
+      lowStockCount: rows.filter((r) => r.stock_status === "low").length,
+      outOfStockCount: rows.filter((r) => r.stock_status === "out_of_stock")
+        .length,
+    };
+  }, [rows]);
+
+  const qtyMut = useMutation({
+    mutationFn: patchStockQuantity,
+    onSettled: () => setSavingQtyId(null),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      void queryClient.invalidateQueries({ queryKey: ["stock-valuation"] });
+      toast.success("Quantity updated");
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Update failed");
+      void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+    },
   });
 
   const suggestMut = useMutation({
@@ -60,6 +102,29 @@ export function StockPageClient() {
 
   return (
     <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard
+          title="Stock valuation"
+          value={formatTzs(summary?.totalValue ?? 0)}
+          subtitle="Qty × cost at active outlet"
+          variant="inflow"
+        />
+        <KpiCard
+          title="SKUs on hand"
+          value={String(summary?.lineCount ?? 0)}
+        />
+        <KpiCard
+          title="Low stock"
+          value={String(summary?.lowStockCount ?? 0)}
+          variant="warning"
+        />
+        <KpiCard
+          title="Out of stock"
+          value={String(summary?.outOfStockCount ?? 0)}
+          variant="outflow"
+        />
+      </div>
+
       {lowStock.length > 0 && (
         <Card className="border-warning/30 bg-warning/5">
           <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
@@ -83,6 +148,7 @@ export function StockPageClient() {
           </CardContent>
         </Card>
       )}
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Stock on hand</CardTitle>
@@ -100,7 +166,7 @@ export function StockPageClient() {
             </div>
           ) : rows.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              No stock records. Add products or receive goods.
+              No stock records. Import products or receive goods.
             </p>
           ) : (
             <Table>
@@ -110,49 +176,118 @@ export function StockPageClient() {
                   <TableHead>SKU</TableHead>
                   <TableHead>Product</TableHead>
                   <TableHead className="text-right">Qty</TableHead>
-                  <TableHead className="text-right">Avg/day</TableHead>
-                  <TableHead className="text-right">Cover (days)</TableHead>
-                  <TableHead className="text-right">Suggest order</TableHead>
-                  <TableHead className="text-right">Value</TableHead>
+                  <TableHead className="text-right">Unit cost</TableHead>
+                  <TableHead className="text-right">Line value</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((r) => (
-                  <TableRow key={`${r.outlet_id}-${r.product_id}`}>
-                    <TableCell>
-                      <span
-                        className={cn(
-                          "rounded px-1.5 py-0.5 text-xs font-medium",
-                          statusClass[r.stock_status]
-                        )}
-                      >
-                        {statusLabel[r.stock_status]}
-                      </span>
-                    </TableCell>
-                    <TableCell>{r.code ?? "—"}</TableCell>
-                    <TableCell>{r.product_name}</TableCell>
-                    <TableCell className="text-right font-money">
-                      {r.quantity} {r.unit}
-                    </TableCell>
-                    <TableCell className="text-right font-money text-muted-foreground">
-                      {r.avg_daily_sales}
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground">
-                      {r.days_of_cover ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-right font-money">
-                      {r.suggested_order_qty > 0 ? r.suggested_order_qty : "—"}
-                    </TableCell>
-                    <TableCell className="text-right font-money">
-                      {formatTzs(r.stock_value)}
-                    </TableCell>
-                  </TableRow>
+                  <StockRow
+                    key={`${r.outlet_id}-${r.product_id}`}
+                    row={r}
+                    outletId={outletId}
+                    saving={savingQtyId === r.product_id}
+                    onQtySave={(qty) => {
+                      if (!outletId) {
+                        toast.error("Select an active outlet");
+                        return;
+                      }
+                      setSavingQtyId(r.product_id);
+                      qtyMut.mutate({
+                        productId: r.product_id,
+                        outletId,
+                        quantity: qty,
+                      });
+                    }}
+                    onStatement={() => setStatementRow(r)}
+                  />
                 ))}
               </TableBody>
             </Table>
           )}
         </CardContent>
       </Card>
+
+      <StockItemStatementDialog
+        open={!!statementRow}
+        onOpenChange={(o) => !o && setStatementRow(null)}
+        productId={statementRow?.product_id ?? null}
+        productName={statementRow?.product_name ?? ""}
+        outletId={outletId}
+      />
     </div>
+  );
+}
+
+function StockRow({
+  row,
+  outletId,
+  saving,
+  onQtySave,
+  onStatement,
+}: {
+  row: StockLevelRow;
+  outletId: string | null;
+  saving: boolean;
+  onQtySave: (qty: number) => void;
+  onStatement: () => void;
+}) {
+  const [qty, setQty] = useState(String(row.quantity));
+
+  return (
+    <TableRow className={saving ? "opacity-70" : undefined}>
+      <TableCell>
+        <span
+          className={cn(
+            "rounded px-1.5 py-0.5 text-xs font-medium",
+            statusClass[row.stock_status]
+          )}
+        >
+          {statusLabel[row.stock_status]}
+        </span>
+      </TableCell>
+      <TableCell className="font-mono text-xs">{row.code ?? "—"}</TableCell>
+      <TableCell>{row.product_name}</TableCell>
+      <TableCell className="text-right">
+        <Input
+          type="number"
+          min={0}
+          step="any"
+          className="ml-auto h-8 w-24 text-right font-money"
+          value={qty}
+          onChange={(e) => setQty(e.target.value)}
+          onBlur={() => {
+            const n = Number(qty);
+            if (Number.isFinite(n) && n >= 0 && n !== row.quantity) {
+              onQtySave(n);
+            }
+          }}
+          disabled={!outletId}
+        />
+        <span className="ml-1 text-xs text-muted-foreground">{row.unit}</span>
+      </TableCell>
+      <TableCell className="text-right font-money text-muted-foreground">
+        {formatTzs(row.cost_price)}
+      </TableCell>
+      <TableCell className="text-right font-money">
+        {formatTzs(row.stock_value)}
+      </TableCell>
+      <TableCell className="text-right">
+        <div className="flex justify-end gap-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8"
+            onClick={onStatement}
+            title="View purchases, sales and adjustments"
+          >
+            <FileText className="mr-1 size-3.5" />
+            Statement
+          </Button>
+        </div>
+      </TableCell>
+    </TableRow>
   );
 }
