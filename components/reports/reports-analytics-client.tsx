@@ -7,7 +7,6 @@ import {
   Boxes,
   Download,
   Loader2,
-  Package,
   Printer,
   RefreshCw,
   Scale,
@@ -17,6 +16,7 @@ import Link from "next/link";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { FinancialReports } from "@/components/reports/financial-reports";
+import { InventoryReportPanel } from "@/components/reports/inventory-report-panel";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
@@ -361,30 +361,7 @@ export function ReportsAnalyticsClient({
       case "sales":
         return renderSalesAnalysis();
       case "inventory":
-        return (
-          <Card className="glass-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Package className="size-5 text-warning" />
-                Inventory alerts
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-3xl font-bold text-warning">
-                {operational?.lowStockCount ?? 0}
-              </p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                SKU(s) at or below reorder level (≤5 units)
-              </p>
-              <Link
-                href="/inventory/stock"
-                className={cn(buttonVariants(), "mt-4 rounded-xl")}
-              >
-                View stock
-              </Link>
-            </CardContent>
-          </Card>
-        );
+        return <InventoryReportPanel />;
       case "daily":
         return (
           <Card className="glass-card">
