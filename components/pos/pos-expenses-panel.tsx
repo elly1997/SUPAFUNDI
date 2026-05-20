@@ -7,19 +7,11 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { PosExpenseCategorySelect } from "@/components/pos/pos-expense-category-select";
 import { listExpenses, recordExpense } from "@/lib/actions/expenses";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
-
-const CATEGORIES = ["rent", "utilities", "wages", "bank", "misc"] as const;
 
 export function PosExpensesPanel() {
   const [collapsed, setCollapsed] = useState(false);
@@ -87,21 +79,10 @@ export function PosExpensesPanel() {
           >
             <div className="space-y-1">
               <Label className="text-xs">Category</Label>
-              <Select
+              <PosExpenseCategorySelect
                 value={category}
-                onValueChange={(v) => setCategory(v ?? "misc")}
-              >
-                <SelectTrigger className="h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.map((c) => (
-                    <SelectItem key={c} value={c} className="capitalize">
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onValueChange={setCategory}
+              />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Amount (TZS)</Label>

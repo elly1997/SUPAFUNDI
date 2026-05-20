@@ -19,15 +19,15 @@ import { toast } from "sonner";
 import { FinancialReports } from "@/components/reports/financial-reports";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { KpiCard } from "@/components/ui/kpi-card";
-import { Label } from "@/components/ui/label";
 import {
   getOperationalReportsByRange,
   getProfitLossStatement,
   type OperationalReports,
   type ProfitLossStatement,
 } from "@/lib/actions/reports";
+import { listUnreconciledDays } from "@/lib/actions/daily-closing";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
@@ -190,8 +190,9 @@ export function ReportsAnalyticsClient({
   const [fromDate, setFromDate] = useState(initialFrom ?? defaultFromDate());
   const [toDate, setToDate] = useState(initialTo ?? defaultToDate());
   const [showGlDetail, setShowGlDetail] = useState(false);
+  const [reconciledOnly, setReconciledOnly] = useState(true);
 
-  const rangeKey = [fromDate, toDate, outletId];
+  const rangeKey = [fromDate, toDate, outletId, reconciledOnly];
 
   const {
     data: operational,
@@ -200,7 +201,8 @@ export function ReportsAnalyticsClient({
     refetch: refetchOp,
   } = useQuery({
     queryKey: ["reports-operational", ...rangeKey],
-    queryFn: () => getOperationalReportsByRange(fromDate, toDate, outletId),
+    queryFn: () =>
+      getOperationalReportsByRange(fromDate, toDate, outletId, reconciledOnly),
     initialData:
       initialOperational &&
       initialFrom === fromDate &&
@@ -216,12 +218,18 @@ export function ReportsAnalyticsClient({
     refetch: refetchPl,
   } = useQuery({
     queryKey: ["reports-pl", ...rangeKey],
-    queryFn: () => getProfitLossStatement(fromDate, toDate, outletId),
+    queryFn: () =>
+      getProfitLossStatement(fromDate, toDate, outletId, reconciledOnly),
     initialData:
       initialPl && initialFrom === fromDate && initialTo === toDate
         ? initialPl
         : undefined,
     staleTime: 60_000,
+  });
+
+  const { data: unreconciled = [] } = useQuery({
+    queryKey: ["reports-unreconciled", outletId],
+    queryFn: () => listUnreconciledDays(outletId, 40),
   });
 
   const generateReports = useCallback(() => {
@@ -449,18 +457,52 @@ export function ReportsAnalyticsClient({
         );
       case "daily-closing":
         return (
-          <Card className="glass-card border-primary/30">
-            <CardContent className="flex flex-col items-center gap-4 py-10 text-center">
-              <Scale className="size-10 text-primary" />
-              <p className="text-lg font-semibold">Daily closing</p>
-              <p className="max-w-md text-sm text-muted-foreground">
-                Reconcile drawer, sales, and expenses for the business date.
-              </p>
-              <Link href="/daily-closing" className={cn(buttonVariants(), "rounded-xl")}>
-                Open daily closing
-              </Link>
-            </CardContent>
-          </Card>
+          <div className="space-y-4">
+            <Card className="glass-card border-primary/30">
+              <CardContent className="flex flex-col items-center gap-4 py-8 text-center">
+                <Scale className="size-10 text-primary" />
+                <p className="text-lg font-semibold">Daily closing &amp; reconciliation</p>
+                <p className="max-w-md text-sm text-muted-foreground">
+                  Reports with &quot;Reconciled days only&quot; use closed days. Open
+                  daily closing to count cash and send the director report on WhatsApp.
+                </p>
+                <Link
+                  href="/daily-closing"
+                  className={cn(buttonVariants(), "rounded-xl")}
+                >
+                  Open daily closing
+                </Link>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>Unreconciled days</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {unreconciled.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No unreconciled days with activity in this outlet.
+                  </p>
+                ) : (
+                  <ul className="space-y-2 text-sm">
+                    {unreconciled.map((d) => (
+                      <li
+                        key={`${d.outletId}-${d.businessDate}`}
+                        className="flex justify-between rounded-lg border px-3 py-2"
+                      >
+                        <span>
+                          {d.businessDate} · {d.outletName}
+                        </span>
+                        <span className="font-money text-warning">
+                          {formatTzs(d.expectedCash)} expected
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         );
       case "monthly-closing":
         return (
@@ -497,24 +539,23 @@ export function ReportsAnalyticsClient({
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">From</Label>
-            <Input
-              type="date"
-              value={fromDate}
-              onChange={(e) => setFromDate(e.target.value)}
-              className="w-[10.5rem] rounded-lg"
+          <DateRangePicker
+            label="Report period"
+            from={fromDate}
+            to={toDate}
+            onFromChange={setFromDate}
+            onToChange={setToDate}
+            align="end"
+          />
+          <label className="flex items-center gap-2 self-end pb-2 text-xs">
+            <input
+              type="checkbox"
+              checked={reconciledOnly}
+              onChange={(e) => setReconciledOnly(e.target.checked)}
+              className="size-4 rounded border-border"
             />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">To</Label>
-            <Input
-              type="date"
-              value={toDate}
-              onChange={(e) => setToDate(e.target.value)}
-              className="w-[10.5rem] rounded-lg"
-            />
-          </div>
+            Reconciled days only
+          </label>
         </div>
       </div>
 

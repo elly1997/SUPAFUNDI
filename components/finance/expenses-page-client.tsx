@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PosExpenseCategorySelect } from "@/components/pos/pos-expense-category-select";
 import {
   Select,
   SelectContent,
@@ -31,15 +32,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { listExpenses, recordExpense } from "@/lib/actions/expenses";
+import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { formatTzs } from "@/lib/utils/currency";
-
-const CATEGORIES = [
-  { key: "rent", label: "Rent" },
-  { key: "utilities", label: "Utilities" },
-  { key: "wages", label: "Wages" },
-  { key: "bank", label: "Bank charges" },
-  { key: "misc", label: "Miscellaneous" },
-];
 
 export function ExpensesPageClient() {
   const [open, setOpen] = useState(false);
@@ -95,7 +89,9 @@ export function ExpensesPageClient() {
               {expenses.map((e) => (
                 <TableRow key={e.id}>
                   <TableCell>{e.expense_date}</TableCell>
-                  <TableCell className="capitalize">{e.category}</TableCell>
+                  <TableCell>
+                    {formatExpenseCategoryLabel(e.category ?? "misc")}
+                  </TableCell>
                   <TableCell>{e.description ?? "—"}</TableCell>
                   <TableCell className="text-right">
                     {formatTzs(e.amount)}
@@ -115,21 +111,10 @@ export function ExpensesPageClient() {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Category</Label>
-              <Select
+              <PosExpenseCategorySelect
                 value={category}
-                onValueChange={(v) => setCategory(v ?? "misc")}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.map((c) => (
-                    <SelectItem key={c.key} value={c.key}>
-                      {c.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onValueChange={setCategory}
+              />
             </div>
             <div className="space-y-2">
               <Label>Description</Label>

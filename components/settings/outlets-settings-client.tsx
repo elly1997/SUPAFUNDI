@@ -26,6 +26,7 @@ import {
 import {
   createOutlet,
   listOutletsSettings,
+  setDefaultOutlet,
   updateOutlet,
   type OutletRow,
 } from "@/lib/actions/settings";
@@ -68,6 +69,17 @@ export function OutletsSettingsClient() {
     setIsActive(row.is_active);
     setOpen(true);
   };
+
+  const defaultMut = useMutation({
+    mutationFn: setDefaultOutlet,
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Default outlet updated");
+        queryClient.invalidateQueries({ queryKey: ["settings-outlets"] });
+        queryClient.invalidateQueries({ queryKey: ["outlets"] });
+      } else toast.error(r.message);
+    },
+  });
 
   const saveMut = useMutation({
     mutationFn: async () => {
@@ -120,6 +132,7 @@ export function OutletsSettingsClient() {
                 <TableHead>Name</TableHead>
                 <TableHead>Code</TableHead>
                 <TableHead>Phone</TableHead>
+                <TableHead>Default</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead />
               </TableRow>
@@ -130,6 +143,23 @@ export function OutletsSettingsClient() {
                   <TableCell className="font-medium">{o.name}</TableCell>
                   <TableCell>{o.code ?? "—"}</TableCell>
                   <TableCell>{o.phone ?? "—"}</TableCell>
+                  <TableCell>
+                    {o.is_default ? (
+                      <span className="text-xs font-semibold text-primary">
+                        Main default
+                      </span>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        disabled={defaultMut.isPending}
+                        onClick={() => defaultMut.mutate(o.id)}
+                      >
+                        Set default
+                      </Button>
+                    )}
+                  </TableCell>
                   <TableCell>{o.is_active ? "Active" : "Inactive"}</TableCell>
                   <TableCell className="text-right">
                     <Button variant="ghost" size="sm" onClick={() => openEdit(o)}>

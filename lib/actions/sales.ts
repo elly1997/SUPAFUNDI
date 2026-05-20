@@ -43,6 +43,11 @@ const completeSaleInput = z.object({
   ]),
   amountPaid: z.number().nonnegative(),
   notes: z.string().max(2000).optional(),
+  /** Business date (YYYY-MM-DD); defaults to today. Used for backdated POS sales. */
+  businessDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
 });
 
 export type CompleteSaleInput = z.infer<typeof completeSaleInput>;
@@ -241,6 +246,10 @@ export async function completeSale(
       }
     }
 
+    const businessDate =
+      input.businessDate ?? new Date().toISOString().slice(0, 10);
+    const saleTimestamp = `${businessDate}T12:00:00.000Z`;
+
     const invoiceNo = await generateInvoiceNo(
       supabase,
       ctx.organizationId,
@@ -266,6 +275,7 @@ export async function completeSale(
         balance_due: balanceDue,
         notes: input.notes?.trim() || null,
         cashier_id: ctx.userId,
+        sale_date: saleTimestamp,
       })
       .select("id")
       .single();
@@ -302,6 +312,7 @@ export async function completeSale(
         amount: roundMoney(Math.min(input.amountPaid, totalAmount)),
         status: "completed",
         received_by: ctx.userId,
+        payment_date: saleTimestamp,
       });
       if (payErr) {
         await rollbackSale(supabase, sale.id, stockRollbacks);
@@ -463,16 +474,31 @@ export type SaleListRow = {
 };
 
 export async function listRecentSales(
-  limit = 50
+  limit = 50,
+  filters?: {
+    outletId?: string | null;
+    fromDate?: string;
+    toDate?: string;
+  }
 ): Promise<SaleListRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("sales")
     .select(
       "id, invoice_no, sale_type, sale_date, total_amount, amount_paid, balance_due, status, customer_id"
     )
-    .eq("organization_id", ctx.organizationId)
+    .eq("organization_id", ctx.organizationId);
+  if (filters?.outletId) {
+    query = query.eq("outlet_id", filters.outletId);
+  }
+  if (filters?.fromDate) {
+    query = query.gte("sale_date", `${filters.fromDate}T00:00:00.000Z`);
+  }
+  if (filters?.toDate) {
+    query = query.lte("sale_date", `${filters.toDate}T23:59:59.999Z`);
+  }
+  const { data, error } = await query
     .order("sale_date", { ascending: false })
     .limit(limit);
   if (error) {

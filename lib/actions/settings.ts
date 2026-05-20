@@ -2,6 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import {
+  DEFAULT_EXPENSE_CATEGORIES,
+  parseExpenseCategoriesJson,
+  serializeExpenseCategories,
+  slugifyExpenseCategory,
+  type ExpenseCategory,
+} from "@/lib/constants/expense-categories";
 import { USER_ROLES, canManageSettings, isUserRole } from "@/lib/auth/roles";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
@@ -145,6 +152,7 @@ export type OutletRow = {
   address: string | null;
   phone: string | null;
   is_active: boolean;
+  is_default: boolean;
 };
 
 export async function listOutletsSettings(): Promise<OutletRow[]> {
@@ -152,8 +160,9 @@ export async function listOutletsSettings(): Promise<OutletRow[]> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from("outlets")
-    .select("id, name, code, address, phone, is_active")
+    .select("id, name, code, address, phone, is_active, is_default")
     .eq("organization_id", ctx.organizationId)
+    .order("is_default", { ascending: false })
     .order("name");
   if (error) throw new Error(error.message);
   return data ?? [];
@@ -179,6 +188,12 @@ export async function createOutlet(
     const { organizationId } = await requireManager();
     const supabase = await createServerSupabaseClient();
     const code = input.code?.trim().toUpperCase() || null;
+    const { count } = await supabase
+      .from("outlets")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", organizationId);
+    const isFirst = (count ?? 0) === 0;
+
     const { data, error } = await supabase
       .from("outlets")
       .insert({
@@ -188,6 +203,7 @@ export async function createOutlet(
         address: input.address?.trim() || null,
         phone: input.phone?.trim() || null,
         is_active: true,
+        is_default: isFirst,
       })
       .select("id")
       .single();
@@ -403,6 +419,128 @@ export async function updateOrganizationUser(
     return {
       ok: false,
       message: e instanceof Error ? e.message : "Update user failed",
+    };
+  }
+}
+
+export async function setDefaultOutlet(
+  outletId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const { organizationId } = await requireManager();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: outlet } = await supabase
+      .from("outlets")
+      .select("id")
+      .eq("id", outletId)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (!outlet) return { ok: false, message: "Outlet not found." };
+
+    await supabase
+      .from("outlets")
+      .update({ is_default: false })
+      .eq("organization_id", organizationId);
+
+    const { error } = await supabase
+      .from("outlets")
+      .update({ is_default: true })
+      .eq("id", outletId)
+      .eq("organization_id", organizationId);
+    if (error) return { ok: false, message: error.message };
+
+    revalidatePath("/settings/outlets");
+    revalidatePath("/settings/general");
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not set default outlet",
+    };
+  }
+}
+
+export async function listExpenseCategories(): Promise<ExpenseCategory[]> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const { data } = await supabase
+    .from("settings")
+    .select("value")
+    .eq("organization_id", ctx.organizationId)
+    .eq("key", "expense_categories")
+    .maybeSingle();
+  return parseExpenseCategoriesJson(data?.value ?? null);
+}
+
+export async function addExpenseCategory(
+  label: string
+): Promise<{ ok: true; category: ExpenseCategory } | { ok: false; message: string }> {
+  try {
+    const trimmed = label.trim();
+    if (trimmed.length < 2) {
+      return { ok: false, message: "Category name is too short." };
+    }
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const categories = await listExpenseCategories();
+    const id = slugifyExpenseCategory(trimmed);
+    if (categories.some((c) => c.id === id)) {
+      return { ok: false, message: "That category already exists." };
+    }
+    const next = [...categories, { id, label: trimmed }];
+    const { error } = await supabase.from("settings").upsert(
+      {
+        organization_id: ctx.organizationId,
+        key: "expense_categories",
+        value: serializeExpenseCategories(next),
+      },
+      { onConflict: "organization_id,key" }
+    );
+    if (error) return { ok: false, message: error.message };
+    revalidatePath("/settings/general");
+    revalidatePath("/pos");
+    return { ok: true, category: { id, label: trimmed } };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not add category",
+    };
+  }
+}
+
+export async function removeExpenseCategory(
+  categoryId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const { organizationId } = await requireManager();
+    const supabase = await createServerSupabaseClient();
+    const categories = await listExpenseCategories();
+    const id = categoryId.trim().toLowerCase();
+    if (DEFAULT_EXPENSE_CATEGORIES.some((c) => c.id === id)) {
+      return { ok: false, message: "Built-in categories cannot be removed." };
+    }
+    const next = categories.filter((c) => c.id !== id);
+    if (next.length === categories.length) {
+      return { ok: false, message: "Category not found." };
+    }
+    const { error } = await supabase.from("settings").upsert(
+      {
+        organization_id: organizationId,
+        key: "expense_categories",
+        value: serializeExpenseCategories(next),
+      },
+      { onConflict: "organization_id,key" }
+    );
+    if (error) return { ok: false, message: error.message };
+    revalidatePath("/settings/general");
+    revalidatePath("/pos");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not remove category",
     };
   }
 }

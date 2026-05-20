@@ -1,5 +1,6 @@
 "use server";
 
+import { getReconciledDatesInRange } from "@/lib/actions/daily-closing";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
@@ -255,21 +256,31 @@ export type ProfitLossStatement = {
 export async function getProfitLossStatement(
   fromDate: string,
   toDate: string,
-  outletId?: string | null
+  outletId?: string | null,
+  reconciledDaysOnly = false
 ): Promise<ProfitLossStatement> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
 
   let salesQuery = supabase
     .from("sales")
-    .select("subtotal, discount_amount")
+    .select("subtotal, discount_amount, sale_date")
     .eq("organization_id", ctx.organizationId)
     .eq("status", "completed")
     .gte("sale_date", fromDate)
     .lte("sale_date", `${toDate}T23:59:59.999Z`);
   if (outletId) salesQuery = salesQuery.eq("outlet_id", outletId);
 
-  const { data: sales, error: salesErr } = await salesQuery;
+  const { data: salesRaw, error: salesErr } = await salesQuery;
+  let sales = salesRaw ?? [];
+  if (reconciledDaysOnly) {
+    const reconciled = new Set(
+      await getReconciledDatesInRange(fromDate, toDate, outletId)
+    );
+    sales = sales.filter((s) =>
+      reconciled.has(String(s.sale_date).slice(0, 10))
+    );
+  }
   if (salesErr) throw new Error(salesErr.message);
 
   let grossSales = 0;
@@ -286,16 +297,23 @@ export async function getProfitLossStatement(
 
   let expensesQuery = supabase
     .from("expenses")
-    .select("amount")
+    .select("amount, expense_date")
     .eq("organization_id", ctx.organizationId)
     .gte("expense_date", fromDate)
     .lte("expense_date", toDate);
   if (outletId) expensesQuery = expensesQuery.eq("outlet_id", outletId);
 
-  const { data: cashExpenses, error: expErr } = await expensesQuery;
+  const { data: expensesRaw, error: expErr } = await expensesQuery;
   if (expErr) throw new Error(expErr.message);
+  let expenseRows = expensesRaw ?? [];
+  if (reconciledDaysOnly) {
+    const reconciled = new Set(
+      await getReconciledDatesInRange(fromDate, toDate, outletId)
+    );
+    expenseRows = expenseRows.filter((e) => reconciled.has(e.expense_date));
+  }
   const cashExpensesTotal = roundMoney(
-    (cashExpenses ?? []).reduce((s, e) => s + Number(e.amount), 0)
+    expenseRows.reduce((s, e) => s + Number(e.amount), 0)
   );
 
   const financial = await getFinancialReports(fromDate, toDate);
@@ -325,7 +343,8 @@ export async function getProfitLossStatement(
 export async function getOperationalReportsByRange(
   fromDate: string,
   toDate: string,
-  outletId?: string | null
+  outletId?: string | null,
+  reconciledDaysOnly = false
 ): Promise<OperationalReports> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
@@ -368,14 +387,26 @@ export async function getOperationalReportsByRange(
   if (expensesRes.error) throw new Error(expensesRes.error.message);
   if (creditRes.error) throw new Error(creditRes.error.message);
 
+  let sales = salesRes.data ?? [];
+  let expenses = expensesRes.data ?? [];
+  if (reconciledDaysOnly) {
+    const reconciled = new Set(
+      await getReconciledDatesInRange(fromDate, toDate, outletId)
+    );
+    sales = sales.filter((s) =>
+      reconciled.has(String(s.sale_date).slice(0, 10))
+    );
+    expenses = expenses.filter((e) => reconciled.has(e.expense_date));
+  }
+
   return buildOperationalResult(
     fromDate,
     toDate,
-    salesRes.data ?? [],
-    expensesRes.data ?? [],
+    sales,
+    expenses,
     creditRes.data ?? [],
     stockRes.data,
-    (salesRes.data ?? []).map((s) => s.id),
+    sales.map((s) => s.id),
     supabase,
     ctx.organizationId
   );

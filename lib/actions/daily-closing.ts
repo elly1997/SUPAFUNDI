@@ -1,0 +1,418 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { requireOrgContext } from "@/lib/server/org-context";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { roundMoney } from "@/lib/utils/calculations";
+import {
+  buildWhatsAppShareUrl,
+  formatClosingReportText,
+  type ClosingReportData,
+} from "@/lib/utils/closing-report";
+import { getOrganizationSettings } from "@/lib/actions/settings";
+
+export type DayCashSummary = {
+  businessDate: string;
+  outletId: string;
+  outletName: string;
+  openingBalance: number;
+  cashSales: number;
+  mpesaSales: number;
+  cashExpenses: number;
+  bankDeposits: number;
+  expectedCash: number;
+  closingBalance: number | null;
+  variance: number | null;
+  status: "open" | "reconciled";
+  closingId: string | null;
+  reconciledAt: string | null;
+};
+
+function dayBounds(businessDate: string) {
+  return {
+    from: `${businessDate}T00:00:00.000Z`,
+    to: `${businessDate}T23:59:59.999Z`,
+  };
+}
+
+async function getPreviousReconciledClosing(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  organizationId: string,
+  outletId: string,
+  beforeDate: string
+): Promise<number> {
+  const { data } = await supabase
+    .from("daily_closings")
+    .select("closing_balance, business_date")
+    .eq("organization_id", organizationId)
+    .eq("outlet_id", outletId)
+    .eq("status", "reconciled")
+    .lt("business_date", beforeDate)
+    .order("business_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.closing_balance != null ? Number(data.closing_balance) : 0;
+}
+
+/** Live totals from sales, payments, and expenses for one business date. */
+export async function computeDayCashSummary(
+  outletId: string,
+  businessDate: string
+): Promise<DayCashSummary> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const { from, to } = dayBounds(businessDate);
+
+  const [{ data: outlet }, { data: existing }] = await Promise.all([
+    supabase
+      .from("outlets")
+      .select("name")
+      .eq("id", outletId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle(),
+    supabase
+      .from("daily_closings")
+      .select("*")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", outletId)
+      .eq("business_date", businessDate)
+      .maybeSingle(),
+  ]);
+
+  if (!outlet) throw new Error("Outlet not found.");
+
+  const openingBalance =
+    existing?.opening_balance != null
+      ? Number(existing.opening_balance)
+      : await getPreviousReconciledClosing(
+          supabase,
+          ctx.organizationId,
+          outletId,
+          businessDate
+        );
+
+  const { data: sales } = await supabase
+    .from("sales")
+    .select("id, total_amount")
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", outletId)
+    .eq("status", "completed")
+    .gte("sale_date", from)
+    .lte("sale_date", to);
+
+  const saleIds = (sales ?? []).map((s) => s.id);
+  let cashSales = 0;
+  let mpesaSales = 0;
+
+  if (saleIds.length > 0) {
+    const { data: payments } = await supabase
+      .from("payments")
+      .select("amount, payment_method")
+      .eq("organization_id", ctx.organizationId)
+      .eq("status", "completed")
+      .in("sale_id", saleIds);
+
+    for (const p of payments ?? []) {
+      const amt = Number(p.amount);
+      if (p.payment_method === "cash") cashSales += amt;
+      else if (p.payment_method === "mpesa") mpesaSales += amt;
+    }
+  }
+
+  const { data: expenses } = await supabase
+    .from("expenses")
+    .select("amount, category, payment_method")
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", outletId)
+    .eq("expense_date", businessDate);
+
+  let cashExpenses = 0;
+  let bankDeposits = 0;
+  for (const e of expenses ?? []) {
+    const amt = Number(e.amount);
+    const cat = (e.category ?? "").toLowerCase();
+    if (cat === "bank") {
+      bankDeposits += amt;
+    } else if (
+      e.payment_method === "cash" ||
+      e.payment_method == null ||
+      e.payment_method === ""
+    ) {
+      cashExpenses += amt;
+    }
+  }
+
+  cashSales = roundMoney(cashSales);
+  mpesaSales = roundMoney(mpesaSales);
+  cashExpenses = roundMoney(cashExpenses);
+  bankDeposits = roundMoney(bankDeposits);
+
+  const expectedCash = roundMoney(
+    openingBalance + cashSales - cashExpenses - bankDeposits
+  );
+
+  const closingBalance =
+    existing?.closing_balance != null ? Number(existing.closing_balance) : null;
+  const variance =
+    existing?.variance != null
+      ? Number(existing.variance)
+      : closingBalance != null
+        ? roundMoney(closingBalance - expectedCash)
+        : null;
+
+  return {
+    businessDate,
+    outletId,
+    outletName: outlet.name,
+    openingBalance: roundMoney(openingBalance),
+    cashSales,
+    mpesaSales,
+    cashExpenses,
+    bankDeposits,
+    expectedCash,
+    closingBalance,
+    variance,
+    status: (existing?.status as "open" | "reconciled") ?? "open",
+    closingId: existing?.id ?? null,
+    reconciledAt: existing?.reconciled_at ?? null,
+  };
+}
+
+const reconcileInput = z.object({
+  outletId: z.string().uuid(),
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  countedClosing: z.coerce.number().nonnegative(),
+  openingBalance: z.coerce.number().nonnegative().optional(),
+  notes: z.string().max(2000).optional(),
+});
+
+export async function reconcileDailyClosing(
+  raw: z.infer<typeof reconcileInput>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const input = reconcileInput.parse(raw);
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const summary = await computeDayCashSummary(
+      input.outletId,
+      input.businessDate
+    );
+
+    const opening =
+      input.openingBalance ?? summary.openingBalance;
+    const expected = roundMoney(
+      opening +
+        summary.cashSales -
+        summary.cashExpenses -
+        summary.bankDeposits
+    );
+    const variance = roundMoney(input.countedClosing - expected);
+
+    const row = {
+      organization_id: ctx.organizationId,
+      outlet_id: input.outletId,
+      business_date: input.businessDate,
+      opening_balance: opening,
+      closing_balance: input.countedClosing,
+      expected_cash: expected,
+      cash_sales: summary.cashSales,
+      cash_expenses: summary.cashExpenses,
+      mpesa_sales: summary.mpesaSales,
+      bank_deposits: summary.bankDeposits,
+      variance,
+      status: "reconciled" as const,
+      reconciled_at: new Date().toISOString(),
+      reconciled_by: ctx.userId,
+      notes: input.notes?.trim() || null,
+    };
+
+    const { error } = await supabase.from("daily_closings").upsert(row, {
+      onConflict: "organization_id,outlet_id,business_date",
+    });
+    if (error) return { ok: false, message: error.message };
+
+    revalidatePath("/daily-closing");
+    revalidatePath("/reports");
+    revalidatePath("/pos");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Reconcile failed",
+    };
+  }
+}
+
+export type UnreconciledDayRow = {
+  businessDate: string;
+  outletId: string;
+  outletName: string;
+  expectedCash: number;
+  hasActivity: boolean;
+};
+
+/** Days with sales/expenses but not reconciled (or no closing row). */
+export async function listUnreconciledDays(
+  outletId?: string | null,
+  limit = 60
+): Promise<UnreconciledDayRow[]> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+
+  let outletsQuery = supabase
+    .from("outlets")
+    .select("id, name")
+    .eq("organization_id", ctx.organizationId)
+    .eq("is_active", true);
+  if (outletId) outletsQuery = outletsQuery.eq("id", outletId);
+  const { data: outlets } = await outletsQuery;
+  if (!outlets?.length) return [];
+
+  const results: UnreconciledDayRow[] = [];
+
+  for (const o of outlets) {
+    const { data: sales } = await supabase
+      .from("sales")
+      .select("sale_date")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", o.id)
+      .eq("status", "completed")
+      .order("sale_date", { ascending: false })
+      .limit(200);
+
+    const { data: expenses } = await supabase
+      .from("expenses")
+      .select("expense_date")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", o.id)
+      .order("expense_date", { ascending: false })
+      .limit(200);
+
+    const dates = new Set<string>();
+    for (const s of sales ?? []) {
+      dates.add(String(s.sale_date).slice(0, 10));
+    }
+    for (const e of expenses ?? []) {
+      dates.add(e.expense_date);
+    }
+
+    const { data: reconciled } = await supabase
+      .from("daily_closings")
+      .select("business_date")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", o.id)
+      .eq("status", "reconciled");
+
+    const reconciledSet = new Set(
+      (reconciled ?? []).map((r) => r.business_date)
+    );
+
+    for (const d of Array.from(dates)) {
+      if (reconciledSet.has(d)) continue;
+      const summary = await computeDayCashSummary(o.id, d);
+      results.push({
+        businessDate: d,
+        outletId: o.id,
+        outletName: o.name,
+        expectedCash: summary.expectedCash,
+        hasActivity: true,
+      });
+    }
+  }
+
+  return results
+    .sort((a, b) => b.businessDate.localeCompare(a.businessDate))
+    .slice(0, limit);
+}
+
+export async function getReconciledDatesInRange(
+  fromDate: string,
+  toDate: string,
+  outletId?: string | null
+): Promise<string[]> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  let q = supabase
+    .from("daily_closings")
+    .select("business_date")
+    .eq("organization_id", ctx.organizationId)
+    .eq("status", "reconciled")
+    .gte("business_date", fromDate)
+    .lte("business_date", toDate);
+  if (outletId) q = q.eq("outlet_id", outletId);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r) => r.business_date as string);
+}
+
+export async function buildClosingReportForWhatsApp(
+  outletId: string,
+  businessDate: string
+): Promise<
+  | { ok: true; message: string; whatsappUrl: string | null }
+  | { ok: false; message: string }
+> {
+  try {
+    const summary = await computeDayCashSummary(outletId, businessDate);
+    const report: ClosingReportData = {
+      outletName: summary.outletName,
+      businessDate: summary.businessDate,
+      openingBalance: summary.openingBalance,
+      cashSales: summary.cashSales,
+      mpesaSales: summary.mpesaSales,
+      cashExpenses: summary.cashExpenses,
+      bankDeposits: summary.bankDeposits,
+      expectedCash: summary.expectedCash,
+      closingBalance: summary.closingBalance,
+      variance: summary.variance,
+      status: summary.status,
+      reconciledAt: summary.reconciledAt,
+    };
+    const message = formatClosingReportText(report);
+    const settings = await getOrganizationSettings();
+    const phone =
+      settings?.phone?.trim() ||
+      (await getDirectorWhatsAppFromSettings()) ||
+      null;
+    const whatsappUrl = phone ? buildWhatsAppShareUrl(phone, message) : null;
+    return { ok: true, message, whatsappUrl };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Report failed",
+    };
+  }
+}
+
+async function getDirectorWhatsAppFromSettings(): Promise<string | null> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const { data } = await supabase
+    .from("settings")
+    .select("value")
+    .eq("organization_id", ctx.organizationId)
+    .eq("key", "director_whatsapp")
+    .maybeSingle();
+  const v = data?.value;
+  if (typeof v === "string" && v.trim()) return v.trim();
+  if (v && typeof v === "object" && "phone" in v) {
+    const p = (v as { phone?: string }).phone;
+    if (p?.trim()) return p.trim();
+  }
+  return null;
+}
+
+export async function markClosingReportSent(
+  outletId: string,
+  businessDate: string
+): Promise<void> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  await supabase
+    .from("daily_closings")
+    .update({ report_sent_at: new Date().toISOString() })
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", outletId)
+    .eq("business_date", businessDate);
+}

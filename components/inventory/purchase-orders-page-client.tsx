@@ -32,6 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { listOutletsForOrg } from "@/lib/actions/inventory";
+import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { listSuppliersForOrg } from "@/lib/actions/grn";
 import {
   createPurchaseOrder,
@@ -88,11 +89,12 @@ export function PurchaseOrdersPageClient() {
     if (!open || outlets.length === 0) return;
     const valid = outlets.some((o) => o.id === outletId);
     if (!valid) {
+      const fallback = resolveDefaultOutletId(outlets) ?? outlets[0]?.id;
       const next =
         defaultOutlet && outlets.some((o) => o.id === defaultOutlet)
           ? defaultOutlet
-          : outlets[0].id;
-      setOutletId(next);
+          : fallback;
+      if (next) setOutletId(next);
     }
   }, [open, outlets, outletId, defaultOutlet]);
 
@@ -104,11 +106,12 @@ export function PurchaseOrdersPageClient() {
     setSupplierId("");
     setNewSupplier("");
     if (outlets.length > 0) {
+      const fallback = resolveDefaultOutletId(outlets) ?? outlets[0]?.id;
       const next =
         defaultOutlet && outlets.some((o) => o.id === defaultOutlet)
           ? defaultOutlet
-          : outlets[0].id;
-      setOutletId(next);
+          : fallback;
+      if (next) setOutletId(next);
     }
     setOpen(true);
   };

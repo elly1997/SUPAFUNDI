@@ -1,14 +1,6 @@
 import { SalesListClient } from "@/components/sales/sales-list-client";
-import { listRecentSales } from "@/lib/actions/sales";
 
-export default async function SalesListPage() {
-  let sales: Awaited<ReturnType<typeof listRecentSales>> = [];
-  try {
-    sales = await listRecentSales(100);
-  } catch {
-    sales = [];
-  }
-
+export default function SalesListPage() {
   return (
     <div className="space-y-6">
       <div>
@@ -17,7 +9,7 @@ export default async function SalesListPage() {
           Invoices and payment history for your organization.
         </p>
       </div>
-      <SalesListClient sales={sales} />
+      <SalesListClient />
     </div>
   );
 }

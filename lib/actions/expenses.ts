@@ -36,13 +36,30 @@ export type ExpenseListRow = {
   payment_method: string | null;
 };
 
-export async function listExpenses(limit = 50): Promise<ExpenseListRow[]> {
+export async function listExpenses(
+  limit = 50,
+  filters?: {
+    outletId?: string | null;
+    fromDate?: string;
+    toDate?: string;
+  }
+): Promise<ExpenseListRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
+  let query = supabase
     .from("expenses")
     .select("id, category, description, amount, expense_date, payment_method")
-    .eq("organization_id", ctx.organizationId)
+    .eq("organization_id", ctx.organizationId);
+  if (filters?.outletId) {
+    query = query.eq("outlet_id", filters.outletId);
+  }
+  if (filters?.fromDate) {
+    query = query.gte("expense_date", filters.fromDate);
+  }
+  if (filters?.toDate) {
+    query = query.lte("expense_date", filters.toDate);
+  }
+  const { data, error } = await query
     .order("expense_date", { ascending: false })
     .limit(limit);
   if (error) throw new Error(error.message);

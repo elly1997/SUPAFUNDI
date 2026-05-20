@@ -112,6 +112,7 @@ export type Database = {
           address: string | null;
           phone: string | null;
           is_active: boolean;
+          is_default: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -123,12 +124,14 @@ export type Database = {
           address?: string | null;
           phone?: string | null;
           is_active?: boolean;
+          is_default?: boolean;
         };
         Update: {
           name?: string;
           code?: string | null;
           address?: string | null;
           phone?: string | null;
+          is_default?: boolean;
           is_active?: boolean;
         };
         Relationships: [];
@@ -459,6 +462,7 @@ export type Database = {
           balance_due?: number;
           notes?: string | null;
           cashier_id?: string | null;
+          sale_date?: string;
         };
         Update: Record<string, never>;
         Relationships: [];
@@ -511,6 +515,7 @@ export type Database = {
           status?: string;
           reference_no?: string | null;
           received_by?: string | null;
+          payment_date?: string;
         };
         Update: {
           status?: string;
@@ -757,6 +762,64 @@ export type Database = {
           created_by?: string | null;
         };
         Update: Record<string, never>;
+        Relationships: [];
+      };
+      daily_closings: {
+        Row: {
+          id: string;
+          organization_id: string;
+          outlet_id: string;
+          business_date: string;
+          opening_balance: number;
+          closing_balance: number | null;
+          expected_cash: number | null;
+          cash_sales: number;
+          cash_expenses: number;
+          mpesa_sales: number;
+          bank_deposits: number;
+          variance: number | null;
+          status: string;
+          reconciled_at: string | null;
+          reconciled_by: string | null;
+          notes: string | null;
+          report_sent_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          outlet_id: string;
+          business_date: string;
+          opening_balance?: number;
+          closing_balance?: number | null;
+          expected_cash?: number | null;
+          cash_sales?: number;
+          cash_expenses?: number;
+          mpesa_sales?: number;
+          bank_deposits?: number;
+          variance?: number | null;
+          status?: string;
+          reconciled_at?: string | null;
+          reconciled_by?: string | null;
+          notes?: string | null;
+          report_sent_at?: string | null;
+        };
+        Update: {
+          opening_balance?: number;
+          closing_balance?: number | null;
+          expected_cash?: number | null;
+          cash_sales?: number;
+          cash_expenses?: number;
+          mpesa_sales?: number;
+          bank_deposits?: number;
+          variance?: number | null;
+          status?: string;
+          reconciled_at?: string | null;
+          reconciled_by?: string | null;
+          notes?: string | null;
+          report_sent_at?: string | null;
+        };
         Relationships: [];
       };
       cash_sessions: {

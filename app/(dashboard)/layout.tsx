@@ -23,7 +23,7 @@ export default async function DashboardLayout({
   const outlets = await getCachedOutlets(profile.organizationId);
 
   return (
-    <SessionHydrator profile={profile}>
+    <SessionHydrator profile={profile} outlets={outlets}>
       <DashboardShell outlets={outlets}>{children}</DashboardShell>
     </SessionHydrator>
   );

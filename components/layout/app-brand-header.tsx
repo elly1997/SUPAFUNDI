@@ -3,9 +3,7 @@
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { useTransition, useState } from "react";
-import { format } from "date-fns";
 import {
-  CalendarDays,
   LogOut,
   Menu,
   Store,
@@ -20,6 +18,7 @@ import { LiveClock } from "@/components/layout/live-clock";
 import { SyncBadge } from "@/components/layout/sync-badge";
 import { filterNavForRole } from "@/components/layout/nav-config";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   Dialog,
   DialogContent,
@@ -28,10 +27,16 @@ import {
 } from "@/components/ui/dialog";
 import { updateActiveOutlet, signOut } from "@/lib/actions/auth";
 import { cn } from "@/lib/utils";
+import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 
-type OutletOption = { id: string; name: string };
+type OutletOption = {
+  id: string;
+  name: string;
+  code?: string | null;
+  is_default?: boolean;
+};
 
 type AppBrandHeaderProps = {
   outlets: OutletOption[];
@@ -53,7 +58,10 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
 
   const displayName = session.fullName || session.email;
   const outletValue =
-    activeOutletId ?? session.outletId ?? outlets[0]?.id ?? "";
+    resolveActiveOutletId(outlets, {
+      stored: activeOutletId,
+      profileOutletId: session.outletId,
+    }) ?? "";
   const mobileSections = filterNavForRole(session.role);
   const isPos = pathname === "/pos" || pathname.startsWith("/pos/");
 
@@ -162,40 +170,31 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
       <div
         className={cn(
           "flex flex-wrap items-center gap-2 border-b border-border bg-background/80 px-3 text-sm md:px-4",
-          isPos ? "hidden" : "py-1.5"
+          isPos ? "py-1.5" : "py-1.5"
         )}
       >
-        <label className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-1 px-2 py-0.5 sm:hidden">
-          <CalendarDays className="size-3.5 text-muted-foreground" aria-hidden />
-          <input
-            type="date"
-            value={businessDate}
-            onChange={(e) =>
-              useBusinessDateStore.getState().setBusinessDate(e.target.value)
-            }
-            className="border-0 bg-transparent py-0 text-sm font-medium focus:outline-none"
-            aria-label="Business date"
-          />
-        </label>
+        <DatePicker
+          value={businessDate}
+          onChange={(iso) =>
+            useBusinessDateStore.getState().setBusinessDate(iso)
+          }
+          showPresets
+          className="sm:hidden"
+          buttonClassName="h-8 min-w-[8.5rem] text-xs"
+        />
         <span className="hidden text-xs text-muted-foreground sm:inline">
           {session.organizationName ?? "SUPAFUNDI TRADERS"}
         </span>
         <span className="hidden text-xs text-muted-foreground sm:inline">·</span>
-        <label className="hidden items-center gap-1.5 rounded-md border border-border bg-surface-1 px-2 py-0.5 sm:inline-flex">
-          <CalendarDays className="size-3.5 text-muted-foreground" aria-hidden />
-          <input
-            type="date"
-            value={businessDate}
-            onChange={(e) =>
-              useBusinessDateStore.getState().setBusinessDate(e.target.value)
-            }
-            className="border-0 bg-transparent py-0 text-xs font-medium focus:outline-none"
-            aria-label="Business date"
-          />
-        </label>
-        <span className="hidden text-xs text-muted-foreground md:inline">
-          {format(new Date(businessDate + "T12:00:00"), "EEE, d MMM yyyy")}
-        </span>
+        <DatePicker
+          value={businessDate}
+          onChange={(iso) =>
+            useBusinessDateStore.getState().setBusinessDate(iso)
+          }
+          showPresets
+          className="hidden sm:inline-block"
+          buttonClassName="h-8 min-w-[10rem] text-xs"
+        />
         <Link
           href="/daily-closing"
           className={cn(

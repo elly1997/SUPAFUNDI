@@ -2,6 +2,10 @@
 
 import { create } from "zustand";
 import type { UserRole } from "@/lib/auth/roles";
+import {
+  resolveActiveOutletId,
+  type OutletLike,
+} from "@/lib/outlets/resolve-default";
 
 export type AuthSession = {
   userId: string;
@@ -17,7 +21,10 @@ type AuthState = {
   session: AuthSession | null;
   activeOutletId: string | null;
   hydrated: boolean;
-  setSession: (session: AuthSession | null) => void;
+  setSession: (
+    session: AuthSession | null,
+    outlets?: OutletLike[]
+  ) => void;
   setActiveOutletId: (outletId: string | null) => void;
   setHydrated: (hydrated: boolean) => void;
   clear: () => void;
@@ -51,10 +58,13 @@ export const useAuthStore = create<AuthState>((set) => ({
   session: null,
   activeOutletId: null,
   hydrated: false,
-  setSession: (session) => {
+  setSession: (session, outlets) => {
     const stored = readStoredOutlet();
     const activeOutletId = session
-      ? stored ?? session.outletId
+      ? resolveActiveOutletId(outlets ?? [], {
+          stored,
+          profileOutletId: session.outletId,
+        })
       : null;
     if (activeOutletId) {
       writeStoredOutlet(activeOutletId);

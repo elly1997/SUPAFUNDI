@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/table";
 import { USER_ROLES } from "@/lib/auth/roles";
 import { listOutletsForOrg } from "@/lib/actions/inventory";
+import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import {
   inviteOrganizationUser,
   listOrganizationUsers,
@@ -58,12 +59,14 @@ export function UsersSettingsClient() {
     queryFn: listOutletsForOrg,
   });
 
+  const defaultOutletId = resolveDefaultOutletId(outlets) ?? "";
+
   const reset = () => {
     setEdit(null);
     setEmail("");
     setFullName("");
     setRole("cashier");
-    setOutletId("");
+    setOutletId(defaultOutletId);
     setIsActive(true);
   };
 

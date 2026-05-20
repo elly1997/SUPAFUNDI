@@ -10,7 +10,7 @@ import {
   Plus,
   RefreshCw,
 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -49,6 +49,7 @@ import {
   listCategoriesForOrg,
   listOutletsForOrg,
 } from "@/lib/actions/inventory";
+import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { formatTzs } from "@/lib/utils/currency";
 import type { ProductListRow } from "@/hooks/useProducts";
 import { downloadInventoryTemplate } from "@/lib/excel/inventory-template";
@@ -120,9 +121,15 @@ export function ProductsPageClient() {
   const [adjustLoading, setAdjustLoading] = useState(false);
 
   const defaultOutletId = useMemo(
-    () => outlets[0]?.id ?? "",
+    () => resolveDefaultOutletId(outlets) ?? "",
     [outlets]
   );
+
+  useEffect(() => {
+    if (importOpen && defaultOutletId && !importOutletId) {
+      setImportOutletId(defaultOutletId);
+    }
+  }, [importOpen, defaultOutletId, importOutletId]);
 
   const form = useForm<AddProductForm>({
     resolver: zodResolver(addProductSchema) as Resolver<AddProductForm>,

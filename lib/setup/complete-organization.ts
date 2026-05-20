@@ -57,11 +57,14 @@ export async function runCompleteOrganizationSetup(
       };
     }
 
+    const outletName = input.outletName.trim();
     const { data: outlet, error: outletError } = await admin
       .from("outlets")
       .insert({
         organization_id: org.id,
-        name: input.outletName.trim(),
+        name: outletName,
+        code: "MAIN",
+        is_default: true,
         is_active: true,
       })
       .select("id")

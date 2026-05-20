@@ -490,15 +490,16 @@ export async function getProductStockSnapshot(
 }
 
 export async function listOutletsForOrg(): Promise<
-  { id: string; name: string }[]
+  { id: string; name: string; code: string | null; is_default: boolean }[]
 > {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from("outlets")
-    .select("id, name")
+    .select("id, name, code, is_default")
     .eq("organization_id", ctx.organizationId)
     .eq("is_active", true)
+    .order("is_default", { ascending: false })
     .order("name");
   if (error) {
     throw new Error(error.message);

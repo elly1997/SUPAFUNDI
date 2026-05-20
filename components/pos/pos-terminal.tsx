@@ -49,6 +49,8 @@ import {
 } from "@/lib/actions/sales";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
+import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
 import type { AddProductResult } from "@/stores/cartStore";
 
@@ -77,6 +79,7 @@ type PosTerminalProps = {
 
 export function PosTerminal({ outlets }: PosTerminalProps) {
   const activeOutletId = useAuthStore((s) => s.activeOutletId);
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
   const session = useAuthStore((s) => s.session);
   const setActiveOutletId = useAuthStore((s) => s.setActiveOutletId);
   const [search, setSearch] = useState("");
@@ -100,19 +103,20 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const pricingSyncRef = useRef<PosPricingMode>(pricingMode);
 
   useEffect(() => {
-    if (activeOutletId || outlets.length === 0) return;
-    const fromProfile = session?.outletId;
-    const pick =
-      fromProfile && outlets.some((o) => o.id === fromProfile)
-        ? fromProfile
-        : outlets[0].id;
-    setActiveOutletId(pick);
+    if (!outlets.length) return;
+    const resolved = resolveActiveOutletId(outlets, {
+      stored: activeOutletId,
+      profileOutletId: session?.outletId,
+    });
+    if (resolved && resolved !== activeOutletId) {
+      setActiveOutletId(resolved);
+    }
   }, [activeOutletId, outlets, session?.outletId, setActiveOutletId]);
 
-  const effectiveOutletId =
-    activeOutletId && outlets.some((o) => o.id === activeOutletId)
-      ? activeOutletId
-      : outlets[0]?.id ?? null;
+  const effectiveOutletId = resolveActiveOutletId(outlets, {
+    stored: activeOutletId,
+    profileOutletId: session?.outletId,
+  });
 
   const { clearPersisted } = usePersistedCart(effectiveOutletId);
 
@@ -274,6 +278,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
         saleType: pricingMode,
         paymentMethod,
         amountPaid: paid,
+        businessDate,
       };
       const result = await completeSale(payload);
       if (!result.ok) {
@@ -305,7 +310,11 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       setCustomerName(null);
       setPaymentMethod("cash");
       clearPersisted();
-      toast.success(`Sale ${result.invoiceNo} completed`);
+      toast.success(
+        businessDate !== new Date().toISOString().slice(0, 10)
+          ? `Sale ${result.invoiceNo} recorded for ${businessDate}`
+          : `Sale ${result.invoiceNo} completed`
+      );
     },
     onError: (e) => {
       toast.error(e instanceof Error ? e.message : "Checkout failed");

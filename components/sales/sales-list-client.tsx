@@ -1,6 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
+import { format, subDays } from "date-fns";
+import { Loader2 } from "lucide-react";
+import { useState } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -9,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
 import {
   Table,
   TableBody,
@@ -17,34 +22,53 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { SaleListRow } from "@/lib/actions/sales";
+import { listRecentSales } from "@/lib/actions/sales";
 import { saleTypeLabel } from "@/lib/constants/sale-documents";
 import { cn } from "@/lib/utils";
-import { formatTzs } from "@/lib/utils/currency";
-import { formatDateTimeEAT } from "@/lib/utils/currency";
+import { formatTzs, formatDateTimeEAT } from "@/lib/utils/currency";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
 
-type Props = {
-  sales: SaleListRow[];
-};
+export function SalesListClient() {
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
+  const [fromDate, setFromDate] = useState(
+    format(subDays(new Date(businessDate + "T12:00:00"), 7), "yyyy-MM-dd")
+  );
+  const [toDate, setToDate] = useState(businessDate);
 
-export function SalesListClient({ sales }: Props) {
+  const { data: sales = [], isLoading } = useQuery({
+    queryKey: ["sales-list", fromDate, toDate],
+    queryFn: () => listRecentSales(200, { fromDate, toDate }),
+  });
+
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
+      <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <CardTitle>Sales</CardTitle>
           <CardDescription>
-            Completed invoices from POS and future channels.
+            Filter by date range. New POS sales use the business date from the
+            header when backdating.
           </CardDescription>
         </div>
         <Link href="/pos" className={cn(buttonVariants())}>
           Open POS
         </Link>
       </CardHeader>
-      <CardContent>
-        {sales.length === 0 ? (
+      <CardContent className="space-y-4">
+        <DateRangePicker
+          label="Sales date range"
+          from={fromDate}
+          to={toDate}
+          onFromChange={setFromDate}
+          onToChange={setToDate}
+        />
+        {isLoading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="size-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : sales.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            No sales yet. Complete a sale from the POS terminal.
+            No sales in this date range.
           </p>
         ) : (
           <Table>
@@ -78,20 +102,14 @@ export function SalesListClient({ sales }: Props) {
                     {formatDateTimeEAT(sale.sale_date)}
                   </TableCell>
                   <TableCell>{sale.customer_name ?? "—"}</TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right font-money">
                     {formatTzs(sale.total_amount)}
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right font-money">
                     {formatTzs(sale.amount_paid)}
                   </TableCell>
-                  <TableCell className="text-right">
-                    {sale.balance_due > 0 ? (
-                      <span className="text-warning">
-                        {formatTzs(sale.balance_due)}
-                      </span>
-                    ) : (
-                      "—"
-                    )}
+                  <TableCell className="text-right font-money">
+                    {formatTzs(sale.balance_due)}
                   </TableCell>
                   <TableCell className="capitalize">{sale.status}</TableCell>
                 </TableRow>

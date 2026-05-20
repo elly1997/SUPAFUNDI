@@ -1,6 +1,8 @@
 export const dynamic = "force-dynamic";
 
+import { ExpenseCategoriesSettings } from "@/components/settings/expense-categories-settings";
 import { GeneralSettingsClient } from "@/components/settings/general-settings-client";
+import { OrganizationAdminPanel } from "@/components/settings/organization-admin-panel";
 import {
   getOrganizationSettings,
   seedOrgSettingsIfMissing,
@@ -24,11 +26,16 @@ export default async function GeneralSettingsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">General</h1>
         <p className="text-sm text-muted-foreground">
-          Company details, tax, and POS defaults for your organization.
+          Company details, expense categories, outlets, and user assignments for
+          your organization (main store admins).
         </p>
       </div>
       {settings ? (
-        <GeneralSettingsClient initial={settings} />
+        <>
+          <GeneralSettingsClient initial={settings} />
+          <ExpenseCategoriesSettings />
+          <OrganizationAdminPanel />
+        </>
       ) : (
         <p className="text-sm text-muted-foreground">Unable to load settings.</p>
       )}

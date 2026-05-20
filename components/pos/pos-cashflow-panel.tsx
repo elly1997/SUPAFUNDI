@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { Banknote, ExternalLink, Loader2, PackagePlus, TrendingDown } from "lucide-react";
+import { Banknote, ExternalLink, Loader2, PackagePlus, Receipt, TrendingDown } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,21 +15,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { PosBusinessDateStrip } from "@/components/pos/pos-business-date-strip";
+import { PosExpenseCategorySelect } from "@/components/pos/pos-expense-category-select";
+import { PosDaySalesPanel } from "@/components/pos/pos-day-sales-panel";
 import { listExpenses, recordExpense } from "@/lib/actions/expenses";
 import { listSuppliersForOrg, receiveGoods } from "@/lib/actions/grn";
 import { cn } from "@/lib/utils";
+import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { formatTzs } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 import type { PosProductRow } from "@/hooks/usePosProducts";
-
-const EXPENSE_CATEGORIES = [
-  "rent",
-  "utilities",
-  "wages",
-  "bank",
-  "stock",
-  "misc",
-] as const;
 
 const EXPENSE_PRESETS = [
   { label: "Tea / lunch", category: "misc", amount: 5000 },
@@ -38,7 +33,7 @@ const EXPENSE_PRESETS = [
   { label: "Fuel", category: "misc", amount: 20000 },
 ] as const;
 
-type Tab = "expense" | "stock";
+type Tab = "expense" | "stock" | "sales";
 
 type Props = {
   outletId: string;
@@ -48,6 +43,9 @@ type Props = {
 
 export function PosCashflowPanel({ outletId, products, className }: Props) {
   const [tab, setTab] = useState<Tab>("expense");
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
+  const [viewFrom, setViewFrom] = useState(businessDate);
+  const [viewTo, setViewTo] = useState(businessDate);
   const [category, setCategory] = useState<string>("misc");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
@@ -56,12 +54,12 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
   const [stockQty, setStockQty] = useState("1");
   const [unitCost, setUnitCost] = useState("");
   const [paidCash, setPaidCash] = useState(true);
-  const businessDate = useBusinessDateStore((s) => s.businessDate);
   const queryClient = useQueryClient();
 
   const { data: expenses = [], isLoading: expensesLoading } = useQuery({
-    queryKey: ["pos-expenses"],
-    queryFn: () => listExpenses(20),
+    queryKey: ["pos-expenses", outletId, viewFrom, viewTo],
+    queryFn: () =>
+      listExpenses(80, { outletId, fromDate: viewFrom, toDate: viewTo }),
   });
 
   const { data: suppliers = [] } = useQuery({
@@ -70,8 +68,10 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
     enabled: tab === "stock",
   });
 
-  const todayExpenses = expenses.filter((e) => e.expense_date === businessDate);
-  const todayTotal = todayExpenses.reduce((s, e) => s + e.amount, 0);
+  const rangeExpenses = expenses.filter(
+    (e) => e.expense_date >= viewFrom && e.expense_date <= viewTo
+  );
+  const rangeTotal = rangeExpenses.reduce((s, e) => s + e.amount, 0);
 
   const recordMut = useMutation({
     mutationFn: recordExpense,
@@ -113,12 +113,22 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold">Cash out</h2>
           <p className="font-money text-xs text-muted-foreground">
-            Today {formatTzs(todayTotal)}
+            Range {formatTzs(rangeTotal)}
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-1 border-b border-border p-2">
+      <div className="border-b border-border p-2">
+        <PosBusinessDateStrip
+          viewFrom={viewFrom}
+          viewTo={viewTo}
+          onViewFromChange={setViewFrom}
+          onViewToChange={setViewTo}
+          compact={className?.includes("max-h")}
+        />
+      </div>
+
+      <div className="grid grid-cols-3 gap-1 border-b border-border p-2">
         <button
           type="button"
           onClick={() => setTab("expense")}
@@ -145,10 +155,23 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
           <PackagePlus className="size-3.5" />
           Stock buy
         </button>
+        <button
+          type="button"
+          onClick={() => setTab("sales")}
+          className={cn(
+            "flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-semibold touch-manipulation",
+            tab === "sales"
+              ? "bg-inflow/15 text-inflow"
+              : "text-muted-foreground hover:bg-muted/50"
+          )}
+        >
+          <Receipt className="size-3.5" />
+          Sales
+        </button>
       </div>
 
       <div className="shrink-0 border-b border-border p-3">
-        {tab === "expense" ? (
+        {tab === "sales" ? null : tab === "expense" ? (
           <form
             className="space-y-2"
             onSubmit={(e) => {
@@ -183,21 +206,23 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
                   {p.label}
                 </button>
               ))}
+              <button
+                type="button"
+                className="rounded-full border border-info/40 bg-info/10 px-2.5 py-1 text-[10px] font-semibold text-info touch-manipulation"
+                onClick={() => {
+                  setCategory("bank");
+                  setDescription("Bank deposit");
+                }}
+              >
+                Bank deposit
+              </button>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Category</Label>
-              <Select value={category} onValueChange={(v) => setCategory(v ?? "misc")}>
-                <SelectTrigger className="h-9 rounded-lg">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {EXPENSE_CATEGORIES.map((c) => (
-                    <SelectItem key={c} value={c} className="capitalize">
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <PosExpenseCategorySelect
+                value={category}
+                onValueChange={setCategory}
+              />
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Amount (TZS)</Label>
@@ -357,34 +382,45 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
         )}
       </div>
 
+      {tab === "sales" ? (
+        <PosDaySalesPanel
+          outletId={outletId}
+          viewFrom={viewFrom}
+          viewTo={viewTo}
+        />
+      ) : (
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {expensesLoading ? (
           <p className="py-6 text-center text-xs text-muted-foreground">Loading…</p>
-        ) : todayExpenses.length === 0 ? (
+        ) : rangeExpenses.length === 0 ? (
           <p className="py-6 text-center text-xs text-muted-foreground">
-            No cash out today
+            No cash out in this range
           </p>
         ) : (
           <ul className="space-y-1.5">
-            {todayExpenses.map((e) => (
+            {rangeExpenses.map((e) => (
               <li
                 key={e.id}
                 className="rounded-xl border border-border bg-card px-2.5 py-2 text-xs"
               >
                 <div className="flex justify-between gap-2">
-                  <span className="font-medium capitalize">{e.category ?? "misc"}</span>
+                  <span className="font-medium">
+                    {formatExpenseCategoryLabel(e.category ?? "misc")}
+                  </span>
                   <span className="font-money font-bold text-outflow">
                     {formatTzs(e.amount)}
                   </span>
                 </div>
-                {e.description ? (
-                  <p className="mt-0.5 truncate text-muted-foreground">{e.description}</p>
-                ) : null}
+                <p className="mt-0.5 text-[10px] text-muted-foreground">
+                  {e.expense_date}
+                  {e.description ? ` · ${e.description}` : ""}
+                </p>
               </li>
             ))}
           </ul>
         )}
       </div>
+      )}
     </aside>
   );
 }

@@ -6,6 +6,7 @@ import { useTransition } from "react";
 import { LogOut, Menu, Search, User } from "lucide-react";
 import { toast } from "sonner";
 import { updateActiveOutlet, signOut } from "@/lib/actions/auth";
+import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui/button";
 import { AppBreadcrumbs } from "@/components/layout/app-breadcrumbs";
@@ -19,7 +20,12 @@ import {
 } from "@/components/ui/dialog";
 import { useState } from "react";
 
-type OutletOption = { id: string; name: string };
+type OutletOption = {
+  id: string;
+  name: string;
+  code?: string | null;
+  is_default?: boolean;
+};
 
 type AppHeaderProps = {
   outlets: OutletOption[];
@@ -39,7 +45,11 @@ export function AppHeader({ outlets }: AppHeaderProps) {
   }
 
   const displayName = session.fullName || session.email;
-  const outletValue = activeOutletId ?? session.outletId ?? outlets[0]?.id ?? "";
+  const outletValue =
+    resolveActiveOutletId(outlets, {
+      stored: activeOutletId,
+      profileOutletId: session.outletId,
+    }) ?? "";
   const mobileSections = filterNavForRole(session.role);
   const isPos = pathname === "/pos" || pathname.startsWith("/pos/");
 
