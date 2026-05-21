@@ -487,6 +487,8 @@ export type Database = {
           discount_pct: number;
           tax_rate: number;
           total_price: number;
+          sell_unit: string | null;
+          sell_qty: number | null;
         };
         Insert: {
           id?: string;
@@ -498,6 +500,8 @@ export type Database = {
           discount_pct?: number;
           tax_rate?: number;
           total_price: number;
+          sell_unit?: string | null;
+          sell_qty?: number | null;
         };
         Update: Record<string, never>;
         Relationships: [];

@@ -21,8 +21,8 @@ type Props = {
   taxRate: number;
   cartDiscount: number;
   onCartDiscountChange: (n: number) => void;
-  onUpdateQuantity: (productId: string, qty: number) => AddProductResult;
-  onRemoveLine: (productId: string) => void;
+  onUpdateQuantity: (lineKey: string, qty: number) => AddProductResult;
+  onRemoveLine: (lineKey: string) => void;
   onCheckout: () => void;
   onStockError: (result: AddProductResult) => void;
   className?: string;
@@ -112,7 +112,7 @@ export function PosCartPanel({
                 (1 - line.discountPct / 100);
               return (
                 <li
-                  key={line.productId}
+                  key={line.lineKey}
                   className="rounded-xl border border-border bg-card p-3"
                 >
                   <div className="flex items-start justify-between gap-2">
@@ -126,7 +126,7 @@ export function PosCartPanel({
                     </div>
                     <button
                       type="button"
-                      onClick={() => onRemoveLine(line.productId)}
+                      onClick={() => onRemoveLine(line.lineKey)}
                       className="shrink-0 rounded-lg p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive touch-manipulation"
                       aria-label={`Remove ${line.name}`}
                     >
@@ -142,7 +142,7 @@ export function PosCartPanel({
                         className="size-9"
                         onClick={() => {
                           const r = onUpdateQuantity(
-                            line.productId,
+                            line.lineKey,
                             line.quantity - 1
                           );
                           if (!r.ok) onStockError(r);
@@ -158,10 +158,13 @@ export function PosCartPanel({
                         variant="ghost"
                         size="icon"
                         className="size-9"
-                        disabled={line.quantity >= line.availableStock}
+                        disabled={
+                          line.quantity >=
+                          Math.floor(line.availableStock / line.factorToBase)
+                        }
                         onClick={() => {
                           const r = onUpdateQuantity(
-                            line.productId,
+                            line.lineKey,
                             line.quantity + 1
                           );
                           if (!r.ok) onStockError(r);

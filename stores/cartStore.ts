@@ -1,12 +1,15 @@
 "use client";
 
 import { create } from "zustand";
+import { cartLineKey } from "@/lib/products/units";
 import type { PosPricingMode } from "@/hooks/usePosProducts";
 
 export type CartLine = {
   productId: string;
+  lineKey: string;
   name: string;
   unit: string;
+  factorToBase: number;
   quantity: number;
   unitPrice: number;
   discountPct: number;
@@ -29,11 +32,11 @@ type CartState = {
     quantity?: number
   ) => AddProductResult;
   updateQuantity: (
-    productId: string,
+    lineKey: string,
     quantity: number
   ) => { ok: true } | { ok: false; reason: "insufficient_stock"; available: number };
-  removeLine: (productId: string) => void;
-  setDiscountPct: (productId: string, discountPct: number) => void;
+  removeLine: (lineKey: string) => void;
+  setDiscountPct: (lineKey: string, discountPct: number) => void;
   syncLinePrices: (
     prices: Map<string, { unitPrice: number; pricingMode: PosPricingMode }>
   ) => number;
@@ -44,36 +47,40 @@ export const useCartStore = create<CartState>((set, get) => ({
   lines: [],
   addProduct: (product, quantity = 1) => {
     const qty = Math.max(1, Math.floor(quantity));
+    const lineKey =
+      product.lineKey ?? cartLineKey(product.productId, product.unit);
+    const maxSell = Math.floor(product.availableStock / product.factorToBase);
     const s = get();
-    const existing = s.lines.find((l) => l.productId === product.productId);
+    const existing = s.lines.find((l) => l.lineKey === lineKey);
     if (existing) {
       const nextQty = existing.quantity + qty;
-      if (nextQty > product.availableStock) {
+      if (nextQty > maxSell) {
         return {
           ok: false,
           reason: "insufficient_stock",
-          available: product.availableStock,
+          available: maxSell,
         };
       }
       set({
         lines: s.lines.map((l) =>
-          l.productId === product.productId
+          l.lineKey === lineKey
             ? {
                 ...l,
                 quantity: nextQty,
                 unitPrice: product.unitPrice,
                 pricingMode: product.pricingMode,
+                availableStock: product.availableStock,
               }
             : l
         ),
       });
       return { ok: true };
     }
-    if (product.availableStock < qty) {
+    if (maxSell < qty) {
       return {
         ok: false,
-        reason: product.availableStock < 1 ? "out_of_stock" : "insufficient_stock",
-        available: product.availableStock,
+        reason: maxSell < 1 ? "out_of_stock" : "insufficient_stock",
+        available: maxSell,
       };
     }
     set({
@@ -81,6 +88,7 @@ export const useCartStore = create<CartState>((set, get) => ({
         ...s.lines,
         {
           ...product,
+          lineKey,
           quantity: qty,
           discountPct: 0,
         },
@@ -88,36 +96,37 @@ export const useCartStore = create<CartState>((set, get) => ({
     });
     return { ok: true };
   },
-  updateQuantity: (productId, quantity) => {
+  updateQuantity: (lineKey, quantity) => {
     const s = get();
     if (quantity <= 0) {
-      set({ lines: s.lines.filter((l) => l.productId !== productId) });
+      set({ lines: s.lines.filter((l) => l.lineKey !== lineKey) });
       return { ok: true };
     }
-    const line = s.lines.find((l) => l.productId === productId);
+    const line = s.lines.find((l) => l.lineKey === lineKey);
     if (!line) return { ok: true };
-    if (quantity > line.availableStock) {
+    const maxSell = Math.floor(line.availableStock / line.factorToBase);
+    if (quantity > maxSell) {
       return {
         ok: false,
         reason: "insufficient_stock",
-        available: line.availableStock,
+        available: maxSell,
       };
     }
     set({
       lines: s.lines.map((l) =>
-        l.productId === productId ? { ...l, quantity } : l
+        l.lineKey === lineKey ? { ...l, quantity } : l
       ),
     });
     return { ok: true };
   },
-  removeLine: (productId) =>
+  removeLine: (lineKey) =>
     set((s) => ({
-      lines: s.lines.filter((l) => l.productId !== productId),
+      lines: s.lines.filter((l) => l.lineKey !== lineKey),
     })),
-  setDiscountPct: (productId, discountPct) =>
+  setDiscountPct: (lineKey, discountPct) =>
     set((s) => ({
       lines: s.lines.map((l) =>
-        l.productId === productId
+        l.lineKey === lineKey
           ? { ...l, discountPct: Math.min(100, Math.max(0, discountPct)) }
           : l
       ),
@@ -126,7 +135,7 @@ export const useCartStore = create<CartState>((set, get) => ({
     let updated = 0;
     set((s) => ({
       lines: s.lines.map((l) => {
-        const next = prices.get(l.productId);
+        const next = prices.get(l.lineKey);
         if (!next || next.unitPrice === l.unitPrice) return l;
         updated += 1;
         return {

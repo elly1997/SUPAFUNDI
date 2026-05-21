@@ -21,7 +21,10 @@ import { PosFavoritesRow } from "@/components/pos/pos-favorites-row";
 import { PosCashflowPanel } from "@/components/pos/pos-cashflow-panel";
 import { PosHeader, type PosOutletOption } from "@/components/pos/pos-header";
 import { PosProductCard } from "@/components/pos/pos-product-card";
-import { PosQuantityDialog } from "@/components/pos/pos-quantity-dialog";
+import {
+  PosAddToCartDialog,
+  type PosAddToCartPayload,
+} from "@/components/pos/pos-add-to-cart-dialog";
 import {
   formatPaymentMethodLabel,
   getReceiptStamp,
@@ -52,6 +55,7 @@ import {
   type CompleteSaleInput,
   type PosCustomer,
 } from "@/lib/actions/sales";
+import { cartLineKey, resolveUnitPrice } from "@/lib/products/units";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
@@ -158,10 +162,19 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       string,
       { unitPrice: number; pricingMode: PosPricingMode }
     >();
-    for (const p of products) {
-      map.set(p.id, {
-        unitPrice:
-          pricingMode === "wholesale" ? p.wholesalePrice : p.retailPrice,
+    for (const line of lines) {
+      const p = products.find((x) => x.id === line.productId);
+      if (!p) continue;
+      const unit =
+        p.units.find((u) => u.unitLabel === line.unit) ?? p.units[0];
+      if (!unit) continue;
+      map.set(line.lineKey, {
+        unitPrice: resolveUnitPrice(
+          unit,
+          p.retailPrice,
+          p.wholesalePrice,
+          pricingMode
+        ),
         pricingMode,
       });
     }
@@ -169,12 +182,13 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     if (updated > 0) {
       toast.message(`Updated ${updated} cart line price(s)`);
     }
-  }, [pricingMode, products, syncLinePrices]);
+  }, [pricingMode, products, syncLinePrices, lines]);
 
   const cartQtyByProduct = useMemo(() => {
     const map = new Map<string, number>();
     for (const line of lines) {
-      map.set(line.productId, line.quantity);
+      const base = line.quantity * line.factorToBase;
+      map.set(line.productId, (map.get(line.productId) ?? 0) + base);
     }
     return map;
   }, [lines]);
@@ -227,14 +241,17 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     }
   }, [total, lines.length, paymentMethod]);
 
-  const addFromProduct = useCallback(
-    (p: PosProductRow, quantity = 1) => {
+  const addFromProductWithUnit = useCallback(
+    (p: PosProductRow, payload: PosAddToCartPayload) => {
+      const { unit, quantity, unitPrice } = payload;
       const result = addProduct(
         {
           productId: p.id,
+          lineKey: cartLineKey(p.id, unit.unitLabel),
           name: p.name,
-          unit: p.unit,
-          unitPrice: p.displayPrice,
+          unit: unit.unitLabel,
+          factorToBase: unit.factorToBase,
+          unitPrice,
           availableStock: p.stockQty,
           pricingMode,
         },
@@ -247,7 +264,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     [addProduct, pricingMode]
   );
 
-  const openQuantityFor = useCallback((p: PosProductRow) => {
+  const openAddDialogFor = useCallback((p: PosProductRow) => {
     setQtyProduct(p);
     setQtyOpen(true);
   }, []);
@@ -270,10 +287,9 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       return;
     }
 
-    if (addFromProduct(match, 1)) {
-      setSearch("");
-    }
-  }, [search, products, filtered, addFromProduct]);
+    openAddDialogFor(match);
+    setSearch("");
+  }, [search, products, filtered, openAddDialogFor]);
 
   const bumpAmountPaid = useCallback((delta: number) => {
     setAmountPaid((prev) => {
@@ -303,6 +319,8 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
           productId: l.productId,
           productName: l.name,
           quantity: l.quantity,
+          sellUnit: l.unit,
+          factorToBase: l.factorToBase,
           unitPrice: l.unitPrice,
           discountPct: l.discountPct,
         })),
@@ -324,6 +342,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       const receiptLines = lines.map((l) => ({
         name: l.name,
         quantity: l.quantity,
+        unit: l.unit,
         unitPrice: l.unitPrice,
       }));
       const saleReceipt: ReceiptState = {
@@ -562,7 +581,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                     <PosFavoritesRow
                       outletId={effectiveOutletId}
                       products={products}
-                      onPick={openQuantityFor}
+                      onPick={openAddDialogFor}
                     />
                   )}
 
@@ -629,8 +648,8 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                             product={p}
                             pricingMode={pricingMode}
                             cartQty={cartQtyByProduct.get(p.id) ?? 0}
-                            onAdd={() => addFromProduct(p, 1)}
-                            onQtyClick={() => openQuantityFor(p)}
+                            onAdd={() => openAddDialogFor(p)}
+                            onQtyClick={() => openAddDialogFor(p)}
                           />
                         ))}
                       </div>
@@ -727,12 +746,13 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                 </DialogContent>
               </Dialog>
 
-              <PosQuantityDialog
+              <PosAddToCartDialog
                 product={qtyProduct}
+                pricingMode={pricingMode}
                 open={qtyOpen}
                 onOpenChange={setQtyOpen}
-                onConfirm={(quantity) => {
-                  if (qtyProduct) addFromProduct(qtyProduct, quantity);
+                onConfirm={(payload) => {
+                  if (qtyProduct) addFromProductWithUnit(qtyProduct, payload);
                 }}
               />
 

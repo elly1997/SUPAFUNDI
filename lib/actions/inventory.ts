@@ -192,6 +192,17 @@ export async function createProduct(
 
       await upsertRetailPrice(supabase, product.id, input.retailPrice);
 
+      const { ensureBaseProductUnit } = await import(
+        "@/lib/actions/product-units"
+      );
+      await ensureBaseProductUnit(
+        supabase,
+        product.id,
+        input.unit.trim(),
+        input.retailPrice,
+        input.retailPrice
+      );
+
       const { error: sErr } = await supabase.from("stock").upsert(
         {
           organization_id: ctx.organizationId,

@@ -25,7 +25,10 @@ import {
 const saleLineInput = z.object({
   productId: z.string().uuid(),
   productName: z.string().min(1),
+  /** Quantity in the sell unit (box, pcs, etc.). */
   quantity: z.number().positive(),
+  sellUnit: z.string().min(1).default("pcs"),
+  factorToBase: z.number().positive().default(1),
   unitPrice: z.number().nonnegative(),
   discountPct: z.number().min(0).max(100).default(0),
 });
@@ -179,19 +182,23 @@ export async function completeSale(
     let cogsAmount = 0;
     for (const line of input.lines) {
       const stock = stockByProduct.get(line.productId);
+      const baseQty = roundMoney(line.quantity * line.factorToBase);
       if (!stock) {
         return {
           ok: false,
           message: `No stock record for "${line.productName}" at this outlet.`,
         };
       }
-      if (Number(stock.quantity) < line.quantity) {
+      if (Number(stock.quantity) < baseQty) {
+        const availSell = Math.floor(
+          Number(stock.quantity) / line.factorToBase
+        );
         return {
           ok: false,
-          message: `Insufficient stock for "${line.productName}" (available: ${stock.quantity}).`,
+          message: `Insufficient stock for "${line.productName}" (available: ${availSell} ${line.sellUnit}).`,
         };
       }
-      cogsAmount += line.quantity * Number(stock.cost_price);
+      cogsAmount += baseQty * Number(stock.cost_price);
     }
     cogsAmount = roundMoney(cogsAmount);
 
@@ -308,19 +315,27 @@ export async function completeSale(
     }
     saleId = sale.id;
 
-    const saleItems = input.lines.map((l, i) => ({
+    const saleItemsBase = input.lines.map((l, i) => ({
       sale_id: sale.id,
       product_id: l.productId,
       product_name: l.productName,
-      quantity: l.quantity,
+      quantity: roundMoney(l.quantity * l.factorToBase),
       unit_price: l.unitPrice,
       discount_pct: l.discountPct,
       tax_rate: input.taxRate,
       total_price: lineTotals[i],
     }));
-    const { error: itemsErr } = await supabase
-      .from("sale_items")
-      .insert(saleItems);
+    const saleItemsFull = input.lines.map((l, i) => ({
+      ...saleItemsBase[i]!,
+      sell_unit: l.sellUnit,
+      sell_qty: l.quantity,
+    }));
+    let itemsErr = (
+      await supabase.from("sale_items").insert(saleItemsFull)
+    ).error;
+    if (itemsErr?.message.includes("sell_unit")) {
+      itemsErr = (await supabase.from("sale_items").insert(saleItemsBase)).error;
+    }
     if (itemsErr) {
       await rollbackSale(supabase, sale.id, stockRollbacks);
       return { ok: false, message: itemsErr.message };
@@ -396,7 +411,8 @@ export async function completeSale(
 
     for (const line of input.lines) {
       const stock = stockByProduct.get(line.productId)!;
-      const newQty = roundMoney(Number(stock.quantity) - line.quantity);
+      const baseQty = roundMoney(line.quantity * line.factorToBase);
+      const newQty = roundMoney(Number(stock.quantity) - baseQty);
       const { error: updErr } = await supabase
         .from("stock")
         .update({ quantity: newQty })
@@ -405,14 +421,14 @@ export async function completeSale(
         await rollbackSale(supabase, sale.id, stockRollbacks);
         return { ok: false, message: updErr.message };
       }
-      stockRollbacks.push({ stockId: stock.id, quantity: line.quantity });
+      stockRollbacks.push({ stockId: stock.id, quantity: baseQty });
 
       const { error: movErr } = await supabase.from("stock_movements").insert({
         organization_id: ctx.organizationId,
         outlet_id: input.outletId,
         product_id: line.productId,
         movement_type: "sale",
-        quantity: line.quantity,
+        quantity: baseQty,
         unit_cost: Number(stock.cost_price),
         reference_id: sale.id,
         reference_type: "sale",

@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { ProductsClearAllDialog } from "@/components/inventory/products-clear-all-dialog";
 import { ProductsDuplicatesDialog } from "@/components/inventory/products-duplicates-dialog";
 import { CatalogCategoryFilter } from "@/components/inventory/catalog-category-filter";
+import { ProductEditDialog } from "@/components/inventory/product-edit-dialog";
 import { ProductsPriceListClient } from "@/components/inventory/products-price-list-client";
 import { createProduct, listCategoriesForOrg } from "@/lib/actions/inventory";
 import { fetchProductPriceCatalog } from "@/lib/api/inventory-catalog-fetch";
@@ -87,6 +88,7 @@ export function ProductsPageClient() {
   const [addOpen, setAddOpen] = useState(false);
   const [duplicatesOpen, setDuplicatesOpen] = useState(false);
   const [clearAllOpen, setClearAllOpen] = useState(false);
+  const [editProductId, setEditProductId] = useState<string | null>(null);
 
   const defaultOutletId = useMemo(
     () => resolveDefaultOutletId(outlets) ?? "",
@@ -260,6 +262,13 @@ export function ProductsPageClient() {
         categoryFilter={categoryFilter}
         canManage={canManage}
         onClearAll={canManage ? () => setClearAllOpen(true) : undefined}
+        onEditProduct={(id) => setEditProductId(id)}
+      />
+
+      <ProductEditDialog
+        productId={editProductId}
+        open={!!editProductId}
+        onOpenChange={(o) => !o && setEditProductId(null)}
       />
 
       <ProductsDuplicatesDialog

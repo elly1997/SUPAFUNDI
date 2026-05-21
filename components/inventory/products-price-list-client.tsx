@@ -32,6 +32,7 @@ type Props = {
   categoryFilter?: string;
   canManage?: boolean;
   onClearAll?: () => void;
+  onEditProduct?: (productId: string) => void;
 };
 
 export function ProductsPriceListClient({
@@ -39,6 +40,7 @@ export function ProductsPriceListClient({
   categoryFilter = "all",
   canManage = false,
   onClearAll,
+  onEditProduct,
 }: Props) {
   const outletId = useAuthStore((s) => s.activeOutletId);
   const queryClient = useQueryClient();
@@ -174,6 +176,7 @@ export function ProductsPriceListClient({
                           row={r}
                           saving={savingId?.startsWith(r.id) ?? false}
                           onSave={saveField}
+                          onEdit={onEditProduct}
                         />
                       ))}
                     </Fragment>
@@ -192,6 +195,7 @@ function PriceListRow({
   row,
   saving,
   onSave,
+  onEdit,
 }: {
   row: ProductPriceCatalogRow;
   saving: boolean;
@@ -200,22 +204,36 @@ function PriceListRow({
     field: "code" | "unit" | "costPrice" | "retailPrice",
     value: string | number
   ) => void;
+  onEdit?: (productId: string) => void;
 }) {
   const [code, setCode] = useState(row.code ?? "");
-  const [unit, setUnit] = useState(row.unit);
   const [cost, setCost] = useState(String(row.costPrice || ""));
   const [retail, setRetail] = useState(String(row.retailPrice || ""));
 
   useEffect(() => {
     setCode(row.code ?? "");
-    setUnit(row.unit);
     setCost(String(row.costPrice || ""));
     setRetail(String(row.retailPrice || ""));
   }, [row]);
 
   return (
     <TableRow className={saving ? "opacity-70" : undefined}>
-      <TableCell className="font-medium">{row.name}</TableCell>
+      <TableCell className="font-medium">
+        {onEdit ? (
+          <button
+            type="button"
+            onClick={() => onEdit(row.id)}
+            className="text-left text-primary underline-offset-2 hover:underline"
+          >
+            {row.name}
+          </button>
+        ) : (
+          row.name
+        )}
+        <p className="mt-0.5 text-xs font-normal text-muted-foreground">
+          {row.categoryName} · {row.unit}
+        </p>
+      </TableCell>
       <TableCell>
         <Input
           className="h-8 font-mono text-xs"
@@ -227,17 +245,7 @@ function PriceListRow({
           }}
         />
       </TableCell>
-      <TableCell>
-        <Input
-          className="h-8 w-20"
-          value={unit}
-          onChange={(e) => setUnit(e.target.value)}
-          onBlur={() => {
-            const v = unit.trim();
-            if (v && v !== row.unit) onSave(row, "unit", v);
-          }}
-        />
-      </TableCell>
+      <TableCell className="text-sm text-muted-foreground">{row.unit}</TableCell>
       <TableCell className="text-right">
         <Input
           type="number"

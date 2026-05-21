@@ -10,7 +10,7 @@ export type ReceiptPrintData = {
   changeGiven: number;
   balanceDue: number;
   paymentMethod: PaymentMethod;
-  lines: { name: string; quantity: number; unitPrice: number }[];
+  lines: { name: string; quantity: number; unit?: string; unitPrice: number }[];
   soldAt: Date;
   customerName?: string | null;
   subtotal?: number;
@@ -84,7 +84,7 @@ ${data.customerName ? `<p class="muted">Customer: ${escapeHtml(data.customerName
 ${data.lines
   .map(
     (l) =>
-      `<tr><td>${escapeHtml(l.name)} × ${l.quantity}</td><td class="right">${formatTzs(l.unitPrice * l.quantity)}</td></tr>`
+      `<tr><td>${escapeHtml(l.name)} × ${l.quantity}${l.unit ? ` ${escapeHtml(l.unit)}` : ""}</td><td class="right">${formatTzs(l.unitPrice * l.quantity)}</td></tr>`
   )
   .join("")}
 </table>
