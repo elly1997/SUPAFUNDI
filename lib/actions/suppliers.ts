@@ -2,6 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { buildSupplierPaymentJournalLines } from "@/lib/accounting/posting-rules";
+import { postJournalEntry } from "@/lib/actions/accounting";
+import { recordBankTransaction } from "@/lib/actions/banking";
+import { createManualSupplierBill } from "@/lib/actions/payables";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
@@ -23,6 +27,11 @@ const supplierInput = z.object({
   address: z.string().max(500).optional(),
   creditLimit: z.number().nonnegative().default(0),
   creditDays: z.number().int().min(0).default(30),
+  openingBalance: z.coerce.number().nonnegative().default(0),
+  openingBalanceDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
 });
 
 export type SupplierListRow = {
@@ -244,68 +253,221 @@ export async function createSupplierRecord(
   if (error || !data) {
     return { ok: false, message: error?.message ?? "Create failed" };
   }
+
+  if (input.openingBalance > 0) {
+    const billDate =
+      input.openingBalanceDate ?? new Date().toISOString().slice(0, 10);
+    const bill = await createManualSupplierBill({
+      supplierId: data.id,
+      billDate,
+      totalAmount: input.openingBalance,
+      notes: "Opening balance",
+    });
+    if (!bill.ok) {
+      return { ok: false, message: bill.message };
+    }
+  }
+
   revalidatePath("/suppliers");
+  revalidatePath("/finance/payables");
   revalidatePath("/inventory/purchase-orders");
   return { ok: true, id: data.id };
 }
 
+const paySupplierInput = z.object({
+  supplierId: z.string().uuid(),
+  amount: z.number().positive(),
+  paymentMethod: z
+    .enum(["cash", "mpesa", "bank_transfer", "cheque"])
+    .default("cash"),
+  paymentDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  bankAccountId: z.string().uuid().optional(),
+  referenceNo: z.string().max(100).optional(),
+  billId: z.string().uuid().optional(),
+});
+
 const payBillInput = z.object({
   billId: z.string().uuid(),
   amount: z.number().positive(),
-  paymentMethod: z.enum(["cash", "mpesa", "bank_transfer", "cheque"]).default("cash"),
+  paymentMethod: z
+    .enum(["cash", "mpesa", "bank_transfer", "cheque"])
+    .default("cash"),
+  paymentDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  bankAccountId: z.string().uuid().optional(),
   referenceNo: z.string().max(100).optional(),
 });
 
-export async function paySupplierBill(
-  raw: z.infer<typeof payBillInput>
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  try {
-    const input = payBillInput.parse(raw);
-    const ctx = await requireOrgContext();
-    const supabase = await createServerSupabaseClient();
+type BillSlice = { billId: string; amount: number };
 
+async function planBillAllocations(
+  supabase: SupabaseClient,
+  organizationId: string,
+  supplierId: string,
+  totalAmount: number,
+  billId?: string
+): Promise<{ ok: true; slices: BillSlice[] } | { ok: false; message: string }> {
+  if (billId) {
     const { data: bill } = await apDb(supabase)
       .from("supplier_bills")
-      .select("id, supplier_id, total_amount, amount_paid, status")
-      .eq("id", input.billId)
-      .eq("organization_id", ctx.organizationId)
+      .select("id, supplier_id, total_amount, amount_paid")
+      .eq("id", billId)
+      .eq("organization_id", organizationId)
+      .eq("supplier_id", supplierId)
       .maybeSingle();
-
     if (!bill) return { ok: false, message: "Bill not found." };
     const balance = roundMoney(
       Number(bill.total_amount) - Number(bill.amount_paid)
     );
-    if (input.amount > balance) {
-      return { ok: false, message: `Payment exceeds balance (${balance}).` };
+    if (totalAmount > balance) {
+      return {
+        ok: false,
+        message: `Payment exceeds bill balance (${balance}).`,
+      };
+    }
+    return { ok: true, slices: [{ billId, amount: totalAmount }] };
+  }
+
+  const { data: bills } = await apDb(supabase)
+    .from("supplier_bills")
+    .select("id, total_amount, amount_paid")
+    .eq("organization_id", organizationId)
+    .eq("supplier_id", supplierId)
+    .in("status", ["open", "partial", "draft"])
+    .order("bill_date", { ascending: true });
+
+  let remaining = totalAmount;
+  const slices: BillSlice[] = [];
+  for (const b of bills ?? []) {
+    if (remaining <= 0) break;
+    const balance = roundMoney(
+      Number(b.total_amount) - Number(b.amount_paid)
+    );
+    if (balance <= 0) continue;
+    const slice = roundMoney(Math.min(remaining, balance));
+    slices.push({ billId: b.id, amount: slice });
+    remaining = roundMoney(remaining - slice);
+  }
+
+  if (remaining > 0) {
+    return {
+      ok: false,
+      message: `Payment exceeds open payables by ${remaining}.`,
+    };
+  }
+  if (slices.length === 0) {
+    return { ok: false, message: "No open bills to pay." };
+  }
+  return { ok: true, slices };
+}
+
+export async function paySupplier(
+  raw: z.infer<typeof paySupplierInput>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const input = paySupplierInput.parse(raw);
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const paymentDate =
+      input.paymentDate ?? new Date().toISOString().slice(0, 10);
+
+    const plan = await planBillAllocations(
+      supabase,
+      ctx.organizationId,
+      input.supplierId,
+      input.amount,
+      input.billId
+    );
+    if (!plan.ok) return plan;
+
+    const paymentIds: string[] = [];
+
+    for (const slice of plan.slices) {
+      const { data: bill } = await apDb(supabase)
+        .from("supplier_bills")
+        .select("id, total_amount, amount_paid, status")
+        .eq("id", slice.billId)
+        .maybeSingle();
+      if (!bill) return { ok: false, message: "Bill not found." };
+
+      const newPaid = roundMoney(Number(bill.amount_paid) + slice.amount);
+      const newStatus =
+        newPaid >= Number(bill.total_amount)
+          ? "paid"
+          : newPaid > 0
+            ? "partial"
+            : bill.status;
+
+      const { data: payRow, error: payErr } = await apDb(supabase)
+        .from("supplier_payments")
+        .insert({
+          organization_id: ctx.organizationId,
+          outlet_id: ctx.outletId ?? null,
+          supplier_id: input.supplierId,
+          bill_id: slice.billId,
+          payment_method: input.paymentMethod,
+          amount: slice.amount,
+          reference_no: input.referenceNo?.trim() || null,
+          payment_date: paymentDate,
+          bank_account_id: input.bankAccountId ?? null,
+          created_by: ctx.userId,
+        })
+        .select("id")
+        .single();
+      if (payErr || !payRow) {
+        return { ok: false, message: payErr?.message ?? "Payment failed" };
+      }
+      paymentIds.push(payRow.id);
+
+      const { error: updErr } = await apDb(supabase)
+        .from("supplier_bills")
+        .update({ amount_paid: newPaid, status: newStatus })
+        .eq("id", slice.billId);
+      if (updErr) return { ok: false, message: updErr.message };
     }
 
-    const newPaid = roundMoney(Number(bill.amount_paid) + input.amount);
-    const newStatus =
-      newPaid >= Number(bill.total_amount)
-        ? "paid"
-        : newPaid > 0
-          ? "partial"
-          : bill.status;
-
-    const { error: payErr } = await apDb(supabase).from("supplier_payments").insert({
-      organization_id: ctx.organizationId,
-      supplier_id: bill.supplier_id,
-      bill_id: bill.id,
-      payment_method: input.paymentMethod,
-      amount: input.amount,
-      reference_no: input.referenceNo?.trim() || null,
-      created_by: ctx.userId,
+    const journal = await postJournalEntry({
+      description: `Supplier payment`,
+      sourceType: "payment",
+      sourceId: paymentIds[0],
+      outletId: ctx.outletId ?? undefined,
+      entryDate: paymentDate,
+      lines: buildSupplierPaymentJournalLines(
+        input.amount,
+        input.paymentMethod
+      ),
     });
-    if (payErr) return { ok: false, message: payErr.message };
+    if (!journal.ok) {
+      return { ok: false, message: journal.message };
+    }
 
-    const { error: updErr } = await apDb(supabase)
-      .from("supplier_bills")
-      .update({ amount_paid: newPaid, status: newStatus })
-      .eq("id", bill.id);
-    if (updErr) return { ok: false, message: updErr.message };
+    if (
+      input.bankAccountId &&
+      (input.paymentMethod === "mpesa" ||
+        input.paymentMethod === "bank_transfer" ||
+        input.paymentMethod === "cheque")
+    ) {
+      const bank = await recordBankTransaction({
+        bankAccountId: input.bankAccountId,
+        transactionType: "withdrawal",
+        amount: input.amount,
+        referenceNo: input.referenceNo?.trim() || undefined,
+        description: `Supplier payment`,
+        transactionDate: paymentDate,
+      });
+      if (!bank.ok) return bank;
+    }
 
     revalidatePath("/suppliers");
-    revalidatePath(`/suppliers/${bill.supplier_id}`);
+    revalidatePath(`/suppliers/${input.supplierId}`);
+    revalidatePath("/finance/payables");
+    revalidatePath("/finance/banking");
+    revalidatePath("/daily-closing");
     return { ok: true };
   } catch (e) {
     return {
@@ -313,4 +475,30 @@ export async function paySupplierBill(
       message: e instanceof Error ? e.message : "Payment failed",
     };
   }
+}
+
+export async function paySupplierBill(
+  raw: z.infer<typeof payBillInput>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const input = payBillInput.parse(raw);
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const { data: bill } = await apDb(supabase)
+    .from("supplier_bills")
+    .select("supplier_id")
+    .eq("id", input.billId)
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+  if (!bill?.supplier_id) {
+    return { ok: false, message: "Bill not found." };
+  }
+  return paySupplier({
+    supplierId: bill.supplier_id,
+    amount: input.amount,
+    paymentMethod: input.paymentMethod,
+    paymentDate: input.paymentDate,
+    bankAccountId: input.bankAccountId,
+    referenceNo: input.referenceNo,
+    billId: input.billId,
+  });
 }

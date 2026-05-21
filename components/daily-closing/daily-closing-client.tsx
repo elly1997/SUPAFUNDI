@@ -87,6 +87,10 @@ export function DailyClosingClient({ outlets }: Props) {
       cashSales: summary.cashSales,
       mpesaSales: summary.mpesaSales,
       cashExpenses: summary.cashExpenses,
+      cashPurchases: summary.cashPurchases,
+      cashSupplierPayments: summary.cashSupplierPayments,
+      cashCustomerPayments: summary.cashCustomerPayments,
+      cashCustomerDeposits: summary.cashCustomerDeposits,
       bankDeposits: summary.bankDeposits,
       expectedCash: summary.expectedCash,
       closingBalance: summary.closingBalance,
@@ -193,7 +197,7 @@ export function DailyClosingClient({ outlets }: Props) {
             <KpiCard
               title="Expected closing"
               value={formatTzs(summary.expectedCash)}
-              subtitle="Opening + cash sales − expenses − bank"
+              subtitle="Includes sales, customer receipts, purchases & supplier pay"
               variant="inflow"
             />
             <KpiCard
@@ -203,8 +207,13 @@ export function DailyClosingClient({ outlets }: Props) {
             />
             <KpiCard
               title="Cash out"
-              value={formatTzs(summary.cashExpenses + summary.bankDeposits)}
-              subtitle={`Expenses ${formatTzs(summary.cashExpenses)} · Bank ${formatTzs(summary.bankDeposits)}`}
+              value={formatTzs(
+                summary.cashExpenses +
+                  summary.bankDeposits +
+                  summary.cashPurchases +
+                  summary.cashSupplierPayments
+              )}
+              subtitle={`GRN ${formatTzs(summary.cashPurchases)} · Suppliers ${formatTzs(summary.cashSupplierPayments)}`}
               variant="outflow"
             />
           </div>

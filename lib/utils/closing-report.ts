@@ -8,6 +8,10 @@ export type ClosingReportData = {
   cashSales: number;
   mpesaSales: number;
   cashExpenses: number;
+  cashPurchases?: number;
+  cashSupplierPayments?: number;
+  cashCustomerPayments?: number;
+  cashCustomerDeposits?: number;
   bankDeposits: number;
   expectedCash: number;
   closingBalance: number | null;
@@ -29,7 +33,19 @@ export function formatClosingReportText(data: ClosingReportData): string {
     `Opening cash: ${formatTzs(data.openingBalance)}`,
     `+ Cash sales: ${formatTzs(data.cashSales)}`,
     `+ M-Pesa sales: ${formatTzs(data.mpesaSales)}`,
+    ...(data.cashCustomerPayments
+      ? [`+ Customer payments (cash): ${formatTzs(data.cashCustomerPayments)}`]
+      : []),
+    ...(data.cashCustomerDeposits
+      ? [`+ Customer deposits (cash): ${formatTzs(data.cashCustomerDeposits)}`]
+      : []),
     `- Cash expenses: ${formatTzs(data.cashExpenses)}`,
+    ...(data.cashPurchases
+      ? [`- Cash purchases (GRN): ${formatTzs(data.cashPurchases)}`]
+      : []),
+    ...(data.cashSupplierPayments
+      ? [`- Supplier payments (cash): ${formatTzs(data.cashSupplierPayments)}`]
+      : []),
     `- Bank deposits: ${formatTzs(data.bankDeposits)}`,
     `= Expected cash: ${formatTzs(data.expectedCash)}`,
   ];

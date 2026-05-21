@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { CustomerDepositForm } from "@/components/customers/customer-deposit-form";
+import { CustomerDetailActions } from "@/components/customers/customer-detail-client";
 import { getCustomerById } from "@/lib/actions/customers";
 import { cn } from "@/lib/utils";
 import { formatTzs, formatDateTimeEAT } from "@/lib/utils/currency";
@@ -31,9 +32,16 @@ export default async function CustomerDetailPage({ params }: Props) {
             {customer.customer_type} · {customer.phone ?? "No phone"}
           </p>
         </div>
-        <Link href="/customers" className={cn(buttonVariants({ variant: "outline" }))}>
-          Back
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <CustomerDetailActions
+            customerId={customer.id}
+            customerName={customer.name}
+            outstandingBalance={customer.outstanding_balance}
+          />
+          <Link href="/customers" className={cn(buttonVariants({ variant: "outline" }))}>
+            Back
+          </Link>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

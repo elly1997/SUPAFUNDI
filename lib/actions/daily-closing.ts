@@ -22,6 +22,10 @@ export type DayCashSummary = {
   cashSales: number;
   mpesaSales: number;
   cashExpenses: number;
+  cashPurchases: number;
+  cashSupplierPayments: number;
+  cashCustomerPayments: number;
+  cashCustomerDeposits: number;
   bankDeposits: number;
   expectedCash: number;
   closingBalance: number | null;
@@ -35,6 +39,14 @@ function dayBounds(businessDate: string) {
   return {
     from: `${businessDate}T00:00:00.000Z`,
     to: `${businessDate}T23:59:59.999Z`,
+  };
+}
+
+type SupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
+
+function apDb(supabase: SupabaseClient) {
+  return supabase as unknown as {
+    from: (table: string) => ReturnType<SupabaseClient["from"]>;
   };
 }
 
@@ -170,14 +182,60 @@ export async function computeDayCashSummary(
     cashPurchases -= Number(r.total_amount);
   }
 
+  let cashSupplierPayments = 0;
+  const { data: supplierCash } = await apDb(supabase)
+    .from("supplier_payments")
+    .select("amount")
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", outletId)
+    .eq("payment_method", "cash")
+    .eq("payment_date", businessDate);
+  for (const p of supplierCash ?? []) {
+    cashSupplierPayments += Number(p.amount);
+  }
+
+  let cashCustomerPayments = 0;
+  let cashCustomerDeposits = 0;
+  const { data: customerCash } = await supabase
+    .from("payments")
+    .select("amount, reference_no, payment_method")
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", outletId)
+    .eq("payment_method", "cash")
+    .eq("status", "completed")
+    .gte("payment_date", from)
+    .lte("payment_date", to)
+    .not("customer_id", "is", null)
+    .is("sale_id", null);
+
+  for (const p of customerCash ?? []) {
+    const ref = String(p.reference_no ?? "");
+    const amt = Number(p.amount);
+    if (ref.startsWith("DEP-")) {
+      cashCustomerDeposits += amt;
+    } else {
+      cashCustomerPayments += amt;
+    }
+  }
+
   cashSales = roundMoney(cashSales);
   mpesaSales = roundMoney(mpesaSales);
   cashExpenses = roundMoney(cashExpenses);
   bankDeposits = roundMoney(bankDeposits);
   cashPurchases = roundMoney(Math.max(0, cashPurchases));
+  cashSupplierPayments = roundMoney(cashSupplierPayments);
+  cashCustomerPayments = roundMoney(cashCustomerPayments);
+  cashCustomerDeposits = roundMoney(cashCustomerDeposits);
 
   const expectedCash = roundMoney(
-    openingBalance + cashSales - cashExpenses - bankDeposits - cashPurchases
+    openingBalance +
+      cashSales +
+      cashCustomerPayments +
+      cashCustomerDeposits -
+      cashExpenses -
+      bankDeposits -
+      cashPurchases -
+      cashSupplierPayments
   );
 
   const closingBalance =
@@ -197,6 +255,10 @@ export async function computeDayCashSummary(
     cashSales,
     mpesaSales,
     cashExpenses,
+    cashPurchases,
+    cashSupplierPayments,
+    cashCustomerPayments,
+    cashCustomerDeposits,
     bankDeposits,
     expectedCash,
     closingBalance,
@@ -231,9 +293,13 @@ export async function reconcileDailyClosing(
       input.openingBalance ?? summary.openingBalance;
     const expected = roundMoney(
       opening +
-        summary.cashSales -
+        summary.cashSales +
+        summary.cashCustomerPayments +
+        summary.cashCustomerDeposits -
         summary.cashExpenses -
-        summary.bankDeposits
+        summary.bankDeposits -
+        summary.cashPurchases -
+        summary.cashSupplierPayments
     );
     const variance = roundMoney(input.countedClosing - expected);
 
@@ -408,6 +474,10 @@ export async function buildClosingReportForWhatsApp(
       cashSales: summary.cashSales,
       mpesaSales: summary.mpesaSales,
       cashExpenses: summary.cashExpenses,
+      cashPurchases: summary.cashPurchases,
+      cashSupplierPayments: summary.cashSupplierPayments,
+      cashCustomerPayments: summary.cashCustomerPayments,
+      cashCustomerDeposits: summary.cashCustomerDeposits,
       bankDeposits: summary.bankDeposits,
       expectedCash: summary.expectedCash,
       closingBalance: summary.closingBalance,

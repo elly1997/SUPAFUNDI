@@ -55,6 +55,8 @@ export function PosCartCustomer({
         creditLimit: 0,
         creditDays: 30,
         priceType: "retail",
+        openingCredit: 0,
+        openingDeposit: 0,
       }),
     onSuccess: (res) => {
       if (!res.ok) {

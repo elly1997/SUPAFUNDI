@@ -1,21 +1,12 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { FileText, Loader2, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -24,37 +15,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { getSupplierDetail, paySupplierBill } from "@/lib/actions/suppliers";
+import { PartyStatementDialog } from "@/components/finance/party-statement-dialog";
+import { RecordPartyPaymentDialog } from "@/components/finance/record-party-payment-dialog";
+import { getSupplierDetail } from "@/lib/actions/suppliers";
 import { formatTzs } from "@/lib/utils/currency";
 
 type Props = { supplierId: string };
 
 export function SupplierDetailClient({ supplierId }: Props) {
   const [payOpen, setPayOpen] = useState(false);
-  const [billId, setBillId] = useState("");
-  const [amount, setAmount] = useState("");
+  const [stmtOpen, setStmtOpen] = useState(false);
+  const [billId, setBillId] = useState<string | undefined>();
   const queryClient = useQueryClient();
 
   const { data: supplier, isLoading } = useQuery({
     queryKey: ["supplier", supplierId],
     queryFn: () => getSupplierDetail(supplierId),
-  });
-
-  const payMut = useMutation({
-    mutationFn: () =>
-      paySupplierBill({
-        billId,
-        amount: Number(amount),
-        paymentMethod: "cash",
-      }),
-    onSuccess: (r) => {
-      if (r.ok) {
-        toast.success("Payment recorded");
-        setPayOpen(false);
-        setAmount("");
-        queryClient.invalidateQueries({ queryKey: ["supplier", supplierId] });
-      } else toast.error(r.message);
-    },
   });
 
   if (isLoading) {
@@ -69,11 +45,30 @@ export function SupplierDetailClient({ supplierId }: Props) {
     return <p className="text-muted-foreground">Supplier not found.</p>;
   }
 
+  const openBills = supplier.bills.filter((b) => b.balance > 0);
+
   return (
     <div className="space-y-6">
       <Card className="dash-stat-card border-warning/30">
-        <CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
           <CardTitle>{supplier.name}</CardTitle>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              disabled={supplier.payables_balance <= 0}
+              onClick={() => {
+                setBillId(undefined);
+                setPayOpen(true);
+              }}
+            >
+              <Wallet className="mr-2 size-4" />
+              Pay supplier
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setStmtOpen(true)}>
+              <FileText className="mr-2 size-4" />
+              Statement
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="grid gap-2 text-sm sm:grid-cols-2">
           <p>
@@ -98,15 +93,8 @@ export function SupplierDetailClient({ supplierId }: Props) {
       </Card>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Open bills</CardTitle>
-          <Button
-            size="sm"
-            disabled={supplier.bills.filter((b) => b.balance > 0).length === 0}
-            onClick={() => setPayOpen(true)}
-          >
-            Pay supplier
-          </Button>
+        <CardHeader>
+          <CardTitle>Bills</CardTitle>
         </CardHeader>
         <CardContent>
           {supplier.bills.length === 0 ? (
@@ -119,6 +107,7 @@ export function SupplierDetailClient({ supplierId }: Props) {
                   <TableHead>Date</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
+                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -129,6 +118,20 @@ export function SupplierDetailClient({ supplierId }: Props) {
                     <TableCell className="capitalize">{b.status}</TableCell>
                     <TableCell className="text-right font-money">
                       {formatTzs(b.balance)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {b.balance > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setBillId(b.id);
+                            setPayOpen(true);
+                          }}
+                        >
+                          Pay
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -163,52 +166,25 @@ export function SupplierDetailClient({ supplierId }: Props) {
         </CardContent>
       </Card>
 
-      <Dialog open={payOpen} onOpenChange={setPayOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Pay supplier bill</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Bill</Label>
-              <select
-                className="h-9 w-full rounded-lg border border-input bg-surface-1 px-2 text-sm"
-                value={billId}
-                onChange={(e) => setBillId(e.target.value)}
-              >
-                <option value="">Select bill</option>
-                {supplier.bills
-                  .filter((b) => b.balance > 0)
-                  .map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.bill_no} — {formatTzs(b.balance)} due
-                    </option>
-                  ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label>Amount (TZS)</Label>
-              <Input
-                type="number"
-                className="font-money"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPayOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={!billId || !amount || payMut.isPending}
-              onClick={() => payMut.mutate()}
-            >
-              Record payment
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <RecordPartyPaymentDialog
+        open={payOpen}
+        onOpenChange={setPayOpen}
+        partyType="supplier"
+        partyId={supplierId}
+        partyName={supplier.name}
+        maxAmount={supplier.payables_balance}
+        billId={billId}
+        onSuccess={() =>
+          queryClient.invalidateQueries({ queryKey: ["supplier", supplierId] })
+        }
+      />
+      <PartyStatementDialog
+        open={stmtOpen}
+        onOpenChange={setStmtOpen}
+        partyType="supplier"
+        partyId={supplierId}
+        partyName={supplier.name}
+      />
     </div>
   );
 }

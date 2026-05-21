@@ -4,9 +4,18 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { buildCustomerDepositJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { creditAccountFromPosSale } from "@/lib/actions/banking";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
+
+type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
+
+function paymentsDb(supabase: Supabase) {
+  return supabase as unknown as {
+    from: (table: string) => ReturnType<Supabase["from"]>;
+  };
+}
 
 const customerInput = z.object({
   name: z.string().min(1).max(200),
@@ -19,6 +28,8 @@ const customerInput = z.object({
   creditLimit: z.coerce.number().nonnegative().default(0),
   creditDays: z.coerce.number().int().min(0).max(365).default(30),
   priceType: z.enum(["retail", "wholesale", "trade", "vip"]).default("retail"),
+  openingCredit: z.coerce.number().nonnegative().default(0),
+  openingDeposit: z.coerce.number().nonnegative().default(0),
 });
 
 export type CustomerListRow = {
@@ -60,6 +71,11 @@ const depositInput = z.object({
   outletId: z.string().uuid(),
   amount: z.number().positive(),
   paymentMethod: z.enum(["cash", "mpesa", "bank_transfer"]),
+  paymentDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+  bankAccountId: z.string().uuid().optional(),
   notes: z.string().max(500).optional(),
 });
 
@@ -78,6 +94,10 @@ export async function recordCustomerDeposit(
       .maybeSingle();
     if (!customer) return { ok: false, message: "Customer not found." };
 
+    const paymentDate =
+      input.paymentDate ?? new Date().toISOString().slice(0, 10);
+    const paymentTs = `${paymentDate}T12:00:00.000Z`;
+
     const newBalance = roundMoney(
       Number(customer.deposit_balance ?? 0) + input.amount
     );
@@ -87,7 +107,7 @@ export async function recordCustomerDeposit(
       .eq("id", input.customerId);
     if (updErr) return { ok: false, message: updErr.message };
 
-    const { data: payment, error: payErr } = await supabase
+    const { data: payment, error: payErr } = await paymentsDb(supabase)
       .from("payments")
       .insert({
         organization_id: ctx.organizationId,
@@ -96,7 +116,9 @@ export async function recordCustomerDeposit(
         amount: input.amount,
         reference_no: input.notes?.trim() || `DEP-${customer.name}`,
         status: "completed",
+        payment_date: paymentTs,
         received_by: ctx.userId,
+        customer_id: input.customerId,
       })
       .select("id")
       .single();
@@ -113,6 +135,7 @@ export async function recordCustomerDeposit(
       sourceType: "payment",
       sourceId: payment?.id,
       outletId: input.outletId,
+      entryDate: paymentDate,
       lines: buildCustomerDepositJournalLines(
         input.amount,
         input.paymentMethod
@@ -127,9 +150,33 @@ export async function recordCustomerDeposit(
       return { ok: false, message: journal.message };
     }
 
+    if (
+      input.bankAccountId &&
+      (input.paymentMethod === "mpesa" ||
+        input.paymentMethod === "bank_transfer")
+    ) {
+      const bank = await creditAccountFromPosSale(
+        input.bankAccountId,
+        input.amount,
+        payment!.id,
+        `DEP-${customer.name}`,
+        paymentDate
+      );
+      if (!bank.ok) {
+        await supabase.from("payments").delete().eq("id", payment?.id);
+        await supabase
+          .from("customers")
+          .update({ deposit_balance: Number(customer.deposit_balance ?? 0) })
+          .eq("id", input.customerId);
+        return bank;
+      }
+    }
+
     revalidatePath("/customers");
     revalidatePath(`/customers/${input.customerId}`);
     revalidatePath("/finance/credit");
+    revalidatePath("/finance/banking");
+    revalidatePath("/daily-closing");
     return { ok: true };
   } catch (e) {
     return {
@@ -158,6 +205,8 @@ export async function createCustomer(
         credit_limit: input.creditLimit,
         credit_days: input.creditDays,
         price_type: input.priceType,
+        outstanding_balance: input.openingCredit,
+        deposit_balance: input.openingDeposit,
         is_active: true,
       })
       .select("id")
@@ -165,6 +214,33 @@ export async function createCustomer(
     if (error || !data) {
       return { ok: false, message: error?.message ?? "Create failed" };
     }
+
+    if (input.openingCredit > 0) {
+      await paymentsDb(supabase)
+        .from("credit_ledger")
+        .insert({
+          organization_id: ctx.organizationId,
+          customer_id: data.id,
+          entry_type: "invoice",
+          reference_type: "opening_balance",
+          debit: input.openingCredit,
+          credit: 0,
+          balance: input.openingCredit,
+          description: "Opening credit balance",
+          created_by: ctx.userId,
+        });
+    }
+
+    if (input.openingDeposit > 0 && ctx.outletId) {
+      await recordCustomerDeposit({
+        customerId: data.id,
+        outletId: ctx.outletId,
+        amount: input.openingDeposit,
+        paymentMethod: "cash",
+        notes: "Opening deposit balance",
+      });
+    }
+
     revalidatePath("/customers");
     revalidatePath("/pos");
     revalidatePath("/finance/credit");

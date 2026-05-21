@@ -32,6 +32,7 @@ export function SuppliersPageClient() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [openingBalance, setOpeningBalance] = useState("");
   const queryClient = useQueryClient();
 
   const { data: suppliers = [], isLoading } = useQuery({
@@ -46,6 +47,7 @@ export function SuppliersPageClient() {
         phone: phone || undefined,
         creditLimit: 0,
         creditDays: 30,
+        openingBalance: Number(openingBalance) || 0,
       }),
     onSuccess: (r) => {
       if (r.ok) {
@@ -53,6 +55,7 @@ export function SuppliersPageClient() {
         setOpen(false);
         setName("");
         setPhone("");
+        setOpeningBalance("");
         queryClient.invalidateQueries({ queryKey: ["suppliers"] });
       } else toast.error(r.message);
     },
@@ -148,6 +151,20 @@ export function SuppliersPageClient() {
             <div className="space-y-2">
               <Label>Phone</Label>
               <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Opening payables balance (TZS)</Label>
+              <Input
+                type="number"
+                min={0}
+                className="font-money"
+                placeholder="0"
+                value={openingBalance}
+                onChange={(e) => setOpeningBalance(e.target.value)}
+              />
+              <p className="form-hint">
+                Creates an open supplier bill in accounts payable.
+              </p>
             </div>
           </div>
           <DialogFooter>

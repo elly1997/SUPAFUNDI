@@ -1,27 +1,11 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Wallet } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { FileText, Loader2, Wallet } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -30,17 +14,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  listCustomersWithBalance,
-  recordCustomerPayment,
-} from "@/lib/actions/credit";
+import { PartyStatementDialog } from "@/components/finance/party-statement-dialog";
+import { RecordPartyPaymentDialog } from "@/components/finance/record-party-payment-dialog";
+import { listCustomersWithBalance } from "@/lib/actions/credit";
 import { formatTzs } from "@/lib/utils/currency";
 
 export function CreditPageClient() {
-  const [open, setOpen] = useState(false);
-  const [customerId, setCustomerId] = useState("");
-  const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState<"cash" | "mpesa" | "bank_transfer">("cash");
+  const [payCustomerId, setPayCustomerId] = useState<string | null>(null);
+  const [stmtCustomerId, setStmtCustomerId] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   const { data: balances = [], isLoading } = useQuery({
@@ -48,27 +29,13 @@ export function CreditPageClient() {
     queryFn: listCustomersWithBalance,
   });
 
-  const payMut = useMutation({
-    mutationFn: recordCustomerPayment,
-    onSuccess: (r) => {
-      if (r.ok) {
-        toast.success("Payment recorded");
-        setOpen(false);
-        setAmount("");
-        queryClient.invalidateQueries({ queryKey: ["credit-balances"] });
-        queryClient.invalidateQueries({ queryKey: ["customers"] });
-      } else toast.error(r.message);
-    },
-  });
+  const payCustomer = balances.find((c) => c.id === payCustomerId);
+  const stmtCustomer = balances.find((c) => c.id === stmtCustomerId);
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
+      <CardHeader>
         <CardTitle>Accounts receivable</CardTitle>
-        <Button onClick={() => setOpen(true)}>
-          <Wallet className="mr-2 h-4 w-4" />
-          Record payment
-        </Button>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -87,18 +54,41 @@ export function CreditPageClient() {
                 <TableHead>Phone</TableHead>
                 <TableHead className="text-right">Outstanding</TableHead>
                 <TableHead className="text-right">Credit limit</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {balances.map((c) => (
                 <TableRow key={c.id}>
-                  <TableCell className="font-medium">{c.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <Link
+                      href={`/customers/${c.id}`}
+                      className="text-primary hover:underline"
+                    >
+                      {c.name}
+                    </Link>
+                  </TableCell>
                   <TableCell>{c.phone ?? "—"}</TableCell>
-                  <TableCell className="text-right text-amber-700">
+                  <TableCell className="text-right font-money text-warning">
                     {formatTzs(c.outstanding_balance)}
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right font-money">
                     {formatTzs(c.credit_limit)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setStmtCustomerId(c.id)}
+                      >
+                        <FileText className="size-4" />
+                      </Button>
+                      <Button size="sm" onClick={() => setPayCustomerId(c.id)}>
+                        <Wallet className="mr-1 size-4" />
+                        Pay
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -107,64 +97,29 @@ export function CreditPageClient() {
         )}
       </CardContent>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Record customer payment</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Customer</Label>
-              <Select
-                value={customerId}
-                onValueChange={(v) => setCustomerId(v ?? "")}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select customer" />
-                </SelectTrigger>
-                <SelectContent>
-                  {balances.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name} — {formatTzs(c.outstanding_balance)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Amount</Label>
-              <Input type="number" min={1} value={amount} onChange={(e) => setAmount(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Method</Label>
-              <Select value={method} onValueChange={(v) => setMethod(v as typeof method)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="cash">Cash</SelectItem>
-                  <SelectItem value="mpesa">M-Pesa</SelectItem>
-                  <SelectItem value="bank_transfer">Bank</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              disabled={!customerId || !amount || payMut.isPending}
-              onClick={() =>
-                payMut.mutate({
-                  customerId,
-                  amount: Number(amount),
-                  paymentMethod: method,
-                })
-              }
-            >
-              {payMut.isPending ? "Saving…" : "Post payment"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {payCustomer && (
+        <RecordPartyPaymentDialog
+          open={!!payCustomerId}
+          onOpenChange={(o) => !o && setPayCustomerId(null)}
+          partyType="customer"
+          partyId={payCustomer.id}
+          partyName={payCustomer.name}
+          maxAmount={payCustomer.outstanding_balance}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ["credit-balances"] });
+            queryClient.invalidateQueries({ queryKey: ["customers"] });
+          }}
+        />
+      )}
+      {stmtCustomer && (
+        <PartyStatementDialog
+          open={!!stmtCustomerId}
+          onOpenChange={(o) => !o && setStmtCustomerId(null)}
+          partyType="customer"
+          partyId={stmtCustomer.id}
+          partyName={stmtCustomer.name}
+        />
+      )}
     </Card>
   );
 }

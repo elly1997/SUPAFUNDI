@@ -33,13 +33,20 @@ type FormValues = {
   phone: string;
   creditLimit: number;
   creditDays: number;
+  openingCredit: number;
+  openingDeposit: number;
 };
 
 export function CustomersPageClient() {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
   const { register, handleSubmit, reset } = useForm<FormValues>({
-    defaultValues: { creditLimit: 0, creditDays: 30 },
+    defaultValues: {
+      creditLimit: 0,
+      creditDays: 30,
+      openingCredit: 0,
+      openingDeposit: 0,
+    },
   });
 
   const { data: customers = [], isLoading } = useQuery({
@@ -83,7 +90,8 @@ export function CustomersPageClient() {
                 <TableHead>Phone</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead className="text-right">Credit limit</TableHead>
-                <TableHead className="text-right">Balance due</TableHead>
+                <TableHead className="text-right">Credit due</TableHead>
+                <TableHead className="text-right">Deposit</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -102,14 +110,19 @@ export function CustomersPageClient() {
                   <TableCell className="text-right">
                     {formatTzs(c.credit_limit)}
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right font-money">
                     {c.outstanding_balance > 0 ? (
-                      <span className="text-amber-700">
+                      <span className="text-warning">
                         {formatTzs(c.outstanding_balance)}
                       </span>
                     ) : (
                       "—"
                     )}
+                  </TableCell>
+                  <TableCell className="text-right font-money text-inflow">
+                    {c.deposit_balance > 0
+                      ? formatTzs(c.deposit_balance)
+                      : "—"}
                   </TableCell>
                 </TableRow>
               ))}
@@ -133,6 +146,8 @@ export function CustomersPageClient() {
                 phone: v.phone,
                 creditLimit: Number(v.creditLimit),
                 creditDays: Number(v.creditDays),
+                openingCredit: Number(v.openingCredit) || 0,
+                openingDeposit: Number(v.openingDeposit) || 0,
                 customerType: "retail",
                 priceType: "retail",
               })
@@ -155,6 +170,24 @@ export function CustomersPageClient() {
               <div className="space-y-2">
                 <Label>Credit days</Label>
                 <Input type="number" min={0} {...register("creditDays")} />
+              </div>
+              <div className="space-y-2">
+                <Label>Opening credit (AR)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  className="font-money"
+                  {...register("openingCredit")}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Opening deposit</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  className="font-money"
+                  {...register("openingDeposit")}
+                />
               </div>
             </div>
             <DialogFooter>

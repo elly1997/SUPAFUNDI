@@ -303,6 +303,33 @@ export function buildExpenseJournalLines(input: ExpensePostingInput): JournalLin
   ];
 }
 
+/** Pay supplier bill — Dr AP · Cr cash/M-Pesa/bank. */
+export function buildSupplierPaymentJournalLines(
+  amount: number,
+  paymentMethod: "cash" | "mpesa" | "bank_transfer" | "cheque"
+): JournalLineInput[] {
+  const cashAccount =
+    paymentMethod === "mpesa"
+      ? SYSTEM_ACCOUNT_CODES.mpesa
+      : paymentMethod === "bank_transfer" || paymentMethod === "cheque"
+        ? SYSTEM_ACCOUNT_CODES.bank
+        : SYSTEM_ACCOUNT_CODES.cash;
+  return [
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.ap,
+      debit: amount,
+      credit: 0,
+      memo: "Supplier payment",
+    },
+    {
+      accountCode: cashAccount,
+      debit: 0,
+      credit: amount,
+      memo: "Cash/bank out",
+    },
+  ];
+}
+
 /** Customer pays down AR balance. */
 export function buildCustomerPaymentJournalLines(
   amount: number,
