@@ -8,6 +8,7 @@ import {
   type JournalLineInput,
 } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { creditAccountFromPosSale } from "@/lib/actions/banking";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -45,6 +46,8 @@ const completeSaleInput = z.object({
     "cheque",
   ]),
   amountPaid: z.number().nonnegative(),
+  /** Bank / M-Pesa / Lipa account to credit when collecting electronically */
+  paymentAccountId: z.string().uuid().optional(),
   /** Apply up to this amount from customer deposit_balance */
   depositApplied: z.number().nonnegative().optional(),
   notes: z.string().max(2000).optional(),
@@ -324,19 +327,51 @@ export async function completeSale(
     }
 
     if (input.amountPaid > 0) {
-      const { error: payErr } = await supabase.from("payments").insert({
+      const payAmount = roundMoney(Math.min(input.amountPaid, totalAmount));
+      const paymentBase = {
         organization_id: ctx.organizationId,
         outlet_id: input.outletId,
         sale_id: sale.id,
         payment_method: input.paymentMethod,
-        amount: roundMoney(Math.min(input.amountPaid, totalAmount)),
-        status: "completed",
+        amount: payAmount,
+        status: "completed" as const,
         received_by: ctx.userId,
         payment_date: saleTimestamp,
-      });
+      };
+      let payErr = (
+        await supabase.from("payments").insert({
+          ...paymentBase,
+          ...(input.paymentAccountId
+            ? { payment_account_id: input.paymentAccountId }
+            : {}),
+        })
+      ).error;
+      if (payErr?.message.includes("payment_account_id")) {
+        payErr = (await supabase.from("payments").insert(paymentBase)).error;
+      }
       if (payErr) {
         await rollbackSale(supabase, sale.id, stockRollbacks);
         return { ok: false, message: payErr.message };
+      }
+
+      const routesToAccount =
+        input.paymentAccountId &&
+        payAmount > 0 &&
+        (input.paymentMethod === "mpesa" ||
+          input.paymentMethod === "bank_transfer" ||
+          input.paymentMethod === "card");
+      if (routesToAccount) {
+        const credit = await creditAccountFromPosSale(
+          input.paymentAccountId!,
+          payAmount,
+          sale.id,
+          invoiceNo,
+          input.businessDate
+        );
+        if (!credit.ok) {
+          await rollbackSale(supabase, sale.id, stockRollbacks);
+          return { ok: false, message: credit.message };
+        }
       }
     }
 

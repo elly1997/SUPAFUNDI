@@ -1,8 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Landmark, Loader2, Plus } from "lucide-react";
-import { useState } from "react";
+import { Landmark, Loader2, Plus, Smartphone, Wallet } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,13 +31,24 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  createBankAccount,
-  listBankAccounts,
+  PAYMENT_ACCOUNT_TYPES,
+  formatAccountDetails,
+  paymentAccountTypeLabel,
+  type PaymentAccountType,
+} from "@/lib/constants/payment-accounts";
+import {
+  createPaymentAccount,
   listBankTransactions,
+  listPaymentAccounts,
   recordBankTransaction,
   toggleBankTransactionReconciled,
 } from "@/lib/actions/banking";
 import { formatTzs } from "@/lib/utils/currency";
+
+function accountTypeIcon(type: PaymentAccountType) {
+  if (type === "bank") return Landmark;
+  return Smartphone;
+}
 
 export function BankingPageClient() {
   const queryClient = useQueryClient();
@@ -45,63 +56,103 @@ export function BankingPageClient() {
   const [txnOpen, setTxnOpen] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<string>("all");
   const [acctName, setAcctName] = useState("");
+  const [accountType, setAccountType] = useState<PaymentAccountType>("bank");
   const [bankName, setBankName] = useState("");
   const [accountNo, setAccountNo] = useState("");
+  const [lipaMerchant, setLipaMerchant] = useState("");
+  const [showInPos, setShowInPos] = useState(true);
   const [openingBal, setOpeningBal] = useState("");
   const [txnType, setTxnType] = useState<"deposit" | "withdrawal">("deposit");
   const [txnAmount, setTxnAmount] = useState("");
   const [txnDesc, setTxnDesc] = useState("");
 
-  const { data: accounts = [], isLoading: acctLoading } = useQuery({
-    queryKey: ["bank-accounts"],
-    queryFn: listBankAccounts,
+  const {
+    data: accounts = [],
+    isLoading: acctLoading,
+    isError: acctError,
+    error: acctErr,
+    refetch: refetchAccounts,
+  } = useQuery({
+    queryKey: ["payment-accounts"],
+    queryFn: listPaymentAccounts,
   });
 
+  const activeAccounts = accounts.filter((a) => a.is_active);
   const filterId = selectedAccount === "all" ? null : selectedAccount;
-  const { data: transactions = [], isLoading: txLoading } = useQuery({
+  const {
+    data: transactions = [],
+    isLoading: txLoading,
+    isError: txError,
+    error: txErr,
+  } = useQuery({
     queryKey: ["bank-transactions", filterId],
     queryFn: () => listBankTransactions(filterId),
+    enabled: !acctError,
   });
 
-  const totalBalance = accounts.reduce((s, a) => s + a.current_balance, 0);
+  const selected =
+    selectedAccount !== "all"
+      ? accounts.find((a) => a.id === selectedAccount)
+      : null;
+
+  const totalBalance = activeAccounts.reduce((s, a) => s + a.current_balance, 0);
+
+  useEffect(() => {
+    if (
+      selectedAccount !== "all" &&
+      accounts.length > 0 &&
+      !accounts.some((a) => a.id === selectedAccount)
+    ) {
+      setSelectedAccount("all");
+    }
+  }, [accounts, selectedAccount]);
 
   const createAcctMut = useMutation({
     mutationFn: () =>
-      createBankAccount({
+      createPaymentAccount({
         name: acctName,
+        accountType,
         bankName: bankName || undefined,
         accountNo: accountNo || undefined,
+        lipaMerchant: lipaMerchant || undefined,
+        showInPos,
         openingBalance: Number(openingBal) || 0,
       }),
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success("Bank account added");
+        toast.success("Collection account added");
         setAccountOpen(false);
         setAcctName("");
         setBankName("");
         setAccountNo("");
+        setLipaMerchant("");
         setOpeningBal("");
-        void queryClient.invalidateQueries({ queryKey: ["bank-accounts"] });
+        setAccountType("bank");
+        void queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
         void queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
+        void queryClient.invalidateQueries({ queryKey: ["pos-payment-accounts"] });
       } else toast.error(r.message);
     },
   });
 
   const txnMut = useMutation({
-    mutationFn: () =>
-      recordBankTransaction({
-        bankAccountId: selectedAccount === "all" ? accounts[0]?.id ?? "" : selectedAccount,
+    mutationFn: () => {
+      const accountId =
+        selectedAccount === "all" ? activeAccounts[0]?.id ?? "" : selectedAccount;
+      return recordBankTransaction({
+        bankAccountId: accountId,
         transactionType: txnType,
         amount: Number(txnAmount),
         description: txnDesc || undefined,
-      }),
+      });
+    },
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Transaction recorded");
         setTxnOpen(false);
         setTxnAmount("");
         setTxnDesc("");
-        void queryClient.invalidateQueries({ queryKey: ["bank-accounts"] });
+        void queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
         void queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
       } else toast.error(r.message);
     },
@@ -117,20 +168,22 @@ export function BankingPageClient() {
     },
   });
 
+  const typeHint = PAYMENT_ACCOUNT_TYPES.find((t) => t.value === accountType)?.hint;
+
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-3">
         <Card className="glass-card sm:col-span-1">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
-              <Landmark className="size-5 text-primary" />
-              Total bank balance
+              <Wallet className="size-5 text-primary" />
+              Total balance
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="font-money text-2xl font-bold">{formatTzs(totalBalance)}</p>
             <p className="text-xs text-muted-foreground">
-              {accounts.length} active account(s)
+              {activeAccounts.length} active account(s) · bank, M-Pesa, Lipa
             </p>
           </CardContent>
         </Card>
@@ -142,7 +195,7 @@ export function BankingPageClient() {
           <Button
             type="button"
             variant="outline"
-            disabled={accounts.length === 0}
+            disabled={activeAccounts.length === 0}
             onClick={() => setTxnOpen(true)}
           >
             Record transaction
@@ -150,41 +203,102 @@ export function BankingPageClient() {
         </div>
       </div>
 
+      {acctError && (
+        <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <strong>Could not load accounts.</strong>{" "}
+          {acctErr instanceof Error ? acctErr.message : "Unknown error"}
+          <Button
+            type="button"
+            variant="link"
+            className="ml-2 h-auto p-0 text-destructive"
+            onClick={() => void refetchAccounts()}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+
+      {selected && (
+        <Card className="glass-card border-primary/30">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">{selected.name}</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <span className="text-muted-foreground">Type</span>
+              <p className="font-medium">
+                {paymentAccountTypeLabel(selected.account_type)}
+              </p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Details</span>
+              <p className="font-medium">{formatAccountDetails(selected)}</p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">Balance</span>
+              <p className="font-money text-lg font-semibold">
+                {formatTzs(selected.current_balance)}
+              </p>
+            </div>
+            <div>
+              <span className="text-muted-foreground">POS</span>
+              <p className="font-medium">
+                {selected.show_in_pos
+                  ? `Shown for ${selected.pos_payment_method ?? "—"} payments`
+                  : "Hidden on POS"}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="glass-card">
         <CardHeader>
-          <CardTitle className="text-base">Accounts</CardTitle>
+          <CardTitle className="text-base">Collection accounts</CardTitle>
         </CardHeader>
         <CardContent>
           {acctLoading ? (
             <Loader2 className="mx-auto size-8 animate-spin" />
-          ) : accounts.length === 0 ? (
+          ) : accounts.length === 0 && !acctError ? (
             <p className="text-sm text-muted-foreground">
-              Add a bank or M-Pesa business account to track deposits and reconcile
-              against supplier payments.
+              Add bank accounts, M-Pesa wallets, Lipa numbers, or tills. Enable
+              &quot;Show on POS&quot; so cashiers route M-Pesa and bank payments to the
+              right account.
             </p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {accounts.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => setSelectedAccount(a.id)}
-                  className={`rounded-xl border p-4 text-left transition-colors ${
-                    selectedAccount === a.id
-                      ? "border-primary bg-primary/10"
-                      : "border-border bg-surface-1/40 hover:border-primary/40"
-                  }`}
-                >
-                  <p className="font-medium">{a.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {a.bank_name ?? "—"}
-                    {a.account_no ? ` · ${a.account_no}` : ""}
-                  </p>
-                  <p className="mt-2 font-money text-lg font-semibold">
-                    {formatTzs(a.current_balance)}
-                  </p>
-                </button>
-              ))}
+              {accounts.map((a) => {
+                const Icon = accountTypeIcon(a.account_type);
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setSelectedAccount(a.id)}
+                    className={`rounded-xl border p-4 text-left transition-colors ${
+                      selectedAccount === a.id
+                        ? "border-primary bg-primary/10"
+                        : "border-border bg-surface-1/40 hover:border-primary/40"
+                    } ${!a.is_active ? "opacity-60" : ""}`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <Icon className="mt-0.5 size-4 shrink-0 text-primary" />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium">{a.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {paymentAccountTypeLabel(a.account_type)}
+                          {!a.is_active ? " · inactive" : ""}
+                        </p>
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
+                          {formatAccountDetails(a)}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="mt-2 font-money text-lg font-semibold">
+                      {formatTzs(a.current_balance)}
+                    </p>
+                  </button>
+                );
+              })}
             </div>
           )}
         </CardContent>
@@ -197,7 +311,7 @@ export function BankingPageClient() {
             value={selectedAccount}
             onValueChange={(v) => setSelectedAccount(v ?? "all")}
           >
-            <SelectTrigger className="w-48">
+            <SelectTrigger className="w-52">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -211,7 +325,11 @@ export function BankingPageClient() {
           </Select>
         </CardHeader>
         <CardContent>
-          {txLoading ? (
+          {txError ? (
+            <p className="text-sm text-destructive">
+              {txErr instanceof Error ? txErr.message : "Could not load transactions"}
+            </p>
+          ) : txLoading ? (
             <Loader2 className="mx-auto size-8 animate-spin" />
           ) : (
             <Table>
@@ -265,23 +383,84 @@ export function BankingPageClient() {
       </Card>
 
       <Dialog open={accountOpen} onOpenChange={setAccountOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[92vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Add bank account</DialogTitle>
+            <DialogTitle>Add collection account</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label>Account name</Label>
-              <Input value={acctName} onChange={(e) => setAcctName(e.target.value)} />
+              <Label>Account type</Label>
+              <Select
+                value={accountType}
+                onValueChange={(v) =>
+                  setAccountType((v ?? "bank") as PaymentAccountType)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_ACCOUNT_TYPES.map((t) => (
+                    <SelectItem key={t.value} value={t.value}>
+                      {t.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {typeHint && (
+                <p className="form-hint mt-1">{typeHint}</p>
+              )}
             </div>
             <div>
-              <Label>Bank / provider</Label>
-              <Input value={bankName} onChange={(e) => setBankName(e.target.value)} />
+              <Label>Display name</Label>
+              <Input
+                value={acctName}
+                onChange={(e) => setAcctName(e.target.value)}
+                placeholder="e.g. CRDB Main, Vodacom Lipa"
+              />
             </div>
+            {accountType === "bank" && (
+              <div>
+                <Label>Bank name</Label>
+                <Input
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                />
+              </div>
+            )}
+            {accountType === "lipa" && (
+              <div>
+                <Label>Merchant / provider</Label>
+                <Input
+                  value={lipaMerchant}
+                  onChange={(e) => setLipaMerchant(e.target.value)}
+                  placeholder="e.g. Vodacom Lipa"
+                />
+              </div>
+            )}
             <div>
-              <Label>Account number</Label>
-              <Input value={accountNo} onChange={(e) => setAccountNo(e.target.value)} />
+              <Label>
+                {accountType === "bank"
+                  ? "Account number"
+                  : accountType === "lipa"
+                    ? "Lipa number"
+                    : "Number / till / paybill"}
+              </Label>
+              <Input
+                value={accountNo}
+                onChange={(e) => setAccountNo(e.target.value)}
+              />
             </div>
+            {(accountType === "mpesa" || accountType === "till") && (
+              <div>
+                <Label>Provider (optional)</Label>
+                <Input
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                  placeholder="M-Pesa, Airtel, etc."
+                />
+              </div>
+            )}
             <div>
               <Label>Opening balance (TZS)</Label>
               <Input
@@ -291,6 +470,15 @@ export function BankingPageClient() {
                 onChange={(e) => setOpeningBal(e.target.value)}
               />
             </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={showInPos}
+                onChange={(e) => setShowInPos(e.target.checked)}
+                className="size-4"
+              />
+              Show on POS for matching payments (M-Pesa / bank / card)
+            </label>
           </div>
           <DialogFooter>
             <Button
@@ -310,6 +498,12 @@ export function BankingPageClient() {
             <DialogTitle>Record transaction</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            {selectedAccount === "all" && activeAccounts.length > 0 && (
+              <p className="text-xs text-warning">
+                Posting to: {activeAccounts[0]?.name}. Select an account card first
+                to target another.
+              </p>
+            )}
             <div>
               <Label>Type</Label>
               <Select
@@ -346,9 +540,10 @@ export function BankingPageClient() {
               type="button"
               onClick={() => txnMut.mutate()}
               disabled={
-                selectedAccount === "all" && accounts.length === 0
-                  ? true
-                  : !txnAmount || Number(txnAmount) <= 0 || txnMut.isPending
+                activeAccounts.length === 0 ||
+                !txnAmount ||
+                Number(txnAmount) <= 0 ||
+                txnMut.isPending
               }
             >
               Post

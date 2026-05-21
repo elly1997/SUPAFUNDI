@@ -4,6 +4,10 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  needsPosPaymentAccount,
+  PosPaymentAccountPicker,
+} from "@/components/pos/pos-payment-account-picker";
 import { PosPaymentChips, type PaymentMethod } from "@/components/pos/pos-payment-chips";
 import { formatTzs } from "@/lib/utils/currency";
 
@@ -18,6 +22,8 @@ type Props = {
   showAmountPaid: boolean;
   disabled: boolean;
   isPending: boolean;
+  paymentAccountId?: string;
+  onPaymentAccountIdChange?: (id: string) => void;
 };
 
 export function PosInlineCheckout({
@@ -31,10 +37,19 @@ export function PosInlineCheckout({
   showAmountPaid,
   disabled,
   isPending,
+  paymentAccountId = "",
+  onPaymentAccountIdChange,
 }: Props) {
   return (
     <div className="space-y-2 border-t border-border/60 pt-2">
       <PosPaymentChips value={paymentMethod} onChange={onPaymentMethodChange} />
+      {needsPosPaymentAccount(paymentMethod) && onPaymentAccountIdChange && (
+        <PosPaymentAccountPicker
+          posMethod={paymentMethod}
+          value={paymentAccountId}
+          onChange={onPaymentAccountIdChange}
+        />
+      )}
       {needsCustomer && (
         <p className="rounded-lg border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-warning">
           Select a registered customer for partial or on-account payment.

@@ -15,16 +15,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { DatePicker } from "@/components/ui/date-picker";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { listSuppliersForOrg, receiveGoods } from "@/lib/actions/grn";
 import { usePosProducts } from "@/hooks/usePosProducts";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type Line = { productId: string; name: string; quantity: number; unitCost: number };
 
 export function ReceiveGoodsClient() {
   const defaultOutlet = useAuthStore((s) => s.activeOutletId);
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
+  const setBusinessDate = useBusinessDateStore((s) => s.setBusinessDate);
   const [outletId, setOutletId] = useState(defaultOutlet ?? "");
   const [supplierId, setSupplierId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<
@@ -83,6 +87,12 @@ export function ReceiveGoodsClient() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
+        <DatePicker
+          label="Received on (business date)"
+          value={businessDate}
+          onChange={setBusinessDate}
+          showPresets={false}
+        />
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-2">
             <Label>Outlet</Label>
@@ -228,6 +238,7 @@ export function ReceiveGoodsClient() {
               supplierId: supplierId || null,
               paymentMethod,
               taxRate: 18,
+              businessDate,
               lines: lines.map((l) => ({
                 productId: l.productId,
                 quantity: l.quantity,

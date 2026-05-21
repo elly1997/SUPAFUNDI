@@ -19,6 +19,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  needsPosPaymentAccount,
+  PosPaymentAccountPicker,
+} from "@/components/pos/pos-payment-account-picker";
 import { PosPaymentChips, type PaymentMethod } from "@/components/pos/pos-payment-chips";
 import { listCustomersForPos, type PosCustomer } from "@/lib/actions/sales";
 import { cn } from "@/lib/utils";
@@ -44,6 +48,8 @@ type Props = {
   onComplete: () => void;
   isPending: boolean;
   onCustomerSelect?: (customer: PosCustomer | null) => void;
+  paymentAccountId?: string;
+  onPaymentAccountIdChange?: (id: string) => void;
 };
 
 export function PosCheckoutDialog({
@@ -64,6 +70,8 @@ export function PosCheckoutDialog({
   onComplete,
   isPending,
   onCustomerSelect,
+  paymentAccountId = "",
+  onPaymentAccountIdChange,
 }: Props) {
   const { data: customers = [] } = useQuery({
     queryKey: ["pos-customers"],
@@ -187,6 +195,14 @@ export function PosCheckoutDialog({
             </>
           )}
         </div>
+
+        {needsPosPaymentAccount(paymentMethod) && onPaymentAccountIdChange && (
+          <PosPaymentAccountPicker
+            posMethod={paymentMethod}
+            value={paymentAccountId}
+            onChange={onPaymentAccountIdChange}
+          />
+        )}
 
         {paymentMethod === "mpesa" && (
           <div className="space-y-2">

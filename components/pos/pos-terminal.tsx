@@ -100,6 +100,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [cashflowSheetOpen, setCashflowSheetOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [paymentAccountId, setPaymentAccountId] = useState("");
   const [amountPaid, setAmountPaid] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [customerName, setCustomerName] = useState<string | null>(null);
@@ -213,6 +214,10 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     : "Walk-in";
 
   useEffect(() => {
+    setPaymentAccountId("");
+  }, [paymentMethod]);
+
+  useEffect(() => {
     if (lines.length > 0 && paymentMethod === "cash") {
       setAmountPaid((prev) => {
         const n = Number(prev);
@@ -307,6 +312,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
         paymentMethod,
         amountPaid: paid,
         businessDate,
+        ...(paymentAccountId ? { paymentAccountId } : {}),
       };
       const result = await completeSale(payload);
       if (!result.ok) {
@@ -494,6 +500,8 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     customerId,
     onCustomerIdChange: setCustomerId,
     onCustomerSelect: handleCustomerSelect,
+    paymentAccountId,
+    onPaymentAccountIdChange: setPaymentAccountId,
   };
 
   if (outlets.length === 0) {
@@ -748,6 +756,8 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                 onComplete={() => checkout.mutate()}
                 isPending={checkout.isPending}
                 onCustomerSelect={handleCustomerSelect}
+                paymentAccountId={paymentAccountId}
+                onPaymentAccountIdChange={setPaymentAccountId}
               />
 
               <Dialog open={!!receipt} onOpenChange={() => setReceipt(null)}>

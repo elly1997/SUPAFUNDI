@@ -3,6 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import {
+  compareByCategoryThenName,
+  resolveCategoryName,
+} from "@/lib/products/catalog-grouping";
 import { normalizeProductName } from "@/lib/products/product-name";
 import { generateProductCode } from "@/lib/products/sku";
 import { requireOrgContext } from "@/lib/server/org-context";
@@ -372,6 +376,8 @@ export type ProductPriceCatalogRow = {
   name: string;
   code: string | null;
   unit: string;
+  categoryId: string | null;
+  categoryName: string;
   costPrice: number;
   retailPrice: number;
 };
@@ -383,18 +389,29 @@ export async function listProductPriceCatalog(
   const supabase = await createServerSupabaseClient();
   const costOutletId = outletId ?? ctx.outletId;
 
-  const products = await fetchAllPaginated(async (from, to) => {
-    const { data, error } = await supabase
-      .from("products")
-      .select("id, name, code, unit")
-      .eq("organization_id", ctx.organizationId)
-      .eq("is_active", true)
-      .order("name")
-      .range(from, to);
-    return { data, error };
-  });
+  const [products, categoriesRes] = await Promise.all([
+    fetchAllPaginated(async (from, to) => {
+      const { data, error } = await supabase
+        .from("products")
+        .select("id, name, code, unit, category_id")
+        .eq("organization_id", ctx.organizationId)
+        .eq("is_active", true)
+        .range(from, to);
+      return { data, error };
+    }),
+    supabase
+      .from("categories")
+      .select("id, name")
+      .eq("organization_id", ctx.organizationId),
+  ]);
+  if (categoriesRes.error) {
+    throw new Error(categoriesRes.error.message);
+  }
   if (!products.length) return [];
 
+  const categoryNameById = new Map(
+    (categoriesRes.data ?? []).map((c) => [c.id, c.name as string])
+  );
   const ids = products.map((p) => p.id);
   const [prices, stockRows] = await Promise.all([
     fetchByInChunks(ids, async (chunk) => {
@@ -429,14 +446,21 @@ export async function listProductPriceCatalog(
     costMap.set(s.product_id, Number(s.cost_price));
   }
 
-  return products.map((p) => ({
+  const rows: ProductPriceCatalogRow[] = products.map((p) => ({
     id: p.id,
     name: p.name,
     code: p.code,
     unit: p.unit,
+    categoryId: p.category_id as string | null,
+    categoryName: resolveCategoryName(
+      p.category_id as string | null,
+      categoryNameById
+    ),
     costPrice: costMap.get(p.id) ?? 0,
     retailPrice: retailMap.get(p.id) ?? 0,
   }));
+
+  return rows.sort(compareByCategoryThenName);
 }
 
 const catalogPatchInput = z.object({

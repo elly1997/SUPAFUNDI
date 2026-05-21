@@ -15,6 +15,8 @@ export type StockLevelRow = {
   product_id: string;
   code: string | null;
   product_name: string;
+  category_id: string | null;
+  category_name: string;
   unit: string;
   quantity: number;
   cost_price: number;
@@ -131,6 +133,8 @@ export async function listStockLevels(
       product_id: item.id,
       code: item.code,
       product_name: item.name,
+      category_id: item.categoryId,
+      category_name: item.categoryName,
       unit: item.unit,
       quantity: qty,
       cost_price: cost,

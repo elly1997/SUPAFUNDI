@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ProductsClearAllDialog } from "@/components/inventory/products-clear-all-dialog";
 import { ProductsDuplicatesDialog } from "@/components/inventory/products-duplicates-dialog";
+import { CatalogCategoryFilter } from "@/components/inventory/catalog-category-filter";
 import { ProductsPriceListClient } from "@/components/inventory/products-price-list-client";
 import { createProduct, listCategoriesForOrg } from "@/lib/actions/inventory";
 import { fetchProductPriceCatalog } from "@/lib/api/inventory-catalog-fetch";
@@ -67,6 +68,7 @@ export function ProductsPageClient() {
   const outletId = useAuthStore((s) => s.activeOutletId);
   const canManage = canManageSettings(isUserRole(role ?? "") ? role : null);
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const { data: outlets = [] } = useQuery({
     queryKey: ["org-outlets"],
     queryFn: fetchOrgOutlets,
@@ -172,6 +174,11 @@ export function ProductsPageClient() {
     setAddOpen(true);
   }, [categories, defaultOutletId, form]);
 
+  const categoryOptions = useMemo(
+    () => Array.from(new Set(catalog.map((r) => r.categoryName))).sort(),
+    [catalog]
+  );
+
   const invalidateCatalog = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
     void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
@@ -231,18 +238,26 @@ export function ProductsPageClient() {
         </div>
       </div>
 
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          className="pl-9"
-          placeholder="Search name or code…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative max-w-md flex-1">
+          <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="pl-9"
+            placeholder="Search name, code, or category…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <CatalogCategoryFilter
+          categories={categoryOptions}
+          value={categoryFilter}
+          onChange={setCategoryFilter}
         />
       </div>
 
       <ProductsPriceListClient
         search={search}
+        categoryFilter={categoryFilter}
         canManage={canManage}
         onClearAll={canManage ? () => setClearAllOpen(true) : undefined}
       />
@@ -318,6 +333,12 @@ export function ProductsPageClient() {
                 ))}
                 <option value="__new__">+ New category…</option>
               </select>
+              {categories.length === 0 && (
+                <p className="form-hint">
+                  Categories appear here after Excel import (Stock page) or when you
+                  add a new one below.
+                </p>
+              )}
               {form.watch("categoryId") === "__new__" && (
                 <Input
                   placeholder="New category name"

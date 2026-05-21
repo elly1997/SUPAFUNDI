@@ -6,7 +6,7 @@ export default function BankingPage() {
     <div className="space-y-6">
       <PageHeader
         title="Banking"
-        description="Bank and mobile-money accounts, deposits, withdrawals, and reconciliation."
+        description="Bank, M-Pesa, Lipa, and till accounts — configure where POS collections are deposited."
       />
       <BankingPageClient />
     </div>

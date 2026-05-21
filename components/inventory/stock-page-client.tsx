@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
 import { StockItemStatementDialog } from "@/components/inventory/stock-item-statement-dialog";
@@ -28,7 +28,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { CatalogCategoryFilter } from "@/components/inventory/catalog-category-filter";
+import {
+  CatalogCategoryTableHeader,
+  stockSectionValue,
+} from "@/components/inventory/catalog-category-table-header";
 import { patchStockQuantity } from "@/lib/api/inventory-catalog-fetch";
+import { groupCatalogByCategory } from "@/lib/products/catalog-grouping";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { suggestPurchaseOrderFromStock } from "@/lib/actions/purchase-orders";
 import { downloadInventoryTemplate } from "@/lib/excel/inventory-template";
@@ -61,6 +67,8 @@ export function StockPageClient() {
   const [statementRow, setStatementRow] = useState<StockLevelRow | null>(null);
   const [savingQtyId, setSavingQtyId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [search, setSearch] = useState("");
 
   const { data: outlets = [] } = useQuery({
     queryKey: ["org-outlets"],
@@ -128,6 +136,39 @@ export function StockPageClient() {
   });
 
   const lowStock = rows.filter((r) => r.stock_status !== "ok");
+
+  const categoryOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.category_name))).sort(),
+    [rows]
+  );
+
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (categoryFilter !== "all" && r.category_name !== categoryFilter) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        r.product_name.toLowerCase().includes(q) ||
+        (r.code ?? "").toLowerCase().includes(q) ||
+        r.category_name.toLowerCase().includes(q)
+      );
+    });
+  }, [rows, categoryFilter, search]);
+
+  const stockSections = useMemo(() => {
+    return groupCatalogByCategory(
+      filteredRows.map((r) => ({
+        ...r,
+        categoryName: r.category_name,
+        name: r.product_name,
+      }))
+    ).map((section) => ({
+      categoryName: section.categoryName,
+      rows: section.rows,
+    }));
+  }, [filteredRows]);
 
   return (
     <div className="space-y-6">
@@ -222,6 +263,20 @@ export function StockPageClient() {
         </Card>
       )}
 
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <Input
+          className="max-w-md flex-1"
+          placeholder="Search product, SKU, or category…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <CatalogCategoryFilter
+          categories={categoryOptions}
+          value={categoryFilter}
+          onChange={setCategoryFilter}
+        />
+      </div>
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Stock on hand</CardTitle>
@@ -242,6 +297,10 @@ export function StockPageClient() {
               No active products. Add products under Inventory → Products, or
               import Excel.
             </p>
+          ) : filteredRows.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No products match your filters.
+            </p>
           ) : (
             <Table>
               <TableHeader>
@@ -258,26 +317,36 @@ export function StockPageClient() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((r) => (
-                  <StockRow
-                    key={`${r.outlet_id}-${r.product_id}`}
-                    row={r}
-                    outletId={outletId}
-                    saving={savingQtyId === r.product_id}
-                    onQtySave={(qty) => {
-                      if (!outletId) {
-                        toast.error("Select an active outlet");
-                        return;
-                      }
-                      setSavingQtyId(r.product_id);
-                      qtyMut.mutate({
-                        productId: r.product_id,
-                        outletId,
-                        quantity: qty,
-                      });
-                    }}
-                    onStatement={() => setStatementRow(r)}
-                  />
+                {stockSections.map((section) => (
+                  <Fragment key={section.categoryName}>
+                    <CatalogCategoryTableHeader
+                      categoryName={section.categoryName}
+                      itemCount={section.rows.length}
+                      colSpan={9}
+                      stockValue={stockSectionValue(section.rows)}
+                    />
+                    {section.rows.map((r) => (
+                      <StockRow
+                        key={`${r.outlet_id}-${r.product_id}`}
+                        row={r}
+                        outletId={outletId}
+                        saving={savingQtyId === r.product_id}
+                        onQtySave={(qty) => {
+                          if (!outletId) {
+                            toast.error("Select an active outlet");
+                            return;
+                          }
+                          setSavingQtyId(r.product_id);
+                          qtyMut.mutate({
+                            productId: r.product_id,
+                            outletId,
+                            quantity: qty,
+                          });
+                        }}
+                        onStatement={() => setStatementRow(r)}
+                      />
+                    ))}
+                  </Fragment>
                 ))}
               </TableBody>
             </Table>

@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,21 +15,28 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  CatalogCategoryTableHeader,
+  priceListSectionMargin,
+} from "@/components/inventory/catalog-category-table-header";
 import type { ProductPriceCatalogRow } from "@/lib/actions/inventory";
 import {
   fetchProductPriceCatalog,
   patchCatalogField,
 } from "@/lib/api/inventory-catalog-fetch";
+import { groupCatalogByCategory } from "@/lib/products/catalog-grouping";
 import { useAuthStore } from "@/stores/authStore";
 
 type Props = {
   search?: string;
+  categoryFilter?: string;
   canManage?: boolean;
   onClearAll?: () => void;
 };
 
 export function ProductsPriceListClient({
   search = "",
+  categoryFilter = "all",
   canManage = false,
   onClearAll,
 }: Props) {
@@ -41,6 +48,11 @@ export function ProductsPriceListClient({
     queryKey: ["product-price-catalog", outletId],
     queryFn: () => fetchProductPriceCatalog(outletId),
   });
+
+  const categoryOptions = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.categoryName))).sort(),
+    [rows]
+  );
 
   const saveMut = useMutation({
     mutationFn: patchCatalogField,
@@ -72,14 +84,22 @@ export function ProductsPriceListClient({
     [outletId, saveMut]
   );
 
-  const filtered = rows.filter((r) => {
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    return (
-      r.name.toLowerCase().includes(q) ||
-      (r.code ?? "").toLowerCase().includes(q)
-    );
-  });
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (categoryFilter !== "all" && r.categoryName !== categoryFilter) {
+        return false;
+      }
+      if (!q) return true;
+      return (
+        r.name.toLowerCase().includes(q) ||
+        (r.code ?? "").toLowerCase().includes(q) ||
+        r.categoryName.toLowerCase().includes(q)
+      );
+    });
+  }, [rows, search, categoryFilter]);
+
+  const sections = useMemo(() => groupCatalogByCategory(filtered), [filtered]);
 
   return (
     <Card>
@@ -87,9 +107,9 @@ export function ProductsPriceListClient({
         <div className="space-y-1">
           <CardTitle>Price list</CardTitle>
           <CardDescription>
-            Catalogue only — name, code, unit, buying and selling prices. Edits
-            save automatically. Import and quantities are on the Stock page.
-            {rows.length > 0 ? ` ${rows.length} products loaded.` : ""}
+            Grouped by category (from Excel import or Add product). Edits save
+            automatically. Stock quantities are on the Stock page.
+            {rows.length > 0 ? ` ${rows.length} products · ${categoryOptions.length} categories.` : ""}
             {outletId
               ? " Buying price applies to your active outlet."
               : " Select an outlet in the header to edit buying price."}
@@ -136,17 +156,27 @@ export function ProductsPriceListClient({
                     <TableCell colSpan={5} className="text-muted-foreground">
                       {rows.length === 0
                         ? "No products yet. Import on Stock or add one manually."
-                        : "No products match your search."}
+                        : "No products match your filters."}
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filtered.map((r) => (
-                    <PriceListRow
-                      key={r.id}
-                      row={r}
-                      saving={savingId?.startsWith(r.id) ?? false}
-                      onSave={saveField}
-                    />
+                  sections.map((section) => (
+                    <Fragment key={section.categoryName}>
+                      <CatalogCategoryTableHeader
+                        categoryName={section.categoryName}
+                        itemCount={section.rows.length}
+                        colSpan={5}
+                        avgMarginPct={priceListSectionMargin(section.rows)}
+                      />
+                      {section.rows.map((r) => (
+                        <PriceListRow
+                          key={r.id}
+                          row={r}
+                          saving={savingId?.startsWith(r.id) ?? false}
+                          onSave={saveField}
+                        />
+                      ))}
+                    </Fragment>
                   ))
                 )}
               </TableBody>

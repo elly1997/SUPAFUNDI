@@ -297,6 +297,7 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
                   supplierId: supplierId || null,
                   paymentMethod: paidCash ? "cash" : "on_account",
                   taxRate: 18,
+                  businessDate,
                   lines: [{ productId, quantity: qty, unitCost: cost }],
                   notes: description || undefined,
                 });

@@ -40,6 +40,8 @@ type Props = {
   customerId?: string;
   onCustomerIdChange?: (id: string) => void;
   onCustomerSelect?: (customer: PosCustomer | null) => void;
+  paymentAccountId?: string;
+  onPaymentAccountIdChange?: (id: string) => void;
 };
 
 export function PosCartPanel({
@@ -70,6 +72,8 @@ export function PosCartPanel({
   customerId = "",
   onCustomerIdChange,
   onCustomerSelect,
+  paymentAccountId = "",
+  onPaymentAccountIdChange,
 }: Props) {
   const itemCount = lines.reduce((s, l) => s + l.quantity, 0);
 
@@ -241,6 +245,8 @@ export function PosCartPanel({
             showAmountPaid={showAmountPaid}
             disabled={lines.length === 0 || checkoutDisabled}
             isPending={isCheckoutPending}
+            paymentAccountId={paymentAccountId}
+            onPaymentAccountIdChange={onPaymentAccountIdChange}
           />
         ) : showCheckoutButton ? (
           <Button

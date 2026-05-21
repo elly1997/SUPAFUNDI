@@ -513,6 +513,7 @@ export type Database = {
           status: string;
           reference_no: string | null;
           received_by: string | null;
+          payment_account_id: string | null;
         };
         Insert: {
           id?: string;
@@ -525,6 +526,7 @@ export type Database = {
           reference_no?: string | null;
           received_by?: string | null;
           payment_date?: string;
+          payment_account_id?: string | null;
         };
         Update: {
           status?: string;
