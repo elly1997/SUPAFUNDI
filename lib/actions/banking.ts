@@ -48,20 +48,35 @@ export type BankTransactionRow = {
   created_at: string;
 };
 
-function mapAccountRow(r: Record<string, unknown>): PaymentAccountRow {
+/** Build a JSON-safe plain object (Supabase rows can have non-serializable prototypes). */
+function mapAccountRow(r: {
+  id: unknown;
+  name: unknown;
+  account_no?: unknown;
+  bank_name?: unknown;
+  currency?: unknown;
+  current_balance?: unknown;
+  is_active?: unknown;
+  account_type?: unknown;
+  lipa_merchant?: unknown;
+  pos_payment_method?: unknown;
+  show_in_pos?: unknown;
+}): PaymentAccountRow {
   const accountType = (r.account_type as PaymentAccountType) ?? "bank";
+  const posMethod = r.pos_payment_method as
+    | PaymentAccountRow["pos_payment_method"]
+    | null
+    | undefined;
   return {
-    id: r.id as string,
-    name: r.name as string,
+    id: String(r.id),
+    name: String(r.name ?? ""),
     account_type: accountType,
-    account_no: (r.account_no as string | null) ?? null,
-    bank_name: (r.bank_name as string | null) ?? null,
-    lipa_merchant: (r.lipa_merchant as string | null) ?? null,
-    pos_payment_method:
-      (r.pos_payment_method as PaymentAccountRow["pos_payment_method"]) ??
-      defaultPosMethodForAccountType(accountType),
+    account_no: r.account_no != null ? String(r.account_no) : null,
+    bank_name: r.bank_name != null ? String(r.bank_name) : null,
+    lipa_merchant: r.lipa_merchant != null ? String(r.lipa_merchant) : null,
+    pos_payment_method: posMethod ?? defaultPosMethodForAccountType(accountType),
     show_in_pos: r.show_in_pos !== false,
-    currency: (r.currency as string) ?? "TZS",
+    currency: r.currency != null ? String(r.currency) : "TZS",
     current_balance: Number(r.current_balance ?? 0),
     is_active: r.is_active !== false,
   };
@@ -90,13 +105,32 @@ export async function listPaymentAccounts(): Promise<PaymentAccountRow[]> {
         .eq("organization_id", ctx.organizationId)
         .order("name");
       if (legErr) throw new Error(legErr.message);
-      return (legacy ?? []).map((r: Record<string, unknown>) =>
-        mapAccountRow({ ...r, account_type: "bank" })
+      return (legacy ?? []).map((r: {
+        id: string;
+        name: string;
+        account_no: string | null;
+        bank_name: string | null;
+        currency: string;
+        current_balance: number;
+        is_active: boolean;
+      }) =>
+        mapAccountRow({
+          id: r.id,
+          name: r.name,
+          account_no: r.account_no,
+          bank_name: r.bank_name,
+          currency: r.currency,
+          current_balance: r.current_balance,
+          is_active: r.is_active,
+          account_type: "bank",
+        })
       );
     }
     throw new Error(error.message);
   }
-  return (data ?? []).map((r: Record<string, unknown>) => mapAccountRow(r));
+  return (data ?? []).map((r: Parameters<typeof mapAccountRow>[0]) =>
+    mapAccountRow(r)
+  );
 }
 
 export async function listBankAccounts(): Promise<PaymentAccountRow[]> {
@@ -128,7 +162,10 @@ export async function listBankTransactions(
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
   const accounts = await listPaymentAccounts();
-  const nameMap = new Map(accounts.map((a) => [a.id, a.name]));
+  const nameById: Record<string, string> = {};
+  for (const a of accounts) {
+    nameById[a.id] = a.name;
+  }
 
   let q = bankDb(supabase)
     .from("bank_transactions")
@@ -142,20 +179,31 @@ export async function listBankTransactions(
   const { data, error } = await q;
   if (error) throw new Error(error.message);
 
-  return (data ?? []).map((row: Record<string, unknown>) => {
-    const r = row;
-    const accId = r.bank_account_id as string | null;
+  return (data ?? []).map((r: {
+    id: string;
+    bank_account_id: string | null;
+    transaction_type: string;
+    amount: number;
+    reference_no: string | null;
+    description: string | null;
+    is_reconciled: boolean;
+    transaction_date: string | null;
+    created_at: string;
+  }) => {
+    const accId =
+      r.bank_account_id != null ? String(r.bank_account_id) : null;
     return {
-      id: r.id as string,
+      id: String(r.id),
       bank_account_id: accId,
-      account_name: accId ? (nameMap.get(accId) ?? "—") : "—",
-      transaction_type: r.transaction_type as string,
-      amount: Number(r.amount),
-      reference_no: r.reference_no as string | null,
-      description: r.description as string | null,
+      account_name: accId ? (nameById[accId] ?? "—") : "—",
+      transaction_type: String(r.transaction_type ?? ""),
+      amount: Number(r.amount ?? 0),
+      reference_no: r.reference_no != null ? String(r.reference_no) : null,
+      description: r.description != null ? String(r.description) : null,
       is_reconciled: Boolean(r.is_reconciled),
-      transaction_date: r.transaction_date as string | null,
-      created_at: r.created_at as string,
+      transaction_date:
+        r.transaction_date != null ? String(r.transaction_date) : null,
+      created_at: String(r.created_at ?? ""),
     };
   });
 }

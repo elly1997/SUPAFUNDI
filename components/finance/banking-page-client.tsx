@@ -37,9 +37,11 @@ import {
   type PaymentAccountType,
 } from "@/lib/constants/payment-accounts";
 import {
+  fetchBankTransactions,
+  fetchPaymentAccounts,
+} from "@/lib/api/banking-fetch";
+import {
   createPaymentAccount,
-  listBankTransactions,
-  listPaymentAccounts,
   recordBankTransaction,
   toggleBankTransactionReconciled,
 } from "@/lib/actions/banking";
@@ -74,7 +76,7 @@ export function BankingPageClient() {
     refetch: refetchAccounts,
   } = useQuery({
     queryKey: ["payment-accounts"],
-    queryFn: listPaymentAccounts,
+    queryFn: fetchPaymentAccounts,
   });
 
   const activeAccounts = accounts.filter((a) => a.is_active);
@@ -86,7 +88,7 @@ export function BankingPageClient() {
     error: txErr,
   } = useQuery({
     queryKey: ["bank-transactions", filterId],
-    queryFn: () => listBankTransactions(filterId),
+    queryFn: () => fetchBankTransactions(filterId),
     enabled: !acctError,
   });
 

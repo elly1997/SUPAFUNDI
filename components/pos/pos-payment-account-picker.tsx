@@ -15,7 +15,7 @@ import {
   formatAccountDetails,
   paymentAccountTypeLabel,
 } from "@/lib/constants/payment-accounts";
-import { listPosPaymentAccounts } from "@/lib/actions/banking";
+import { fetchPosPaymentAccounts } from "@/lib/api/banking-fetch";
 
 export type PosCollectionMethod = "mpesa" | "bank_transfer" | "card";
 
@@ -34,7 +34,7 @@ export function PosPaymentAccountPicker({
 }: Props) {
   const { data: accounts = [], isLoading, isError, error } = useQuery({
     queryKey: ["pos-payment-accounts", posMethod],
-    queryFn: () => listPosPaymentAccounts(posMethod),
+    queryFn: () => fetchPosPaymentAccounts(posMethod),
     staleTime: 60_000,
   });
 
