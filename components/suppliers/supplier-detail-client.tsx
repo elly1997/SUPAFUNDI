@@ -4,7 +4,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Loader2, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -44,8 +43,6 @@ export function SupplierDetailClient({ supplierId }: Props) {
   if (!supplier) {
     return <p className="text-muted-foreground">Supplier not found.</p>;
   }
-
-  const openBills = supplier.bills.filter((b) => b.balance > 0);
 
   return (
     <div className="space-y-6">

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { maxSellFromCartFields } from "@/lib/products/units";
 import { formatTzs } from "@/lib/utils/currency";
 import { PosInlineCheckout } from "@/components/pos/pos-inline-checkout";
 import type { PaymentMethod } from "@/components/pos/pos-payment-chips";
@@ -160,7 +161,11 @@ export function PosCartPanel({
                         className="size-9"
                         disabled={
                           line.quantity >=
-                          Math.floor(line.availableStock / line.factorToBase)
+                          maxSellFromCartFields(
+                            line.availableStock,
+                            line.factorToBase,
+                            line.unitsPerBase
+                          )
                         }
                         onClick={() => {
                           const r = onUpdateQuantity(

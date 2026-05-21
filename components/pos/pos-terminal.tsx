@@ -187,7 +187,10 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const cartQtyByProduct = useMemo(() => {
     const map = new Map<string, number>();
     for (const line of lines) {
-      const base = line.quantity * line.factorToBase;
+      const base =
+        line.unitsPerBase
+          ? line.quantity / line.factorToBase
+          : line.quantity * line.factorToBase;
       map.set(line.productId, (map.get(line.productId) ?? 0) + base);
     }
     return map;
@@ -251,6 +254,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
           name: p.name,
           unit: unit.unitLabel,
           factorToBase: unit.factorToBase,
+          unitsPerBase: unit.unitsPerBase,
           unitPrice,
           availableStock: p.stockQty,
           pricingMode,
@@ -321,6 +325,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
           quantity: l.quantity,
           sellUnit: l.unit,
           factorToBase: l.factorToBase,
+          unitsPerBase: l.unitsPerBase,
           unitPrice: l.unitPrice,
           discountPct: l.discountPct,
         })),

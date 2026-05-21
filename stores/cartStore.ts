@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { cartLineKey } from "@/lib/products/units";
+import { cartLineKey, maxSellFromCartFields } from "@/lib/products/units";
 import type { PosPricingMode } from "@/hooks/usePosProducts";
 
 export type CartLine = {
@@ -10,6 +10,7 @@ export type CartLine = {
   name: string;
   unit: string;
   factorToBase: number;
+  unitsPerBase?: boolean;
   quantity: number;
   unitPrice: number;
   discountPct: number;
@@ -49,7 +50,11 @@ export const useCartStore = create<CartState>((set, get) => ({
     const qty = Math.max(1, Math.floor(quantity));
     const lineKey =
       product.lineKey ?? cartLineKey(product.productId, product.unit);
-    const maxSell = Math.floor(product.availableStock / product.factorToBase);
+    const maxSell = maxSellFromCartFields(
+      product.availableStock,
+      product.factorToBase,
+      product.unitsPerBase
+    );
     const s = get();
     const existing = s.lines.find((l) => l.lineKey === lineKey);
     if (existing) {
@@ -104,7 +109,11 @@ export const useCartStore = create<CartState>((set, get) => ({
     }
     const line = s.lines.find((l) => l.lineKey === lineKey);
     if (!line) return { ok: true };
-    const maxSell = Math.floor(line.availableStock / line.factorToBase);
+    const maxSell = maxSellFromCartFields(
+      line.availableStock,
+      line.factorToBase,
+      line.unitsPerBase
+    );
     if (quantity > maxSell) {
       return {
         ok: false,

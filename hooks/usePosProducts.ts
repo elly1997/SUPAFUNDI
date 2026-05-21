@@ -7,6 +7,7 @@ import { getPublicSupabaseEnv } from "@/lib/env/public";
 import { getBrowserSupabase } from "@/lib/supabase/client";
 import {
   defaultUnitsForProduct,
+  enrichUnitsWithConversion,
   type ProductUnitOption,
 } from "@/lib/products/units";
 
@@ -96,10 +97,21 @@ export function usePosProducts(
           const wholesalePrice = wholesaleMap.get(p.id) ?? retailPrice;
           const displayPrice =
             pricingMode === "wholesale" ? wholesalePrice : retailPrice;
-          const units =
+          const rawUnits =
             unitsByProduct[p.id]?.length > 0
               ? unitsByProduct[p.id]
-              : defaultUnitsForProduct(p.id, p.unit, retailPrice, wholesalePrice);
+              : defaultUnitsForProduct(
+                  p.id,
+                  p.unit,
+                  retailPrice,
+                  wholesalePrice
+                );
+          const units = enrichUnitsWithConversion(
+            rawUnits,
+            retailPrice,
+            wholesalePrice,
+            pricingMode
+          );
           return {
             id: p.id,
             name: p.name,

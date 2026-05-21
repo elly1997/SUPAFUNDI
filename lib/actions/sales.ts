@@ -21,6 +21,27 @@ import {
   formatInvoiceNo,
   outletInvoicePrefix,
 } from "@/lib/utils/invoice-number";
+import {
+  maxSellQtyInUnit,
+  sellQtyToBaseQty,
+} from "@/lib/products/units";
+
+function saleLineAsUnit(line: {
+  sellUnit: string;
+  factorToBase: number;
+  unitsPerBase?: boolean;
+}) {
+  return {
+    id: "",
+    unitLabel: line.sellUnit,
+    factorToBase: line.factorToBase,
+    isBase: line.factorToBase === 1 && !line.unitsPerBase,
+    unitsPerBase: line.unitsPerBase,
+    retailPrice: null as number | null,
+    wholesalePrice: null as number | null,
+    sortOrder: 0,
+  };
+}
 
 const saleLineInput = z.object({
   productId: z.string().uuid(),
@@ -29,6 +50,7 @@ const saleLineInput = z.object({
   quantity: z.number().positive(),
   sellUnit: z.string().min(1).default("pcs"),
   factorToBase: z.number().positive().default(1),
+  unitsPerBase: z.boolean().optional(),
   unitPrice: z.number().nonnegative(),
   discountPct: z.number().min(0).max(100).default(0),
 });
@@ -182,7 +204,9 @@ export async function completeSale(
     let cogsAmount = 0;
     for (const line of input.lines) {
       const stock = stockByProduct.get(line.productId);
-      const baseQty = roundMoney(line.quantity * line.factorToBase);
+      const baseQty = roundMoney(
+        sellQtyToBaseQty(line.quantity, saleLineAsUnit(line))
+      );
       if (!stock) {
         return {
           ok: false,
@@ -190,8 +214,9 @@ export async function completeSale(
         };
       }
       if (Number(stock.quantity) < baseQty) {
-        const availSell = Math.floor(
-          Number(stock.quantity) / line.factorToBase
+        const availSell = maxSellQtyInUnit(
+          Number(stock.quantity),
+          saleLineAsUnit(line)
         );
         return {
           ok: false,
@@ -319,7 +344,7 @@ export async function completeSale(
       sale_id: sale.id,
       product_id: l.productId,
       product_name: l.productName,
-      quantity: roundMoney(l.quantity * l.factorToBase),
+      quantity: roundMoney(sellQtyToBaseQty(l.quantity, saleLineAsUnit(l))),
       unit_price: l.unitPrice,
       discount_pct: l.discountPct,
       tax_rate: input.taxRate,
@@ -411,7 +436,9 @@ export async function completeSale(
 
     for (const line of input.lines) {
       const stock = stockByProduct.get(line.productId)!;
-      const baseQty = roundMoney(line.quantity * line.factorToBase);
+      const baseQty = roundMoney(
+        sellQtyToBaseQty(line.quantity, saleLineAsUnit(line))
+      );
       const newQty = roundMoney(Number(stock.quantity) - baseQty);
       const { error: updErr } = await supabase
         .from("stock")

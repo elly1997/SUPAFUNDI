@@ -16,6 +16,7 @@ import {
   hasMultipleUnits,
   maxSellQtyInUnit,
   resolveUnitPrice,
+  unitConversionHint,
   type ProductUnitOption,
 } from "@/lib/products/units";
 import { cn } from "@/lib/utils";
@@ -70,7 +71,7 @@ export function PosAddToCartDialog({
     product.wholesalePrice,
     pricingMode
   );
-  const maxQty = maxSellQtyInUnit(product.stockQty, selectedUnit.factorToBase);
+  const maxQty = maxSellQtyInUnit(product.stockQty, selectedUnit);
   const parsed = Math.max(1, Math.floor(Number(qty) || 1));
   const showUnitPicker = hasMultipleUnits(units);
 
@@ -81,9 +82,7 @@ export function PosAddToCartDialog({
           <DialogTitle className="text-left leading-snug">{product.name}</DialogTitle>
           <p className="text-sm text-muted-foreground">
             {formatTzs(unitPrice)} / {selectedUnit.unitLabel}
-            {selectedUnit.factorToBase > 1
-              ? ` · ${maxQty} ${selectedUnit.unitLabel} available`
-              : ` · ${maxQty} in stock`}
+            {` · ${maxQty} ${selectedUnit.unitLabel} available`}
           </p>
         </DialogHeader>
 
@@ -116,7 +115,7 @@ export function PosAddToCartDialog({
                     <span className="block font-semibold">{u.unitLabel}</span>
                     <span className="text-xs text-muted-foreground">
                       {formatTzs(price)}
-                      {u.factorToBase > 1 ? ` · ×${u.factorToBase} base` : ""}
+                      {unitConversionHint(u)}
                     </span>
                   </button>
                 );

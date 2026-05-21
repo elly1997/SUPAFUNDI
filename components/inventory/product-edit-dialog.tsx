@@ -182,8 +182,11 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
                 </Button>
               </div>
               <p className="form-hint">
-                Base unit matches stock quantity. Factor = how many base units per
-                sell unit (e.g. box factor 500 = 500 pcs per box).
+                Stock is tracked in the base unit. For a larger sell unit (e.g. box),
+                factor = base units per box (500 pcs per box). For a smaller sell
+                unit (e.g. meters when stock is rolls), factor = how many of that
+                unit per 1 base (200 meters per roll). POS detects this from unit
+                prices.
               </p>
               <div className="space-y-3">
                 {unitDrafts.map((u) => (
@@ -231,7 +234,7 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
                         />
                       </div>
                       <div>
-                        <Label className="text-xs">Factor to base</Label>
+                        <Label className="text-xs">Conversion factor</Label>
                         <Input
                           type="number"
                           min={0.000001}
