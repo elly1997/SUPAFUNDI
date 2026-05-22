@@ -144,3 +144,75 @@ export function invalidateCustomerQueries(
     queryClient.invalidateQueries({ queryKey: [key] });
   }
 }
+
+export async function updateCustomerApi(
+  id: string,
+  params: {
+    name: string;
+    phone?: string;
+    email?: string;
+    address?: string;
+    customerType?: CreateCustomerParams["customerType"];
+    creditLimit?: number;
+    creditDays?: number;
+    priceType?: CreateCustomerParams["priceType"];
+  }
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await fetch(`/api/customers/${id}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  let body: { ok: true } | { ok: false; message?: string; error?: string };
+  try {
+    body = (await res.json()) as typeof body;
+  } catch {
+    return { ok: false, message: res.statusText || "Update failed" };
+  }
+  if (!res.ok) {
+    return {
+      ok: false,
+      message:
+        ("message" in body && body.message) ||
+        ("error" in body && body.error) ||
+        res.statusText ||
+        "Update failed",
+    };
+  }
+  if (body.ok) return { ok: true };
+  return {
+    ok: false,
+    message: ("message" in body && body.message) || "Update failed",
+  };
+}
+
+export async function deleteCustomerApi(
+  id: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await fetch(`/api/customers/${id}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  let body: { ok: true } | { ok: false; message?: string; error?: string };
+  try {
+    body = (await res.json()) as typeof body;
+  } catch {
+    return { ok: false, message: res.statusText || "Delete failed" };
+  }
+  if (!res.ok) {
+    return {
+      ok: false,
+      message:
+        ("message" in body && body.message) ||
+        ("error" in body && body.error) ||
+        res.statusText ||
+        "Delete failed",
+    };
+  }
+  if (body.ok) return { ok: true };
+  return {
+    ok: false,
+    message: ("message" in body && body.message) || "Delete failed",
+  };
+}

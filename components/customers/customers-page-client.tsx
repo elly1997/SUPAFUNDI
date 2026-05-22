@@ -1,7 +1,16 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, FileText, Loader2, Plus, UserPlus, Wallet } from "lucide-react";
+import {
+  ExternalLink,
+  FileText,
+  Loader2,
+  Pencil,
+  Plus,
+  Trash2,
+  UserPlus,
+  Wallet,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -28,13 +37,18 @@ import {
 } from "@/components/ui/table";
 import { PartyStatementDialog } from "@/components/finance/party-statement-dialog";
 import { RecordPartyPaymentDialog } from "@/components/finance/record-party-payment-dialog";
+import { canManageSettings, isUserRole } from "@/lib/auth/roles";
 import {
   createCustomerApi,
+  deleteCustomerApi,
   fetchCustomers,
   invalidateCustomerQueries,
+  updateCustomerApi,
 } from "@/lib/api/customers-fetch";
+import type { CustomerListRow } from "@/lib/actions/customers";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
+import { useAuthStore } from "@/stores/authStore";
 
 type FormValues = {
   name: string;
@@ -45,9 +59,21 @@ type FormValues = {
   openingDeposit: number;
 };
 
+type EditFormValues = {
+  name: string;
+  phone: string;
+  creditLimit: number;
+  creditDays: number;
+};
+
 export function CustomersPageClient() {
   const router = useRouter();
+  const role = useAuthStore((s) => s.session?.role ?? null);
+  const canManage = canManageSettings(isUserRole(role ?? "") ? role : null);
+
   const [open, setOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<CustomerListRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<CustomerListRow | null>(null);
   const [payCustomer, setPayCustomer] = useState<{
     id: string;
     name: string;
@@ -66,6 +92,12 @@ export function CustomersPageClient() {
       openingDeposit: 0,
     },
   });
+
+  const {
+    register: registerEdit,
+    handleSubmit: handleEditSubmit,
+    reset: resetEdit,
+  } = useForm<EditFormValues>();
 
   const { data: customers = [], isLoading, isError, error } = useQuery({
     queryKey: ["customers"],
@@ -97,6 +129,52 @@ export function CustomersPageClient() {
       toast.error(e instanceof Error ? e.message : "Could not create customer");
     },
   });
+
+  const updateMut = useMutation({
+    mutationFn: (values: EditFormValues) => {
+      if (!editTarget) throw new Error("No customer selected");
+      return updateCustomerApi(editTarget.id, {
+        name: values.name.trim(),
+        phone: values.phone || undefined,
+        creditLimit: Number(values.creditLimit) || 0,
+        creditDays: Number(values.creditDays) || 0,
+      });
+    },
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Customer updated");
+        setEditTarget(null);
+        invalidateCustomerQueries(queryClient);
+      } else toast.error(r.message);
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Update failed");
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => deleteCustomerApi(id),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Customer deleted");
+        setDeleteTarget(null);
+        invalidateCustomerQueries(queryClient);
+      } else toast.error(r.message);
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Delete failed");
+    },
+  });
+
+  const openEdit = (c: CustomerListRow) => {
+    setEditTarget(c);
+    resetEdit({
+      name: c.name,
+      phone: c.phone ?? "",
+      creditLimit: c.credit_limit,
+      creditDays: c.credit_days,
+    });
+  };
 
   return (
     <>
@@ -173,10 +251,33 @@ export function CustomersPageClient() {
                           className={cn(
                             buttonVariants({ size: "sm", variant: "outline" })
                           )}
+                          title="View"
                         >
-                          <ExternalLink className="mr-1 size-3.5" />
-                          View
+                          <ExternalLink className="size-3.5" />
                         </Link>
+                        {canManage && (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              title="Edit"
+                              onClick={() => openEdit(c)}
+                            >
+                              <Pencil className="size-3.5" />
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              title="Delete"
+                              onClick={() => setDeleteTarget(c)}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </>
+                        )}
                         {c.outstanding_balance > 0 && (
                           <Button
                             type="button"
@@ -200,6 +301,7 @@ export function CustomersPageClient() {
                           onClick={() =>
                             setStmtCustomer({ id: c.id, name: c.name })
                           }
+                          title="Statement"
                         >
                           <FileText className="size-3.5" />
                         </Button>
@@ -280,6 +382,100 @@ export function CustomersPageClient() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!editTarget}
+        onOpenChange={(v) => {
+          if (!v) setEditTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit customer</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={handleEditSubmit((v) => {
+              if (!v.name?.trim()) {
+                toast.error("Customer name is required");
+                return;
+              }
+              updateMut.mutate(v);
+            })}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input {...registerEdit("name", { required: true })} />
+            </div>
+            <div className="space-y-2">
+              <Label>Phone</Label>
+              <Input {...registerEdit("phone")} placeholder="07xxxxxxxx" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Credit limit (TZS)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  className="font-money"
+                  {...registerEdit("creditLimit")}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Credit days</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  {...registerEdit("creditDays")}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEditTarget(null)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={updateMut.isPending}>
+                {updateMut.isPending ? "Saving…" : "Save changes"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(v) => {
+          if (!v) setDeleteTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete customer?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Remove{" "}
+            <strong className="text-foreground">{deleteTarget?.name}</strong>?
+            Only accounts with no credit balance, deposits, sales, or payment
+            history can be deleted.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMut.isPending || !deleteTarget}
+              onClick={() => deleteTarget && deleteMut.mutate(deleteTarget.id)}
+            >
+              {deleteMut.isPending ? "Deleting…" : "Delete customer"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

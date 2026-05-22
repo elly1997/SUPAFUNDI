@@ -6,6 +6,7 @@ import { buildSupplierPaymentJournalLines } from "@/lib/accounting/posting-rules
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { recordBankTransaction } from "@/lib/actions/banking";
 import { createManualSupplierBill } from "@/lib/actions/payables";
+import { requireManagerContext } from "@/lib/server/require-manager";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
@@ -32,6 +33,16 @@ const supplierInput = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
+});
+
+const supplierUpdateInput = z.object({
+  name: z.string().min(1).max(200),
+  contactPerson: z.string().max(200).optional(),
+  phone: z.string().max(50).optional(),
+  email: z.string().email().optional().or(z.literal("")),
+  address: z.string().max(500).optional(),
+  creditLimit: z.number().nonnegative().optional(),
+  creditDays: z.number().int().min(0).optional(),
 });
 
 export type SupplierListRow = {
@@ -392,6 +403,142 @@ export async function createSupplierRecord(
   revalidatePath("/finance/payables");
   revalidatePath("/inventory/purchase-orders");
   return { ok: true, id: data.id };
+}
+
+export async function updateSupplier(
+  supplierId: string,
+  raw: z.infer<typeof supplierUpdateInput>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const input = supplierUpdateInput.parse(raw);
+    const { organizationId } = await requireManagerContext();
+    const supabase = await createServerSupabaseClient();
+    const { data, error } = await apDb(supabase)
+      .from("suppliers")
+      .update({
+        name: input.name.trim(),
+        contact_person: input.contactPerson?.trim() || null,
+        phone: input.phone?.trim() || null,
+        email: input.email?.trim() || null,
+        address: input.address?.trim() || null,
+        ...(input.creditLimit !== undefined
+          ? { credit_limit: input.creditLimit }
+          : {}),
+        ...(input.creditDays !== undefined
+          ? { credit_days: input.creditDays }
+          : {}),
+      })
+      .eq("id", supplierId)
+      .eq("organization_id", organizationId)
+      .select("id")
+      .maybeSingle();
+    if (error) return { ok: false, message: error.message };
+    if (!data) return { ok: false, message: "Supplier not found." };
+    revalidatePath("/suppliers");
+    revalidatePath(`/suppliers/${supplierId}`);
+    revalidatePath("/finance/payables");
+    revalidatePath("/inventory/purchase-orders");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Update failed",
+    };
+  }
+}
+
+async function supplierDeleteBlockers(
+  supabase: SupabaseClient,
+  organizationId: string,
+  supplierId: string
+): Promise<string | null> {
+  const payables = await payablesBySupplier(supabase, organizationId, [
+    supplierId,
+  ]);
+  if ((payables.get(supplierId) ?? 0) > 0) {
+    return "Supplier has open payables. Pay or void bills before deleting.";
+  }
+
+  const { count: openBills } = await apDb(supabase)
+    .from("supplier_bills")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", organizationId)
+    .eq("supplier_id", supplierId)
+    .in("status", ["open", "partial", "draft"]);
+  if ((openBills ?? 0) > 0) {
+    return "Supplier has open bills in accounts payable.";
+  }
+
+  const { count: openPos } = await supabase
+    .from("purchase_orders")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", organizationId)
+    .eq("supplier_id", supplierId)
+    .in("status", ["draft", "sent", "partial"]);
+  if ((openPos ?? 0) > 0) {
+    return "Supplier has open purchase orders. Cancel or complete them first.";
+  }
+
+  const { count: unpaidGrns } = await supabase
+    .from("grns")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", organizationId)
+    .eq("supplier_id", supplierId)
+    .eq("payment_method", "on_account");
+  if ((unpaidGrns ?? 0) > 0) {
+    return "Supplier has goods receipts on account. Settle or void them first.";
+  }
+
+  const { count: payments } = await apDb(supabase)
+    .from("supplier_payments")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", organizationId)
+    .eq("supplier_id", supplierId);
+  if ((payments ?? 0) > 0) {
+    return "Supplier has payment history. Cannot delete.";
+  }
+
+  return null;
+}
+
+export async function deleteSupplier(
+  supplierId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const { organizationId } = await requireManagerContext();
+    const supabase = await createServerSupabaseClient();
+    const { data: row } = await apDb(supabase)
+      .from("suppliers")
+      .select("id")
+      .eq("id", supplierId)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (!row) return { ok: false, message: "Supplier not found." };
+
+    const blocked = await supplierDeleteBlockers(
+      supabase,
+      organizationId,
+      supplierId
+    );
+    if (blocked) return { ok: false, message: blocked };
+
+    const { error } = await apDb(supabase)
+      .from("suppliers")
+      .delete()
+      .eq("id", supplierId)
+      .eq("organization_id", organizationId);
+    if (error) return { ok: false, message: error.message };
+
+    revalidatePath("/suppliers");
+    revalidatePath("/finance/payables");
+    revalidatePath("/inventory/purchase-orders");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Delete failed",
+    };
+  }
 }
 
 const paySupplierInput = z.object({

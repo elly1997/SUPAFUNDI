@@ -12,6 +12,7 @@ export async function GET() {
         name: s.name,
         phone: s.phone,
         contact_person: s.contact_person,
+        credit_limit: s.credit_limit,
         payables_balance: s.payables_balance,
         is_active: s.is_active,
       })),
