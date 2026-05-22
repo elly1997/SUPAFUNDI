@@ -298,7 +298,25 @@ const txnInput = z.object({
   referenceNo: z.string().max(100).optional(),
   description: z.string().max(500).optional(),
   transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  /** Supplier/AP withdrawals may exceed recorded balance until reconciled. */
+  allowNegativeBalance: z.boolean().optional(),
 });
+
+/** Active collection accounts for outbound supplier payments (not limited to POS picker). */
+export async function listOutboundPaymentAccounts(
+  paymentMethod: "mpesa" | "bank_transfer" | "cheque"
+): Promise<PaymentAccountRow[]> {
+  const all = await listBankAccounts();
+  if (paymentMethod === "bank_transfer" || paymentMethod === "cheque") {
+    return all.filter((a) => a.account_type === "bank");
+  }
+  return all.filter(
+    (a) =>
+      a.account_type === "mpesa" ||
+      a.account_type === "lipa" ||
+      a.account_type === "till"
+  );
+}
 
 export async function recordBankTransaction(
   raw: z.infer<typeof txnInput>
@@ -321,7 +339,7 @@ export async function recordBankTransaction(
         ? -input.amount
         : input.amount;
     const newBalance = roundMoney(Number(account.current_balance) + delta);
-    if (newBalance < 0) {
+    if (newBalance < 0 && !input.allowNegativeBalance) {
       return { ok: false, message: "Insufficient account balance." };
     }
 

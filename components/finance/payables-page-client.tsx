@@ -37,7 +37,7 @@ import {
   fetchOpenPayables,
   paySupplierBillApi,
 } from "@/lib/api/daily-ops-fetch";
-import { fetchPosPaymentAccounts } from "@/lib/api/banking-fetch";
+import { fetchPaymentAccounts } from "@/lib/api/banking-fetch";
 import type { PayableBillRow } from "@/lib/actions/payables";
 import {
   formatAccountDetails,
@@ -85,25 +85,43 @@ export function PayablesPageClient() {
     [bills, payBillId]
   );
 
-  const needsBankPicker = paymentMethod === "bank_transfer";
+  const needsCollectionAccount =
+    paymentMethod === "bank_transfer" ||
+    paymentMethod === "mpesa" ||
+    paymentMethod === "cheque";
 
-  const { data: bankAccounts = [] } = useQuery({
-    queryKey: ["pos-accounts", "bank_transfer", "payables"],
-    enabled: payOpen && needsBankPicker,
-    queryFn: () => fetchPosPaymentAccounts("bank_transfer"),
+  const { data: collectionAccounts = [] } = useQuery({
+    queryKey: ["payment-accounts", "outbound", paymentMethod],
+    enabled: payOpen && needsCollectionAccount,
+    queryFn: async () => {
+      const all = await fetchPaymentAccounts();
+      if (paymentMethod === "bank_transfer" || paymentMethod === "cheque") {
+        return all.filter((a) => a.is_active && a.account_type === "bank");
+      }
+      return all.filter(
+        (a) =>
+          a.is_active &&
+          (a.account_type === "mpesa" ||
+            a.account_type === "lipa" ||
+            a.account_type === "till")
+      );
+    },
   });
 
-  const showBankAccountSelect =
-    needsBankPicker && bankAccounts.length > 1;
+  const showBankAccountSelect = needsCollectionAccount && collectionAccounts.length > 1;
+  const singleCollectionAccount =
+    needsCollectionAccount && collectionAccounts.length === 1
+      ? collectionAccounts[0]
+      : null;
 
   useEffect(() => {
-    if (!payOpen || !needsBankPicker) return;
-    if (bankAccounts.length === 1) {
-      setBankAccountId(bankAccounts[0]!.id);
-    } else if (bankAccounts.length !== 1) {
+    if (!payOpen || !needsCollectionAccount) return;
+    if (collectionAccounts.length === 1) {
+      setBankAccountId(collectionAccounts[0]!.id);
+    } else if (collectionAccounts.length !== 1) {
       setBankAccountId("");
     }
-  }, [payOpen, needsBankPicker, bankAccounts]);
+  }, [payOpen, needsCollectionAccount, collectionAccounts]);
 
   useEffect(() => {
     if (!payOpen) return;
@@ -156,8 +174,12 @@ export function PayablesPageClient() {
           `Amount cannot exceed balance due (${formatTzs(selectedPayBill.balance)})`
         );
       }
-      if (showBankAccountSelect && !bankAccountId) {
-        throw new Error("Select a bank account");
+      if (needsCollectionAccount && !bankAccountId) {
+        throw new Error(
+          collectionAccounts.length === 0
+            ? "Add a bank or M-Pesa account under Finance → Banking first."
+            : "Select the account this payment was made from"
+        );
       }
       return paySupplierBillApi({
         billId: payBillId,
@@ -175,6 +197,8 @@ export function PayablesPageClient() {
         void queryClient.invalidateQueries({ queryKey: ["payables-open"] });
         invalidateSupplierQueries(queryClient);
         void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
+        void queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
+        void queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
       } else toast.error(r.message);
     },
     onError: (e) =>
@@ -423,21 +447,43 @@ export function PayablesPageClient() {
                 </SelectContent>
               </Select>
             </div>
+            {needsCollectionAccount && collectionAccounts.length === 0 && (
+              <p className="text-xs text-warning">
+                No active account for this payment method. Add one under{" "}
+                <Link href="/finance/banking" className="underline">
+                  Banking
+                </Link>
+                .
+              </p>
+            )}
+            {singleCollectionAccount && (
+              <p className="form-hint rounded-lg border border-border bg-surface-1/50 px-3 py-2 text-xs">
+                Paying from: <strong>{singleCollectionAccount.name}</strong>
+                {formatAccountDetails(singleCollectionAccount) !== "—"
+                  ? ` · ${formatAccountDetails(singleCollectionAccount)}`
+                  : ""}
+                . Balance updates in Banking.
+              </p>
+            )}
             {showBankAccountSelect && (
               <div className="space-y-2">
-                <Label>Bank account</Label>
+                <Label>
+                  {paymentMethod === "bank_transfer" || paymentMethod === "cheque"
+                    ? "Bank account"
+                    : "M-Pesa account"}
+                </Label>
                 <Select
                   value={bankAccountId}
                   onValueChange={(v) => setBankAccountId(v ?? "")}
                 >
                   <SelectTrigger>
                     <span className="truncate">
-                      {bankAccounts.find((a) => a.id === bankAccountId)?.name ??
-                        "Select account"}
+                      {collectionAccounts.find((a) => a.id === bankAccountId)
+                        ?.name ?? "Select account"}
                     </span>
                   </SelectTrigger>
                   <SelectContent>
-                    {bankAccounts.map((a) => (
+                    {collectionAccounts.map((a) => (
                       <SelectItem key={a.id} value={a.id}>
                         {a.name}
                         <span className="ml-1 text-muted-foreground">
@@ -451,7 +497,7 @@ export function PayablesPageClient() {
                   </SelectContent>
                 </Select>
                 <p className="form-hint">
-                  Withdrawal is recorded against this account in Banking.
+                  Withdrawal is recorded on this account in Banking.
                 </p>
               </div>
             )}
@@ -479,7 +525,7 @@ export function PayablesPageClient() {
                 !payBillId ||
                 payAmountInvalid ||
                 payMut.isPending ||
-                (showBankAccountSelect && !bankAccountId)
+                (needsCollectionAccount && !bankAccountId)
               }
             >
               {payMut.isPending ? (

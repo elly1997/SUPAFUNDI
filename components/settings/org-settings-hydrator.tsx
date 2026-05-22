@@ -18,6 +18,7 @@ export function OrgSettingsHydrator({ children }: { children: React.ReactNode })
       return res.json() as Promise<{
         vatEnabled: boolean;
         defaultVatRate: number;
+        defaultRetailMarginPct: number;
       }>;
     },
     staleTime: 60_000,
@@ -28,6 +29,7 @@ export function OrgSettingsHydrator({ children }: { children: React.ReactNode })
       setOrgSettings({
         vatEnabled: data.vatEnabled,
         defaultVatRate: data.defaultVatRate,
+        defaultRetailMarginPct: data.defaultRetailMarginPct,
       });
     }
   }, [data, setOrgSettings]);

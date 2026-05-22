@@ -45,6 +45,7 @@ import {
   recordBankTransaction,
   toggleBankTransactionReconciled,
 } from "@/lib/actions/banking";
+import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 
 function accountTypeIcon(type: PaymentAccountType) {
@@ -313,14 +314,22 @@ export function BankingPageClient() {
             value={selectedAccount}
             onValueChange={(v) => setSelectedAccount(v ?? "all")}
           >
-            <SelectTrigger className="w-52">
-              <SelectValue />
+            <SelectTrigger className="w-56 max-w-full">
+              <span className="truncate text-left">
+                {selectedAccount === "all"
+                  ? "All accounts"
+                  : (accounts.find((a) => a.id === selectedAccount)?.name ??
+                    "All accounts")}
+              </span>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All accounts</SelectItem>
               {accounts.map((a) => (
                 <SelectItem key={a.id} value={a.id}>
                   {a.name}
+                  <span className="ml-1 text-muted-foreground">
+                    · {formatTzs(a.current_balance)}
+                  </span>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -341,13 +350,14 @@ export function BankingPageClient() {
                   <TableHead>Account</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Reference</TableHead>
                   <TableHead>Reconciled</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {transactions.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                    <TableCell colSpan={6} className="text-center text-muted-foreground">
                       No transactions yet
                     </TableCell>
                   </TableRow>
@@ -359,8 +369,17 @@ export function BankingPageClient() {
                       </TableCell>
                       <TableCell>{t.account_name}</TableCell>
                       <TableCell className="capitalize">{t.transaction_type}</TableCell>
-                      <TableCell className="text-right font-money">
+                      <TableCell
+                        className={cn(
+                          "text-right font-money",
+                          t.transaction_type === "withdrawal" && "text-outflow"
+                        )}
+                      >
+                        {t.transaction_type === "withdrawal" ? "−" : "+"}
                         {formatTzs(t.amount)}
+                      </TableCell>
+                      <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">
+                        {t.description ?? t.reference_no ?? "—"}
                       </TableCell>
                       <TableCell>
                         <input

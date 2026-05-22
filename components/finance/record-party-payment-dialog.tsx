@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { fetchCustomerOpenInvoices } from "@/lib/api/party-statements-fetch";
-import { fetchPosPaymentAccounts } from "@/lib/api/banking-fetch";
+import { fetchPaymentAccounts } from "@/lib/api/banking-fetch";
 async function paySupplierApi(
   params: Parameters<typeof import("@/lib/actions/suppliers").paySupplier>[0]
 ) {
@@ -87,19 +87,29 @@ export function RecordPartyPaymentDialog({
   const needsBank =
     method === "mpesa" || method === "bank_transfer" || method === "cheque";
 
-  const posMethod =
-    method === "mpesa"
-      ? "mpesa"
-      : method === "bank_transfer" || method === "cheque"
-        ? "bank_transfer"
-        : null;
-
   const { data: accounts = [] } = useQuery({
-    queryKey: ["pos-accounts", posMethod],
-    enabled: open && needsBank && !!posMethod,
-    queryFn: () =>
-      fetchPosPaymentAccounts(posMethod as "mpesa" | "bank_transfer"),
+    queryKey: ["payment-accounts", "outbound", method],
+    enabled: open && needsBank,
+    queryFn: async () => {
+      const all = await fetchPaymentAccounts();
+      if (method === "bank_transfer" || method === "cheque") {
+        return all.filter((a) => a.is_active && a.account_type === "bank");
+      }
+      return all.filter(
+        (a) =>
+          a.is_active &&
+          (a.account_type === "mpesa" ||
+            a.account_type === "lipa" ||
+            a.account_type === "till")
+      );
+    },
   });
+
+  useEffect(() => {
+    if (!open || !needsBank) return;
+    if (accounts.length === 1) setBankAccountId(accounts[0]!.id);
+    else if (accounts.length !== 1) setBankAccountId("");
+  }, [open, needsBank, accounts]);
 
   const { data: invoices = [] } = useQuery({
     queryKey: ["customer-invoices", partyId],
@@ -124,6 +134,13 @@ export function RecordPartyPaymentDialog({
     mutationFn: async () => {
       const amt = Number(amount);
       if (!amt || amt <= 0) throw new Error("Enter a valid amount");
+      if (needsBank && !bankAccountId) {
+        throw new Error(
+          accounts.length === 0
+            ? "Add a collection account under Finance → Banking."
+            : "Select the account this payment was made from"
+        );
+      }
 
       if (partyType === "supplier") {
         return paySupplierApi({

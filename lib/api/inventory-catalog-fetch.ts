@@ -10,6 +10,58 @@ async function parseError(res: Response): Promise<string> {
   }
 }
 
+export async function applyMissingRetailPricesApi(
+  outletId?: string | null
+): Promise<
+  | { ok: true; updated: number; marginPct: number }
+  | { ok: false; message: string }
+> {
+  const res = await fetch("/api/inventory/catalog/apply-retail-margin", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ outletId: outletId ?? undefined }),
+  });
+  const body = (await res.json()) as
+    | { ok: true; updated: number; marginPct: number }
+    | { ok: false; message?: string };
+  if (!res.ok || !body.ok) {
+    return {
+      ok: false,
+      message:
+        (body as { message?: string }).message ?? "Could not apply retail prices",
+    };
+  }
+  return body;
+}
+
+export async function createProductQuickApi(params: {
+  name: string;
+  outletId: string;
+  categoryName?: string;
+  unit?: string;
+  costPrice?: number;
+  retailPrice?: number;
+}): Promise<{ ok: true; productId: string } | { ok: false; message: string }> {
+  const res = await fetch("/api/inventory/products/create", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const body = (await res.json()) as
+    | { ok: true; productId: string }
+    | { ok: false; message?: string };
+  if (!res.ok || !body.ok) {
+    return {
+      ok: false,
+      message:
+        (body as { message?: string }).message ?? "Could not create product",
+    };
+  }
+  return body;
+}
+
 export async function fetchProductPriceCatalog(
   outletId?: string | null
 ): Promise<ProductPriceCatalogRow[]> {

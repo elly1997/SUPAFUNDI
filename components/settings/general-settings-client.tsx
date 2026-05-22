@@ -29,6 +29,7 @@ export function GeneralSettingsClient({ initial }: Props) {
     country: initial.country,
     vatEnabled: initial.vatEnabled,
     defaultVatRate: initial.defaultVatRate,
+    defaultRetailMarginPct: initial.defaultRetailMarginPct,
     receiptFooter: initial.receiptFooter,
     requireCashSession: initial.requireCashSession,
   });
@@ -40,6 +41,7 @@ export function GeneralSettingsClient({ initial }: Props) {
         setOrgSettings({
           vatEnabled: form.vatEnabled,
           defaultVatRate: form.defaultVatRate,
+          defaultRetailMarginPct: form.defaultRetailMarginPct,
         });
         toast.success("Settings saved");
       } else toast.error(r.message);
@@ -123,6 +125,26 @@ export function GeneralSettingsClient({ initial }: Props) {
               />
             </div>
           ) : null}
+          <div className="space-y-2">
+            <Label>Default retail margin %</Label>
+            <Input
+              type="number"
+              min={0}
+              max={500}
+              value={form.defaultRetailMarginPct}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  defaultRetailMarginPct: Number(e.target.value) || 0,
+                }))
+              }
+            />
+            <p className="form-hint text-xs text-muted-foreground">
+              Markup on buying price for auto retail (e.g. 40 → selling = cost ×
+              1.4). Used on Receive goods and &quot;Fill missing retail&quot; on
+              the price list.
+            </p>
+          </div>
           <div className="space-y-2">
             <Label>Currency</Label>
             <Input

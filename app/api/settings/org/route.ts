@@ -12,6 +12,7 @@ export async function GET() {
     return NextResponse.json({
       vatEnabled: settings.vatEnabled,
       defaultVatRate: settings.defaultVatRate,
+      defaultRetailMarginPct: settings.defaultRetailMarginPct,
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to load settings";

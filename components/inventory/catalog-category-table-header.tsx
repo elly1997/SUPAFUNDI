@@ -51,14 +51,15 @@ export function CatalogCategoryTableHeader({
 }
 
 function avgMarginForPriceRows(
-  rows: { costPrice: number; retailPrice: number }[]
+  rows: { costPrice: number; retailPrice: number | null }[]
 ): number | null {
   let costSum = 0;
   let retailSum = 0;
   for (const r of rows) {
-    if (r.retailPrice > 0) {
+    const retail = r.retailPrice;
+    if (retail != null && retail > 0) {
       costSum += r.costPrice;
-      retailSum += r.retailPrice;
+      retailSum += retail;
     }
   }
   if (retailSum <= 0) return null;
@@ -66,7 +67,7 @@ function avgMarginForPriceRows(
 }
 
 export function priceListSectionMargin(
-  rows: { costPrice: number; retailPrice: number }[]
+  rows: { costPrice: number; retailPrice: number | null }[]
 ): number | null {
   return avgMarginForPriceRows(rows);
 }

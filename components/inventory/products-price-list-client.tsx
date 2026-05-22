@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Trash2 } from "lucide-react";
+import { Loader2, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -21,9 +21,11 @@ import {
 } from "@/components/inventory/catalog-category-table-header";
 import type { ProductPriceCatalogRow } from "@/lib/actions/inventory";
 import {
+  applyMissingRetailPricesApi,
   fetchProductPriceCatalog,
   patchCatalogField,
 } from "@/lib/api/inventory-catalog-fetch";
+import { useOrgSettingsStore } from "@/stores/orgSettingsStore";
 import { groupCatalogByCategory } from "@/lib/products/catalog-grouping";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -43,12 +45,38 @@ export function ProductsPriceListClient({
   onEditProduct,
 }: Props) {
   const outletId = useAuthStore((s) => s.activeOutletId);
+  const marginPct = useOrgSettingsStore((s) => s.defaultRetailMarginPct);
   const queryClient = useQueryClient();
   const [savingId, setSavingId] = useState<string | null>(null);
 
   const { data: rows = [], isLoading, isError, error } = useQuery({
     queryKey: ["product-price-catalog", outletId],
     queryFn: () => fetchProductPriceCatalog(outletId),
+  });
+
+  const missingRetailCount = useMemo(
+    () =>
+      rows.filter((r) => r.retailPrice == null && r.costPrice > 0).length,
+    [rows]
+  );
+
+  const applyRetailMut = useMutation({
+    mutationFn: () => applyMissingRetailPricesApi(outletId),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success(
+          r.updated > 0
+            ? `Set retail on ${r.updated} product(s) using ${r.marginPct}% margin`
+            : "All products with cost already have a retail price"
+        );
+        void queryClient.invalidateQueries({
+          queryKey: ["product-price-catalog"],
+        });
+        void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+      } else toast.error(r.message);
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Apply failed"),
   });
 
   const categoryOptions = useMemo(
@@ -114,9 +142,28 @@ export function ProductsPriceListClient({
             {rows.length > 0 ? ` ${rows.length} products · ${categoryOptions.length} categories.` : ""}
             {outletId
               ? " Buying price applies to your active outlet."
-              : " Select an outlet in the header to edit buying price."}
+              : " Select an outlet in the header to edit buying price."}{" "}
+            Auto retail prices show an <span className="text-warning">Auto</span>{" "}
+            badge.
           </CardDescription>
         </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {canManage && missingRetailCount > 0 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={applyRetailMut.isPending}
+              onClick={() => applyRetailMut.mutate()}
+            >
+              {applyRetailMut.isPending ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : (
+                <Sparkles className="mr-2 size-4 text-warning" />
+              )}
+              Fill missing retail ({marginPct}%)
+            </Button>
+          )}
         {canManage && onClearAll && (
           <Button
             type="button"
@@ -129,6 +176,7 @@ export function ProductsPriceListClient({
             Clear all items
           </Button>
         )}
+        </div>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -208,12 +256,14 @@ function PriceListRow({
 }) {
   const [code, setCode] = useState(row.code ?? "");
   const [cost, setCost] = useState(String(row.costPrice || ""));
-  const [retail, setRetail] = useState(String(row.retailPrice || ""));
+  const [retail, setRetail] = useState(
+    row.retailPrice != null ? String(row.retailPrice) : ""
+  );
 
   useEffect(() => {
     setCode(row.code ?? "");
     setCost(String(row.costPrice || ""));
-    setRetail(String(row.retailPrice || ""));
+    setRetail(row.retailPrice != null ? String(row.retailPrice) : "");
   }, [row]);
 
   return (
@@ -262,19 +312,38 @@ function PriceListRow({
         />
       </TableCell>
       <TableCell className="text-right">
-        <Input
-          type="number"
-          min={0}
-          className="ml-auto h-8 w-28 text-right font-money"
-          value={retail}
-          onChange={(e) => setRetail(e.target.value)}
-          onBlur={() => {
-            const n = Number(retail);
-            if (Number.isFinite(n) && n >= 0 && n !== row.retailPrice) {
-              onSave(row, "retailPrice", n);
-            }
-          }}
-        />
+        <div className="flex flex-col items-end gap-1">
+          <Input
+            type="number"
+            min={0}
+            className="ml-auto h-8 w-28 text-right font-money"
+            placeholder={row.retailPrice == null ? "—" : undefined}
+            value={retail}
+            onChange={(e) => setRetail(e.target.value)}
+            onBlur={() => {
+              const n = Number(retail);
+              if (
+                Number.isFinite(n) &&
+                n >= 0 &&
+                n !== (row.retailPrice ?? -1)
+              ) {
+                onSave(row, "retailPrice", n);
+              }
+            }}
+          />
+          {row.retailAutoGenerated ? (
+            <span
+              className="rounded bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-warning"
+              title="Selling price was calculated from buying price × margin in Settings"
+            >
+              Auto
+            </span>
+          ) : row.retailPrice == null && row.costPrice > 0 ? (
+            <span className="text-[10px] text-muted-foreground">
+              No retail set
+            </span>
+          ) : null}
+        </div>
       </TableCell>
     </TableRow>
   );

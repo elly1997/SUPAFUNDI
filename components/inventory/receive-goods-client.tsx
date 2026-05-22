@@ -33,11 +33,14 @@ import {
   fetchSupplierOptions,
   invalidateSupplierQueries,
 } from "@/lib/api/suppliers-fetch";
+import { createProductQuickApi } from "@/lib/api/inventory-catalog-fetch";
 import { usePosProducts } from "@/hooks/usePosProducts";
 import { useTaxRate } from "@/hooks/useTaxRate";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { cn } from "@/lib/utils";
+import { retailPriceFromCost } from "@/lib/utils/calculations";
 import { formatTzs } from "@/lib/utils/currency";
+import { useOrgSettingsStore } from "@/stores/orgSettingsStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 
@@ -57,6 +60,7 @@ type GrnSupplierDraft = {
 export function ReceiveGoodsClient() {
   const queryClient = useQueryClient();
   const taxRate = useTaxRate();
+  const retailMarginPct = useOrgSettingsStore((s) => s.defaultRetailMarginPct);
   const activeOutletId = useAuthStore((s) => s.activeOutletId);
   const sessionOutletId = useAuthStore((s) => s.session?.outletId);
   const businessDate = useBusinessDateStore((s) => s.businessDate);
@@ -72,6 +76,8 @@ export function ReceiveGoodsClient() {
   const [pickProduct, setPickProduct] = useState("");
   const [qty, setQty] = useState(1);
   const [unitCost, setUnitCost] = useState(0);
+  const [newProductName, setNewProductName] = useState("");
+  const [newProductCategory, setNewProductCategory] = useState("General");
 
   const { data: outlets = [], isLoading: outletsLoading } = useQuery({
     queryKey: ["org-outlets"],
@@ -88,7 +94,10 @@ export function ReceiveGoodsClient() {
     queryFn: fetchSupplierOptions,
   });
 
-  const { data: products = [] } = usePosProducts(outletId || null);
+  const {
+    data: products = [],
+    refetch: refetchProducts,
+  } = usePosProducts(outletId || null);
 
   const outletLabel = useMemo(
     () => outlets.find((o) => o.id === outletId)?.name,
@@ -171,6 +180,36 @@ export function ReceiveGoodsClient() {
       })),
     [products]
   );
+
+  const addProductMut = useMutation({
+    mutationFn: () => {
+      if (!outletId) throw new Error("Select an outlet first");
+      const name = newProductName.trim();
+      if (!name) throw new Error("Enter a product name");
+      const cost = unitCost > 0 ? unitCost : 0;
+      return createProductQuickApi({
+        name,
+        outletId,
+        categoryName: newProductCategory.trim() || "General",
+        costPrice: cost,
+        retailPrice: retailPriceFromCost(cost, retailMarginPct),
+      });
+    },
+    onSuccess: async (r) => {
+      if (r.ok) {
+        toast.success("Product added — set qty and add line");
+        setPickProduct(r.productId);
+        setNewProductName("");
+        await refetchProducts();
+        void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+        void queryClient.invalidateQueries({
+          queryKey: ["product-price-catalog"],
+        });
+      } else toast.error(r.message);
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Could not add product"),
+  });
 
   const addSupplierMut = useMutation({
     mutationFn: (name: string) => createSupplierApi({ name }),
@@ -458,9 +497,11 @@ export function ReceiveGoodsClient() {
                     outletId ? "Search name or code…" : "Select outlet first"
                   }
                   searchPlaceholder="Search product name or code…"
-                  disabled={!outletId || productOptions.length === 0}
+                  disabled={!outletId}
                   emptyMessage={
-                    outletId ? "No products match" : "Select an outlet first"
+                    outletId
+                      ? "No match — add a new product below"
+                      : "Select an outlet first"
                   }
                   minPanelWidth={320}
                   className="w-full"
@@ -470,6 +511,59 @@ export function ReceiveGoodsClient() {
                     Choose an outlet to load products for that branch.
                   </p>
                 ) : null}
+              </div>
+              <div className="rounded-lg border border-border bg-muted/20 p-3">
+                <Label className="mb-2 block text-xs font-medium text-muted-foreground">
+                  Add product (if not in the list)
+                </Label>
+                <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      className="h-9 flex-1 rounded-lg bg-surface-1"
+                      placeholder="New product name"
+                      value={newProductName}
+                      onChange={(e) => setNewProductName(e.target.value)}
+                      disabled={!outletId}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          if (newProductName.trim() && outletId) {
+                            addProductMut.mutate();
+                          }
+                        }
+                      }}
+                    />
+                    <Input
+                      className="h-9 w-full rounded-lg bg-surface-1 sm:w-36"
+                      placeholder="Category"
+                      value={newProductCategory}
+                      onChange={(e) => setNewProductCategory(e.target.value)}
+                      disabled={!outletId}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 shrink-0 sm:w-32"
+                      disabled={
+                        !outletId ||
+                        !newProductName.trim() ||
+                        addProductMut.isPending
+                      }
+                      onClick={() => addProductMut.mutate()}
+                    >
+                      {addProductMut.isPending ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        "Add product"
+                      )}
+                    </Button>
+                  </div>
+                  <p className="form-hint text-xs text-muted-foreground">
+                    Retail = cost + {retailMarginPct}% margin (from unit cost above).
+                    Change margin in Settings → General. Stock is added when you
+                    receive this GRN.
+                  </p>
+                </div>
               </div>
               <div className="flex flex-wrap items-end gap-3">
                 <div className="space-y-1.5">

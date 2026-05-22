@@ -32,6 +32,8 @@ export type OrganizationSettings = {
   country: string;
   defaultVatRate: number;
   vatEnabled: boolean;
+  /** Markup % on cost for default retail (e.g. 40 → retail = cost × 1.4). */
+  defaultRetailMarginPct: number;
   receiptFooter: string;
   requireCashSession: boolean;
 };
@@ -63,6 +65,7 @@ export async function getOrganizationSettings(): Promise<OrganizationSettings | 
     country: org.country,
     defaultVatRate: Number(map.get("default_vat_rate") ?? 18),
     vatEnabled: map.get("vat_enabled") === "true",
+    defaultRetailMarginPct: Number(map.get("default_retail_margin_pct") ?? 40),
     receiptFooter: map.get("receipt_footer") ?? "Thank you for your business.",
     requireCashSession: map.get("require_cash_session") === "true",
   };
@@ -78,6 +81,7 @@ const updateOrgSchema = z.object({
   country: z.string().length(2).default("TZ"),
   defaultVatRate: z.coerce.number().min(0).max(100).default(18),
   vatEnabled: z.boolean().default(false),
+  defaultRetailMarginPct: z.coerce.number().min(0).max(500).default(40),
   receiptFooter: z.string().max(500).optional(),
   requireCashSession: z.boolean().default(false),
 });
@@ -107,6 +111,10 @@ export async function updateOrganizationSettings(
     const upserts = [
       { key: "default_vat_rate", value: String(input.defaultVatRate) },
       { key: "vat_enabled", value: input.vatEnabled ? "true" : "false" },
+      {
+        key: "default_retail_margin_pct",
+        value: String(input.defaultRetailMarginPct),
+      },
       {
         key: "receipt_footer",
         value: input.receiptFooter?.trim() || "Thank you for your business.",

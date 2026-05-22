@@ -713,19 +713,33 @@ export async function paySupplier(
       return { ok: false, message: journal.message };
     }
 
-    if (
-      input.bankAccountId &&
-      (input.paymentMethod === "mpesa" ||
-        input.paymentMethod === "bank_transfer" ||
-        input.paymentMethod === "cheque")
-    ) {
+    const needsBankLedger =
+      input.paymentMethod === "mpesa" ||
+      input.paymentMethod === "bank_transfer" ||
+      input.paymentMethod === "cheque";
+
+    if (needsBankLedger && !input.bankAccountId) {
+      return {
+        ok: false,
+        message:
+          "Select the bank or M-Pesa account this payment was made from (Finance → Banking).",
+      };
+    }
+
+    if (needsBankLedger && input.bankAccountId) {
+      const { data: supp } = await supabase
+        .from("suppliers")
+        .select("name")
+        .eq("id", input.supplierId)
+        .maybeSingle();
       const bank = await recordBankTransaction({
         bankAccountId: input.bankAccountId,
         transactionType: "withdrawal",
         amount: input.amount,
         referenceNo: input.referenceNo?.trim() || undefined,
-        description: `Supplier payment`,
+        description: `Supplier payment${supp?.name ? ` · ${supp.name}` : ""}`,
         transactionDate: paymentDate,
+        allowNegativeBalance: true,
       });
       if (!bank.ok) return bank;
     }

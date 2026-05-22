@@ -99,6 +99,11 @@ export async function runCompleteOrganizationSetup(
         { organization_id: org.id, key: "vat_enabled", value: "false" },
         {
           organization_id: org.id,
+          key: "default_retail_margin_pct",
+          value: "40",
+        },
+        {
+          organization_id: org.id,
           key: "receipt_footer",
           value: "Thank you for your business.",
         },

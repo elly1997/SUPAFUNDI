@@ -15,3 +15,12 @@ export function computeLineTotal(
 export function computeVat(amountExVat: number, vatRatePct: number): number {
   return roundMoney(amountExVat * (vatRatePct / 100));
 }
+
+/** Retail from cost using markup % on cost (default 40% → retail = cost × 1.4). */
+export function retailPriceFromCost(
+  cost: number,
+  marginPctOnCost = 40
+): number {
+  if (cost <= 0) return 0;
+  return roundMoney(cost * (1 + marginPctOnCost / 100));
+}

@@ -118,7 +118,7 @@ export async function listStockLevels(
   return catalog.map((item) => {
     const qty = qtyMap.get(item.id) ?? 0;
     const cost = item.costPrice;
-    const retail = item.retailPrice;
+    const retail = item.retailPrice ?? 0;
     const reorder = reorderMap.get(item.id) ?? 0;
     const sold30 = velocity.get(item.id) ?? 0;
     const avgDaily = roundMoney(sold30 / 30);
