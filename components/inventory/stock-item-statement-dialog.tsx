@@ -16,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { GrnVoidButton } from "@/components/inventory/grn-void-button";
 import { fetchItemStatement } from "@/lib/api/inventory-catalog-fetch";
 import { cn } from "@/lib/utils";
 import { formatDateEAT, formatTzs } from "@/lib/utils/currency";
@@ -68,10 +69,20 @@ export function StockItemStatementDialog({
                 <TableHead>Reference</TableHead>
                 <TableHead className="text-right">Qty ±</TableHead>
                 <TableHead className="text-right">Unit cost</TableHead>
+                <TableHead className="w-20" />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {lines.map((l) => (
+              {(() => {
+                const voidedGrns = new Set<string>();
+                return lines.map((l) => {
+                  const showVoid =
+                    l.referenceType === "grn" &&
+                    l.referenceId &&
+                    l.movementType === "purchase" &&
+                    !voidedGrns.has(l.referenceId);
+                  if (showVoid && l.referenceId) voidedGrns.add(l.referenceId);
+                  return (
                 <TableRow key={l.id}>
                   <TableCell className="text-xs whitespace-nowrap">
                     {formatDateEAT(l.date)}
@@ -93,8 +104,19 @@ export function StockItemStatementDialog({
                   <TableCell className="text-right font-money text-xs">
                     {l.unitCost != null ? formatTzs(l.unitCost) : "—"}
                   </TableCell>
+                  <TableCell className="text-right">
+                    {showVoid && l.referenceId ? (
+                      <GrnVoidButton
+                        grnId={l.referenceId}
+                        referenceLabel={l.reference ?? l.referenceId.slice(0, 8)}
+                        onVoided={() => onOpenChange(false)}
+                      />
+                    ) : null}
+                  </TableCell>
                 </TableRow>
-              ))}
+                  );
+                });
+              })()}
             </TableBody>
           </Table>
         )}

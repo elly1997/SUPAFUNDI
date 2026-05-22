@@ -2,14 +2,24 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { buildGrnJournalLines } from "@/lib/accounting/posting-rules";
+import {
+  buildGrnJournalLines,
+  buildReversingJournalLines,
+  type JournalLineInput,
+} from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { createSupplierBillFromGrn } from "@/lib/actions/payables";
 import { createReceivedPoFromGrn } from "@/lib/actions/purchase-orders";
+import { requireManagerContext } from "@/lib/server/require-manager";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { computeVat, roundMoney } from "@/lib/utils/calculations";
+import { roundMoney } from "@/lib/utils/calculations";
 import { isoDateToTimestamptz, resolveBusinessDate } from "@/lib/utils/iso-date";
+import {
+  computeTaxAmount,
+  effectiveTaxRate,
+  getOrgVatConfig,
+} from "@/lib/vat/org-vat";
 
 const grnLineInput = z.object({
   productId: z.string().uuid(),
@@ -70,6 +80,8 @@ export async function receiveGoods(
     const input = receiveGoodsInput.parse(raw);
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
+    const vatConfig = await getOrgVatConfig();
+    const taxRate = effectiveTaxRate(vatConfig, input.taxRate);
 
     const { data: outlet } = await supabase
       .from("outlets")
@@ -84,7 +96,7 @@ export async function receiveGoods(
     const inventoryValue = roundMoney(
       input.lines.reduce((s, l) => s + l.quantity * l.unitCost, 0)
     );
-    const taxAmount = computeVat(inventoryValue, input.taxRate);
+    const taxAmount = computeTaxAmount(inventoryValue, vatConfig, taxRate);
     const totalAmount = roundMoney(inventoryValue + taxAmount);
 
     const paymentMethod = resolvePurchasePayment(input);
@@ -214,7 +226,7 @@ export async function receiveGoods(
       supplierId: input.supplierId ?? null,
       orderDate: receivedDate,
       paymentMethod,
-      taxRate: input.taxRate,
+      taxRate,
       grnId: grn.id,
       lines: input.lines,
       referenceHint: input.referenceNo,
@@ -271,6 +283,237 @@ export async function receiveGoods(
     return {
       ok: false,
       message: e instanceof Error ? e.message : "Receive goods failed",
+    };
+  }
+}
+
+function apDb(supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>) {
+  return supabase as unknown as {
+    from: (table: string) => ReturnType<typeof supabase.from>;
+  };
+}
+
+async function loadGrnJournalLines(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  grnId: string
+): Promise<JournalLineInput[]> {
+  const { data: entry } = await supabase
+    .from("journal_entries")
+    .select("id")
+    .eq("source_id", grnId)
+    .eq("source_type", "grn")
+    .eq("is_reversal", false)
+    .maybeSingle();
+  if (!entry) return [];
+
+  const { data: lines } = await supabase
+    .from("journal_entry_lines")
+    .select("account_id, debit, credit")
+    .eq("journal_entry_id", entry.id);
+  if (!lines?.length) return [];
+
+  const accountIds = Array.from(new Set(lines.map((l) => l.account_id)));
+  const { data: accounts } = await supabase
+    .from("chart_of_accounts")
+    .select("id, code")
+    .in("id", accountIds);
+  const codeById = new Map((accounts ?? []).map((a) => [a.id, a.code]));
+
+  return lines
+    .map((l) => {
+      const code = codeById.get(l.account_id);
+      if (!code) return null;
+      return {
+        accountCode: code,
+        debit: Number(l.debit),
+        credit: Number(l.credit),
+      };
+    })
+    .filter((l): l is JournalLineInput => l !== null);
+}
+
+/** Void a goods receipt: reverse stock, GL, open supplier bill, and linked GRN-sourced PO. */
+export async function voidGrn(
+  grnId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await requireManagerContext();
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: grn, error: grnErr } = await supabase
+      .from("grns")
+      .select(
+        "id, outlet_id, supplier_id, po_id, payment_method, subtotal, tax_amount, total_amount, received_date"
+      )
+      .eq("id", grnId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (grnErr || !grn) {
+      return { ok: false, message: "Receipt not found." };
+    }
+    if (!grn.outlet_id) {
+      return { ok: false, message: "Receipt has no outlet." };
+    }
+
+    const { data: items } = await supabase
+      .from("grn_items")
+      .select("product_id, quantity, unit_cost")
+      .eq("grn_id", grnId);
+    if (!items?.length) {
+      return { ok: false, message: "Receipt has no line items." };
+    }
+
+    for (const line of items) {
+      if (!line.product_id) continue;
+      const { data: stock } = await supabase
+        .from("stock")
+        .select("id, quantity")
+        .eq("outlet_id", grn.outlet_id)
+        .eq("product_id", line.product_id)
+        .maybeSingle();
+      const available = Number(stock?.quantity ?? 0);
+      if (available < Number(line.quantity)) {
+        return {
+          ok: false,
+          message:
+            "Cannot void: stock was sold or adjusted below received quantity. Adjust stock first.",
+        };
+      }
+    }
+
+    const originalLines = await loadGrnJournalLines(supabase, grnId);
+    if (originalLines.length > 0) {
+      const reverseLines = buildReversingJournalLines(originalLines);
+      const journal = await postJournalEntry({
+        description: `Void GRN ${grnId.slice(0, 8)}`,
+        sourceType: "grn_void",
+        sourceId: grnId,
+        outletId: grn.outlet_id,
+        entryDate: grn.received_date,
+        lines: reverseLines,
+      });
+      if (!journal.ok) {
+        return { ok: false, message: journal.message };
+      }
+    }
+
+    const paymentMethod = (grn.payment_method ?? "on_account") as
+      | "cash"
+      | "mpesa"
+      | "bank_transfer"
+      | "on_account";
+
+    if (paymentMethod === "on_account" && grn.supplier_id) {
+      const grnTag = grnId.slice(0, 8);
+      const { data: bill } = await apDb(supabase)
+        .from("supplier_bills")
+        .select("id, amount_paid, status")
+        .eq("organization_id", ctx.organizationId)
+        .ilike("notes", `%${grnTag}%`)
+        .maybeSingle();
+      if (bill) {
+        if (Number(bill.amount_paid) > 0) {
+          return {
+            ok: false,
+            message:
+              "Cannot void: supplier bill has payments. Reverse payments in Payables first.",
+          };
+        }
+        await apDb(supabase).from("supplier_bills").delete().eq("id", bill.id);
+      }
+    }
+
+    for (const line of items) {
+      if (!line.product_id) continue;
+      const { data: stock } = await supabase
+        .from("stock")
+        .select("id, quantity, cost_price")
+        .eq("outlet_id", grn.outlet_id)
+        .eq("product_id", line.product_id)
+        .maybeSingle();
+      const qty = Number(line.quantity);
+      const newQty = roundMoney(Number(stock?.quantity ?? 0) - qty);
+      if (stock?.id) {
+        const { error: updErr } = await supabase
+          .from("stock")
+          .update({
+            quantity: newQty,
+            ...(newQty <= 0 ? { cost_price: 0 } : {}),
+          })
+          .eq("id", stock.id);
+        if (updErr) return { ok: false, message: updErr.message };
+      }
+    }
+
+    if (grn.po_id) {
+      const { data: po } = await supabase
+        .from("purchase_orders")
+        .select("id, source, status")
+        .eq("id", grn.po_id)
+        .maybeSingle();
+      if (po?.source === "grn") {
+        await supabase
+          .from("purchase_orders")
+          .update({ status: "cancelled" })
+          .eq("id", po.id);
+      } else if (po) {
+        for (const line of items) {
+          if (!line.product_id) continue;
+          const { data: poi } = await supabase
+            .from("purchase_order_items")
+            .select("id, received_qty")
+            .eq("po_id", po.id)
+            .eq("product_id", line.product_id)
+            .maybeSingle();
+          if (poi) {
+            const newReceived = roundMoney(
+              Math.max(0, Number(poi.received_qty) - Number(line.quantity))
+            );
+            await supabase
+              .from("purchase_order_items")
+              .update({ received_qty: newReceived })
+              .eq("id", poi.id);
+          }
+        }
+        const { data: poItems } = await supabase
+          .from("purchase_order_items")
+          .select("ordered_qty, received_qty")
+          .eq("po_id", po.id);
+        const allReceived = (poItems ?? []).every(
+          (i) => Number(i.received_qty) >= Number(i.ordered_qty)
+        );
+        const anyReceived = (poItems ?? []).some(
+          (i) => Number(i.received_qty) > 0
+        );
+        await supabase
+          .from("purchase_orders")
+          .update({
+            status: allReceived
+              ? "received"
+              : anyReceived
+                ? "partial"
+                : "sent",
+          })
+          .eq("id", po.id);
+      }
+    }
+
+    await supabase.from("stock_movements").delete().eq("reference_id", grnId);
+    await supabase.from("grn_items").delete().eq("grn_id", grnId);
+    await supabase.from("grns").delete().eq("id", grnId);
+
+    revalidatePath("/inventory/stock");
+    revalidatePath("/finance/payables");
+    revalidatePath("/inventory/receive");
+    revalidatePath("/inventory/purchase-orders");
+    revalidatePath("/daily-closing");
+    revalidatePath("/pos");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Void receipt failed",
     };
   }
 }

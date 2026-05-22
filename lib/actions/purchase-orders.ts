@@ -17,7 +17,12 @@ function apDb(supabase: SupabaseClient) {
   };
 }
 import { listStockLevels } from "@/lib/actions/stock";
-import { computeVat, roundMoney } from "@/lib/utils/calculations";
+import { roundMoney } from "@/lib/utils/calculations";
+import {
+  computeTaxAmount,
+  effectiveTaxRate,
+  getOrgVatConfig,
+} from "@/lib/vat/org-vat";
 import { isoDateToTimestamptz, resolveBusinessDate } from "@/lib/utils/iso-date";
 import {
   formatPoReference,
@@ -297,6 +302,8 @@ export async function createPurchaseOrder(
     const input = createPoInput.parse(raw);
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
+    const vatConfig = await getOrgVatConfig();
+    const taxRate = effectiveTaxRate(vatConfig, input.taxRate);
 
     const { data: outlet } = await supabase
       .from("outlets")
@@ -311,7 +318,7 @@ export async function createPurchaseOrder(
     const subtotal = roundMoney(
       input.lines.reduce((s, l) => s + l.orderedQty * l.unitCost, 0)
     );
-    const taxAmount = computeVat(subtotal, input.taxRate);
+    const taxAmount = computeTaxAmount(subtotal, vatConfig, taxRate);
     const totalAmount = roundMoney(subtotal + taxAmount);
     const referenceNo = await nextPoReference(
       supabase,
@@ -432,6 +439,8 @@ export async function receiveFromPurchaseOrder(
     const input = receivePoInput.parse(raw);
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
+    const vatConfig = await getOrgVatConfig();
+    const taxRate = effectiveTaxRate(vatConfig, input.taxRate);
 
     const po = await getPurchaseOrderById(input.poId);
     if (!po) return { ok: false, message: "Purchase order not found." };
@@ -468,7 +477,7 @@ export async function receiveFromPurchaseOrder(
     const inventoryValue = roundMoney(
       receiveLines.reduce((s, l) => s + l.quantity * l.unitCost, 0)
     );
-    const taxAmount = computeVat(inventoryValue, input.taxRate);
+    const taxAmount = computeTaxAmount(inventoryValue, vatConfig, taxRate);
     const totalAmount = roundMoney(inventoryValue + taxAmount);
     const receivedDate = resolveBusinessDate(input.businessDate);
     const movementAt = isoDateToTimestamptz(receivedDate);
@@ -679,10 +688,12 @@ export async function createReceivedPoFromGrn(params: {
   try {
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
+    const vatConfig = await getOrgVatConfig();
+    const taxRate = effectiveTaxRate(vatConfig, params.taxRate);
     const subtotal = roundMoney(
       params.lines.reduce((s, l) => s + l.quantity * l.unitCost, 0)
     );
-    const taxAmount = computeVat(subtotal, params.taxRate);
+    const taxAmount = computeTaxAmount(subtotal, vatConfig, taxRate);
     const totalAmount = roundMoney(subtotal + taxAmount);
     const isCredit = params.paymentMethod === "on_account";
     const referenceNo = await nextPoReference(
@@ -869,10 +880,11 @@ export async function suggestPurchaseOrderFromStock(
       message: "No low or out-of-stock items need replenishment.",
     };
   }
+  const vatConfig = await getOrgVatConfig();
   return createPurchaseOrder({
     outletId,
     supplierId: supplierId ?? undefined,
-    taxRate: 18,
+    taxRate: effectiveTaxRate(vatConfig),
     notes: "Auto-suggested from stock levels",
     lines,
   });

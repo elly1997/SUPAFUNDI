@@ -44,6 +44,7 @@ import {
 } from "@/lib/api/suppliers-fetch";
 import { isPoPaid } from "@/lib/procurement/po-payment";
 import { usePosProducts } from "@/hooks/usePosProducts";
+import { useTaxRate } from "@/hooks/useTaxRate";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
@@ -60,6 +61,7 @@ const selectFieldClass =
   "h-10 w-full min-w-0 rounded-lg bg-surface-1 font-sans text-sm";
 
 export function PurchaseOrdersPageClient() {
+  const taxRate = useTaxRate();
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const defaultOutlet = useAuthStore((s) => s.activeOutletId);
   const [open, setOpen] = useState(false);
@@ -502,7 +504,7 @@ export function PurchaseOrdersPageClient() {
                   outletId,
                   supplierId: supplierId || null,
                   businessDate,
-                  taxRate: 18,
+                  taxRate,
                   lines: lines.map((l) => ({
                     productId: l.productId,
                     orderedQty: l.orderedQty,

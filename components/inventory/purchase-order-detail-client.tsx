@@ -27,11 +27,13 @@ import { PoPayDialog } from "@/components/procurement/po-pay-dialog";
 import { PoStatusBadges } from "@/components/procurement/po-status-badges";
 import { isPoPaid } from "@/lib/procurement/po-payment";
 import { formatTzs } from "@/lib/utils/currency";
+import { useTaxRate } from "@/hooks/useTaxRate";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type Props = { poId: string };
 
 export function PurchaseOrderDetailClient({ poId }: Props) {
+  const taxRate = useTaxRate();
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const [receiveQty, setReceiveQty] = useState<Record<string, number>>({});
   const [paymentMethod, setPaymentMethod] = useState<
@@ -275,7 +277,7 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
                   poId,
                   lines: receiveLines,
                   paymentMethod,
-                  taxRate: 18,
+                  taxRate,
                   businessDate,
                 })
               }

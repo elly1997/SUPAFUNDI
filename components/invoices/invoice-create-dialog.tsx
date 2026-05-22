@@ -25,6 +25,7 @@ import type { SaleDocumentType } from "@/lib/constants/sale-documents";
 import { createDraftSaleDocument } from "@/lib/actions/invoices";
 import { fetchPosCustomers } from "@/lib/api/customers-fetch";
 import { useQuery } from "@tanstack/react-query";
+import { useTaxRate } from "@/hooks/useTaxRate";
 import { useAuthStore } from "@/stores/authStore";
 
 type Props = {
@@ -40,6 +41,7 @@ export function InvoiceCreateDialog({
   defaultType,
   onCreated,
 }: Props) {
+  const taxRate = useTaxRate();
   const outletId = useAuthStore((s) => s.activeOutletId);
   const [customerId, setCustomerId] = useState("");
   const [description, setDescription] = useState("");
@@ -88,7 +90,7 @@ export function InvoiceCreateDialog({
               outletId,
               customerId: customerId || null,
               saleType: defaultType,
-              taxRate: 18,
+              taxRate,
               cartDiscountAmount: 0,
               lines: [
                 {

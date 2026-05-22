@@ -133,10 +133,12 @@ export function PosReceiptPreviewDialog({
                 <span className="tabular-nums">-{formatTzs(discountAmount)}</span>
               </div>
             )}
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">VAT ({taxRate}%)</span>
-              <span className="tabular-nums">{formatTzs(taxAmount)}</span>
-            </div>
+            {taxRate > 0 && taxAmount > 0 ? (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">VAT ({taxRate}%)</span>
+                <span className="tabular-nums">{formatTzs(taxAmount)}</span>
+              </div>
+            ) : null}
             <div className="flex justify-between border-t pt-2 text-base font-semibold">
               <span>Total</span>
               <span className="font-money text-primary tabular-nums">

@@ -114,6 +114,7 @@ type PostJournalParams = {
     | "sale_return"
     | "payment"
     | "grn"
+    | "grn_void"
     | "expense"
     | "supplier_bill"
     | "supplier_payment"

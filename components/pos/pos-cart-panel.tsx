@@ -225,12 +225,14 @@ export function PosCartPanel({
             <span className="tabular-nums">-{formatTzs(discountAmount)}</span>
           </div>
         )}
-        <div className="flex justify-between text-sm">
-          <span className="text-muted-foreground">VAT ({taxRate}%)</span>
-          <span className="tabular-nums text-foreground">
-            {formatTzs(taxAmount)}
-          </span>
-        </div>
+        {taxRate > 0 && taxAmount > 0 ? (
+          <div className="flex justify-between text-sm">
+            <span className="text-muted-foreground">VAT ({taxRate}%)</span>
+            <span className="tabular-nums text-foreground">
+              {formatTzs(taxAmount)}
+            </span>
+          </div>
+        ) : null}
         <div className="flex items-baseline justify-between pt-1">
           <span className="text-sm text-muted-foreground">Total</span>
           <span className="font-money text-xl font-bold tabular-nums text-primary">

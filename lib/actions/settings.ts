@@ -31,6 +31,7 @@ export type OrganizationSettings = {
   currency: string;
   country: string;
   defaultVatRate: number;
+  vatEnabled: boolean;
   receiptFooter: string;
   requireCashSession: boolean;
 };
@@ -61,6 +62,7 @@ export async function getOrganizationSettings(): Promise<OrganizationSettings | 
     currency: org.currency,
     country: org.country,
     defaultVatRate: Number(map.get("default_vat_rate") ?? 18),
+    vatEnabled: map.get("vat_enabled") === "true",
     receiptFooter: map.get("receipt_footer") ?? "Thank you for your business.",
     requireCashSession: map.get("require_cash_session") === "true",
   };
@@ -75,6 +77,7 @@ const updateOrgSchema = z.object({
   currency: z.string().length(3).default("TZS"),
   country: z.string().length(2).default("TZ"),
   defaultVatRate: z.coerce.number().min(0).max(100).default(18),
+  vatEnabled: z.boolean().default(false),
   receiptFooter: z.string().max(500).optional(),
   requireCashSession: z.boolean().default(false),
 });
@@ -103,6 +106,7 @@ export async function updateOrganizationSettings(
 
     const upserts = [
       { key: "default_vat_rate", value: String(input.defaultVatRate) },
+      { key: "vat_enabled", value: input.vatEnabled ? "true" : "false" },
       {
         key: "receipt_footer",
         value: input.receiptFooter?.trim() || "Thank you for your business.",

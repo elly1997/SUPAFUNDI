@@ -14,9 +14,13 @@ import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
   computeLineTotal,
-  computeVat,
   roundMoney,
 } from "@/lib/utils/calculations";
+import {
+  computeTaxAmount,
+  effectiveTaxRate,
+  getOrgVatConfig,
+} from "@/lib/vat/org-vat";
 import {
   formatInvoiceNo,
   outletInvoicePrefix,
@@ -178,6 +182,8 @@ export async function completeSale(
     const input = completeSaleInput.parse(raw);
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
+    const vatConfig = await getOrgVatConfig();
+    const taxRate = effectiveTaxRate(vatConfig, input.taxRate);
 
     const { data: outlet } = await supabase
       .from("outlets")
@@ -239,7 +245,7 @@ export async function completeSale(
       Math.min(input.cartDiscountAmount, subtotal)
     );
     const taxableBase = roundMoney(subtotal - discountAmount);
-    const taxAmount = computeVat(taxableBase, input.taxRate);
+    const taxAmount = computeTaxAmount(taxableBase, vatConfig, taxRate);
     const totalAmount = roundMoney(taxableBase + taxAmount);
 
     let depositApplied = 0;
@@ -322,7 +328,7 @@ export async function completeSale(
         customer_id: input.customerId ?? null,
         subtotal,
         discount_amount: discountAmount,
-        tax_rate: input.taxRate,
+        tax_rate: taxRate,
         tax_amount: taxAmount,
         total_amount: totalAmount,
         amount_paid: roundMoney(Math.min(totalPaid, totalAmount)),
@@ -348,7 +354,7 @@ export async function completeSale(
       quantity: roundMoney(sellQtyToBaseQty(l.quantity, saleLineAsUnit(l))),
       unit_price: l.unitPrice,
       discount_pct: l.discountPct,
-      tax_rate: input.taxRate,
+      tax_rate: taxRate,
       total_price: lineTotals[i],
     }));
     const saleItemsFull = input.lines.map((l, i) => ({

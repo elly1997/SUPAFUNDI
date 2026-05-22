@@ -44,6 +44,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useCart } from "@/hooks/useCart";
+import { useTaxRate } from "@/hooks/useTaxRate";
 import { usePersistedCart } from "@/hooks/usePersistedCart";
 import {
   usePosProducts,
@@ -97,7 +98,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [cartDiscount, setCartDiscount] = useState(0);
-  const [taxRate] = useState(18);
+  const taxRate = useTaxRate();
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [cashflowSheetOpen, setCashflowSheetOpen] = useState(false);

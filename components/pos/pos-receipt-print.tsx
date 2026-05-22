@@ -98,7 +98,7 @@ ${
     : ""
 }
 ${
-  data.taxAmount != null
+  data.taxAmount != null && data.taxAmount > 0 && (data.taxRate ?? 0) > 0
     ? `<tr><td>VAT${data.taxRate != null ? ` (${data.taxRate}%)` : ""}</td><td class="right">${formatTzs(data.taxAmount)}</td></tr>`
     : ""
 }

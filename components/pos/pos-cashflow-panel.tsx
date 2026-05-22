@@ -23,6 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { formatTzs } from "@/lib/utils/currency";
+import { useTaxRate } from "@/hooks/useTaxRate";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 import type { PosProductRow } from "@/hooks/usePosProducts";
 
@@ -42,6 +43,7 @@ type Props = {
 };
 
 export function PosCashflowPanel({ outletId, products, className }: Props) {
+  const taxRate = useTaxRate();
   const [tab, setTab] = useState<Tab>("expense");
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const [category, setCategory] = useState<string>("misc");
@@ -334,7 +336,7 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
                   outletId,
                   supplierId: supplierId || null,
                   paymentMethod: paidCash ? "cash" : "on_account",
-                  taxRate: 18,
+                  taxRate,
                   businessDate,
                   lines: [{ productId, quantity: qty, unitCost: cost }],
                   notes: description || undefined,

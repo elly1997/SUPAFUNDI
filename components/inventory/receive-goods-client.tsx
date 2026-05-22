@@ -34,6 +34,7 @@ import {
   invalidateSupplierQueries,
 } from "@/lib/api/suppliers-fetch";
 import { usePosProducts } from "@/hooks/usePosProducts";
+import { useTaxRate } from "@/hooks/useTaxRate";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
@@ -55,6 +56,7 @@ type GrnSupplierDraft = {
 
 export function ReceiveGoodsClient() {
   const queryClient = useQueryClient();
+  const taxRate = useTaxRate();
   const activeOutletId = useAuthStore((s) => s.activeOutletId);
   const sessionOutletId = useAuthStore((s) => s.session?.outletId);
   const businessDate = useBusinessDateStore((s) => s.businessDate);
@@ -556,7 +558,7 @@ export function ReceiveGoodsClient() {
                   outletId,
                   supplierId: supplierId || null,
                   paymentMethod,
-                  taxRate: 18,
+                  taxRate,
                   businessDate,
                   lines: lines.map((l) => ({
                     productId: l.productId,

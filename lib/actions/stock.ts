@@ -178,6 +178,8 @@ export type ItemStatementLine = {
   movementType: string;
   label: string;
   reference: string | null;
+  referenceId: string | null;
+  referenceType: string | null;
   quantityDelta: number;
   unitCost: number | null;
 };
@@ -284,6 +286,8 @@ export async function getProductItemStatement(
       movementType: m.movement_type,
       label: typeLabels[m.movement_type] ?? m.movement_type,
       reference,
+      referenceId: m.reference_id ?? null,
+      referenceType: m.reference_type ?? null,
       quantityDelta: isOut ? -qty : qty,
       unitCost: m.unit_cost != null ? Number(m.unit_cost) : null,
     };

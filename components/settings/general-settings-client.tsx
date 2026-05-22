@@ -13,10 +13,12 @@ import {
   updateOrganizationSettings,
   type OrganizationSettings,
 } from "@/lib/actions/settings";
+import { useOrgSettingsStore } from "@/stores/orgSettingsStore";
 
 type Props = { initial: OrganizationSettings };
 
 export function GeneralSettingsClient({ initial }: Props) {
+  const setOrgSettings = useOrgSettingsStore((s) => s.setOrgSettings);
   const [form, setForm] = useState({
     name: initial.name,
     address: initial.address ?? "",
@@ -25,6 +27,7 @@ export function GeneralSettingsClient({ initial }: Props) {
     taxId: initial.tax_id ?? "",
     currency: initial.currency,
     country: initial.country,
+    vatEnabled: initial.vatEnabled,
     defaultVatRate: initial.defaultVatRate,
     receiptFooter: initial.receiptFooter,
     requireCashSession: initial.requireCashSession,
@@ -33,8 +36,13 @@ export function GeneralSettingsClient({ initial }: Props) {
   const save = useMutation({
     mutationFn: () => updateOrganizationSettings(form),
     onSuccess: (r) => {
-      if (r.ok) toast.success("Settings saved");
-      else toast.error(r.message);
+      if (r.ok) {
+        setOrgSettings({
+          vatEnabled: form.vatEnabled,
+          defaultVatRate: form.defaultVatRate,
+        });
+        toast.success("Settings saved");
+      } else toast.error(r.message);
     },
   });
 
@@ -82,21 +90,39 @@ export function GeneralSettingsClient({ initial }: Props) {
               onChange={(e) => setForm((f) => ({ ...f, taxId: e.target.value }))}
             />
           </div>
-          <div className="space-y-2">
-            <Label>Default VAT %</Label>
-            <Input
-              type="number"
-              min={0}
-              max={100}
-              value={form.defaultVatRate}
-              onChange={(e) =>
-                setForm((f) => ({
-                  ...f,
-                  defaultVatRate: Number(e.target.value) || 0,
-                }))
-              }
-            />
+          <div className="space-y-2 sm:col-span-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.vatEnabled}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, vatEnabled: e.target.checked }))
+                }
+              />
+              Enable VAT on sales, purchases, and documents
+            </label>
+            <p className="form-hint text-xs text-muted-foreground">
+              Turn off if you are not VAT-registered. Purchase costs are treated
+              as VAT-inclusive; no extra VAT is added on receive.
+            </p>
           </div>
+          {form.vatEnabled ? (
+            <div className="space-y-2">
+              <Label>Default VAT %</Label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={form.defaultVatRate}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    defaultVatRate: Number(e.target.value) || 0,
+                  }))
+                }
+              />
+            </div>
+          ) : null}
           <div className="space-y-2">
             <Label>Currency</Label>
             <Input

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { SessionHydrator } from "@/components/auth/session-hydrator";
+import { OrgSettingsHydrator } from "@/components/settings/org-settings-hydrator";
 import { ConfigRequired } from "@/components/shared/config-required";
 import { DashboardShell } from "@/components/layout/dashboard-shell";
 import { getSessionProfile } from "@/lib/auth/session";
@@ -24,7 +25,9 @@ export default async function DashboardLayout({
 
   return (
     <SessionHydrator profile={profile} outlets={outlets}>
-      <DashboardShell outlets={outlets}>{children}</DashboardShell>
+      <OrgSettingsHydrator>
+        <DashboardShell outlets={outlets}>{children}</DashboardShell>
+      </OrgSettingsHydrator>
     </SessionHydrator>
   );
 }

@@ -96,6 +96,7 @@ export async function runCompleteOrganizationSetup(
     const { error: settingsError } = await admin.from("settings").upsert(
       [
         { organization_id: org.id, key: "default_vat_rate", value: "18" },
+        { organization_id: org.id, key: "vat_enabled", value: "false" },
         {
           organization_id: org.id,
           key: "receipt_footer",
