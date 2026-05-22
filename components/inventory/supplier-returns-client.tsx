@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
-import { listSuppliersForOrg } from "@/lib/actions/grn";
+import { fetchSupplierOptions } from "@/lib/api/suppliers-fetch";
 import { createSupplierReturn } from "@/lib/actions/supplier-returns";
 import { usePosProducts } from "@/hooks/usePosProducts";
 import { formatTzs } from "@/lib/utils/currency";
@@ -39,7 +39,7 @@ export function SupplierReturnsClient() {
   });
   const { data: suppliers = [] } = useQuery({
     queryKey: ["suppliers"],
-    queryFn: listSuppliersForOrg,
+    queryFn: fetchSupplierOptions,
   });
   const { data: products = [] } = usePosProducts(outletId || null);
 

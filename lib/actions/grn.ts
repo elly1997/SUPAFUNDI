@@ -46,19 +46,15 @@ function resolvePurchasePayment(
 
 export type ReceiveGoodsInput = z.infer<typeof receiveGoodsInput>;
 
+/** @deprecated Prefer fetchSupplierOptions() from client; kept for server callers. */
 export async function listSuppliersForOrg(): Promise<
   { id: string; name: string }[]
 > {
-  const ctx = await requireOrgContext();
-  const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
-    .from("suppliers")
-    .select("id, name")
-    .eq("organization_id", ctx.organizationId)
-    .eq("is_active", true)
-    .order("name");
-  if (error) throw new Error(error.message);
-  return data ?? [];
+  const { listSuppliers } = await import("@/lib/actions/suppliers");
+  const rows = await listSuppliers();
+  return rows
+    .filter((s) => s.is_active !== false)
+    .map((s) => ({ id: s.id, name: s.name }));
 }
 
 export async function receiveGoods(

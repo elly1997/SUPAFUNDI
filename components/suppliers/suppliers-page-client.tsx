@@ -27,7 +27,11 @@ import {
 } from "@/components/ui/table";
 import { PartyStatementDialog } from "@/components/finance/party-statement-dialog";
 import { RecordPartyPaymentDialog } from "@/components/finance/record-party-payment-dialog";
-import { createSupplierRecord, listSuppliers } from "@/lib/actions/suppliers";
+import {
+  createSupplierApi,
+  fetchSuppliers,
+  invalidateSupplierQueries,
+} from "@/lib/api/suppliers-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 
@@ -48,18 +52,16 @@ export function SuppliersPageClient() {
   } | null>(null);
   const queryClient = useQueryClient();
 
-  const { data: suppliers = [], isLoading } = useQuery({
+  const { data: suppliers = [], isLoading, isError, error } = useQuery({
     queryKey: ["suppliers"],
-    queryFn: listSuppliers,
+    queryFn: fetchSuppliers,
   });
 
   const createMut = useMutation({
     mutationFn: () =>
-      createSupplierRecord({
+      createSupplierApi({
         name: name.trim(),
         phone: phone || undefined,
-        creditLimit: 0,
-        creditDays: 30,
         openingBalance: Number(openingBalance) || 0,
       }),
     onSuccess: (r) => {
@@ -69,7 +71,7 @@ export function SuppliersPageClient() {
         setName("");
         setPhone("");
         setOpeningBalance("");
-        queryClient.invalidateQueries({ queryKey: ["suppliers"] });
+        invalidateSupplierQueries(queryClient);
         router.push(`/suppliers/${r.id}`);
       } else toast.error(r.message);
     },
@@ -110,7 +112,12 @@ export function SuppliersPageClient() {
           </Button>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isError ? (
+            <p className="py-8 text-center text-sm text-destructive">
+              Could not load suppliers:{" "}
+              {error instanceof Error ? error.message : "Unknown error"}
+            </p>
+          ) : isLoading ? (
             <div className="flex justify-center py-12">
               <Loader2 className="size-8 animate-spin" />
             </div>

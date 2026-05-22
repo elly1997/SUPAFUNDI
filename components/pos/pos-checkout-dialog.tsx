@@ -24,7 +24,7 @@ import {
   PosPaymentAccountPicker,
 } from "@/components/pos/pos-payment-account-picker";
 import { PosPaymentChips, type PaymentMethod } from "@/components/pos/pos-payment-chips";
-import { listCustomersForPos, type PosCustomer } from "@/lib/actions/sales";
+import { fetchPosCustomers, type PosCustomer } from "@/lib/api/customers-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 
@@ -75,7 +75,7 @@ export function PosCheckoutDialog({
 }: Props) {
   const { data: customers = [] } = useQuery({
     queryKey: ["pos-customers"],
-    queryFn: listCustomersForPos,
+    queryFn: fetchPosCustomers,
     enabled: open,
   });
 

@@ -88,12 +88,23 @@ async function payablesBySupplier(
   const map = new Map<string, number>();
   if (supplierIds.length === 0) return map;
 
-  const { data: bills } = await apDb(supabase)
+  const { data: bills, error: billsError } = await apDb(supabase)
     .from("supplier_bills")
     .select("supplier_id, total_amount, amount_paid, status")
     .eq("organization_id", organizationId)
     .in("supplier_id", supplierIds)
     .in("status", ["open", "partial", "draft"]);
+
+  if (billsError) {
+    // AP tables may be missing on older DBs — still list suppliers without balances.
+    if (
+      billsError.message.includes("supplier_bills") ||
+      billsError.code === "42P01"
+    ) {
+      return map;
+    }
+    throw new Error(billsError.message);
+  }
 
   const billRows = (bills ?? []) as SupplierBillRow[];
 

@@ -872,21 +872,11 @@ export async function suggestPurchaseOrderFromStock(
 export async function createSupplier(
   name: string
 ): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
-  const ctx = await requireOrgContext();
-  const supabase = await createServerSupabaseClient();
-  const trimmed = name.trim();
-  if (!trimmed) return { ok: false, message: "Name is required." };
-  const { data, error } = await supabase
-    .from("suppliers")
-    .insert({ organization_id: ctx.organizationId, name: trimmed })
-    .select("id")
-    .single();
-  if (error || !data) {
-    return { ok: false, message: error?.message ?? "Create failed" };
-  }
-  revalidatePath("/inventory/purchase-orders");
-  revalidatePath("/inventory/receive");
-  revalidatePath("/purchase-orders");
-  revalidatePath("/suppliers");
-  return { ok: true, id: data.id };
+  const { createSupplierRecord } = await import("@/lib/actions/suppliers");
+  return createSupplierRecord({
+    name: name.trim(),
+    creditLimit: 0,
+    creditDays: 30,
+    openingBalance: 0,
+  });
 }

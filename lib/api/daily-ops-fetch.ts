@@ -214,18 +214,6 @@ export async function payPurchaseOrderApi(
   return res.json();
 }
 
-export async function createSupplierApi(
-  name: string
-): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
-  const res = await fetch("/api/inventory/suppliers/create", {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  });
-  return res.json();
-}
-
 export async function paySupplierBillApi(
   payload: Parameters<
     typeof import("@/lib/actions/suppliers").paySupplierBill

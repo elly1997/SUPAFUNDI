@@ -33,11 +33,15 @@ import {
 } from "@/components/ui/table";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
-import { listSuppliersForOrg } from "@/lib/actions/grn";
-import { createSupplier, listPurchaseOrders } from "@/lib/actions/purchase-orders";
+import { listPurchaseOrders } from "@/lib/actions/purchase-orders";
 import { PoPayDialog } from "@/components/procurement/po-pay-dialog";
 import { PoStatusBadges } from "@/components/procurement/po-status-badges";
 import { createPurchaseOrderApi } from "@/lib/api/daily-ops-fetch";
+import {
+  createSupplierApi,
+  fetchSupplierOptions,
+  invalidateSupplierQueries,
+} from "@/lib/api/suppliers-fetch";
 import { isPoPaid } from "@/lib/procurement/po-payment";
 import { usePosProducts } from "@/hooks/usePosProducts";
 import { cn } from "@/lib/utils";
@@ -82,7 +86,7 @@ export function PurchaseOrdersPageClient() {
   });
   const { data: suppliers = [], refetch: refetchSuppliers } = useQuery({
     queryKey: ["suppliers"],
-    queryFn: listSuppliersForOrg,
+    queryFn: fetchSupplierOptions,
   });
   const { data: products = [] } = usePosProducts(outletId || null);
 
@@ -154,15 +158,18 @@ export function PurchaseOrdersPageClient() {
   };
 
   const addSupplierMut = useMutation({
-    mutationFn: createSupplier,
+    mutationFn: (name: string) => createSupplierApi({ name }),
     onSuccess: async (r) => {
       if (r.ok) {
         toast.success("Supplier added");
         setSupplierId(r.id);
         setNewSupplier("");
         await refetchSuppliers();
+        invalidateSupplierQueries(queryClient);
       } else toast.error(r.message);
     },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Could not add supplier"),
   });
 
   const linesTotal = lines.reduce(

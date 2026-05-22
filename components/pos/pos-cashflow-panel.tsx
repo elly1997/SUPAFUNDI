@@ -11,8 +11,12 @@ import { Label } from "@/components/ui/label";
 import { PosExpenseCategorySelect } from "@/components/pos/pos-expense-category-select";
 import { PosRecordDate } from "@/components/pos/pos-record-date";
 import { listExpenses } from "@/lib/actions/expenses";
-import { listSuppliersForOrg } from "@/lib/actions/grn";
 import { receiveGoodsApi, recordExpenseApi } from "@/lib/api/daily-ops-fetch";
+import {
+  createSupplierApi,
+  fetchSupplierOptions,
+  invalidateSupplierQueries,
+} from "@/lib/api/suppliers-fetch";
 import { cn } from "@/lib/utils";
 import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { formatTzs } from "@/lib/utils/currency";
@@ -45,6 +49,8 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
   const [stockQty, setStockQty] = useState("1");
   const [unitCost, setUnitCost] = useState("");
   const [paidCash, setPaidCash] = useState(true);
+  const [newSupplier, setNewSupplier] = useState("");
+  const [stickySupplierName, setStickySupplierName] = useState("");
   const queryClient = useQueryClient();
 
   const { data: expenses = [], isLoading: expensesLoading } = useQuery({
@@ -57,10 +63,32 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
       }),
   });
 
-  const { data: suppliers = [] } = useQuery({
+  const {
+    data: suppliers = [],
+    refetch: refetchSuppliers,
+    isError: suppliersError,
+    error: suppliersLoadError,
+  } = useQuery({
     queryKey: ["pos-suppliers"],
-    queryFn: listSuppliersForOrg,
-    enabled: tab === "stock",
+    queryFn: fetchSupplierOptions,
+    staleTime: 30_000,
+  });
+
+  const addSupplierMut = useMutation({
+    mutationFn: (name: string) => createSupplierApi({ name }),
+    onSuccess: (r) => {
+      if (r.ok) {
+        const name = newSupplier.trim();
+        setSupplierId(r.id);
+        setStickySupplierName(name);
+        setNewSupplier("");
+        toast.success("Supplier added");
+        void refetchSuppliers();
+        invalidateSupplierQueries(queryClient);
+      } else toast.error(r.message);
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Could not add supplier"),
   });
 
   const dayExpenses = expenses.filter((e) => e.expense_date === businessDate);
@@ -310,13 +338,35 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
                 });
               }}
             >
+              {stickySupplierName || supplierId ? (
+                <p className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-2 text-xs">
+                  Supplier:{" "}
+                  <strong>
+                    {stickySupplierName ||
+                      suppliers.find((s) => s.id === supplierId)?.name ||
+                      "Selected"}
+                  </strong>
+                </p>
+              ) : null}
+              {suppliersError ? (
+                <p className="text-xs text-destructive">
+                  {suppliersLoadError instanceof Error
+                    ? suppliersLoadError.message
+                    : "Could not load suppliers"}
+                </p>
+              ) : null}
               <div className="space-y-1">
                 <Label className="text-xs">Supplier</Label>
                 <select
                   aria-label="Supplier"
                   className="h-9 w-full rounded-lg border border-input bg-surface-1 px-2.5 text-sm text-foreground"
                   value={supplierId || ""}
-                  onChange={(e) => setSupplierId(e.target.value)}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setSupplierId(id);
+                    const s = suppliers.find((x) => x.id === id);
+                    setStickySupplierName(s?.name ?? "");
+                  }}
                 >
                   <option value="">No supplier</option>
                   {suppliers.map((s) => (
@@ -325,6 +375,27 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
                     </option>
                   ))}
                 </select>
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  className="h-9 flex-1 rounded-lg bg-surface-1 text-sm"
+                  placeholder="New supplier name"
+                  value={newSupplier}
+                  onChange={(e) => setNewSupplier(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 shrink-0 px-3 text-xs"
+                  disabled={!newSupplier.trim() || addSupplierMut.isPending}
+                  onClick={() => addSupplierMut.mutate(newSupplier.trim())}
+                >
+                  {addSupplierMut.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    "Add"
+                  )}
+                </Button>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Product</Label>

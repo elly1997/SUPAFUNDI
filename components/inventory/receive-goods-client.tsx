@@ -27,8 +27,12 @@ import {
 } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
-import { createSupplierApi, receiveGoodsApi } from "@/lib/api/daily-ops-fetch";
-import { listSuppliersForOrg } from "@/lib/actions/grn";
+import { receiveGoodsApi } from "@/lib/api/daily-ops-fetch";
+import {
+  createSupplierApi,
+  fetchSupplierOptions,
+  invalidateSupplierQueries,
+} from "@/lib/api/suppliers-fetch";
 import { usePosProducts } from "@/hooks/usePosProducts";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { cn } from "@/lib/utils";
@@ -72,9 +76,14 @@ export function ReceiveGoodsClient() {
     queryFn: fetchOrgOutlets,
   });
 
-  const { data: suppliers = [], refetch: refetchSuppliers } = useQuery({
+  const {
+    data: suppliers = [],
+    refetch: refetchSuppliers,
+    isError: suppliersError,
+    error: suppliersLoadError,
+  } = useQuery({
     queryKey: ["suppliers"],
-    queryFn: listSuppliersForOrg,
+    queryFn: fetchSupplierOptions,
   });
 
   const { data: products = [] } = usePosProducts(outletId || null);
@@ -162,7 +171,7 @@ export function ReceiveGoodsClient() {
   );
 
   const addSupplierMut = useMutation({
-    mutationFn: (name: string) => createSupplierApi(name),
+    mutationFn: (name: string) => createSupplierApi({ name }),
     onSuccess: async (r) => {
       if (r.ok) {
         const name = newSupplier.trim();
@@ -170,7 +179,7 @@ export function ReceiveGoodsClient() {
         setSupplier(r.id, name);
         setNewSupplier("");
         await refetchSuppliers();
-        void queryClient.invalidateQueries({ queryKey: ["suppliers-list"] });
+        invalidateSupplierQueries(queryClient);
       } else toast.error(r.message);
     },
     onError: (e) =>
@@ -359,6 +368,14 @@ export function ReceiveGoodsClient() {
                   Change supplier
                 </Button>
               </div>
+            ) : null}
+            {suppliersError ? (
+              <p className="text-sm text-destructive">
+                Could not load suppliers:{" "}
+                {suppliersLoadError instanceof Error
+                  ? suppliersLoadError.message
+                  : "Refresh the page"}
+              </p>
             ) : null}
             <div className="space-y-2">
               <Label htmlFor="grn-supplier">Supplier (optional)</Label>

@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/select";
 import type { SaleDocumentType } from "@/lib/constants/sale-documents";
 import { createDraftSaleDocument } from "@/lib/actions/invoices";
-import { listCustomersForPos } from "@/lib/actions/sales";
+import { fetchPosCustomers } from "@/lib/api/customers-fetch";
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@/stores/authStore";
 
@@ -48,7 +48,7 @@ export function InvoiceCreateDialog({
 
   const { data: customers = [] } = useQuery({
     queryKey: ["pos-customers"],
-    queryFn: listCustomersForPos,
+    queryFn: fetchPosCustomers,
     enabled: open,
   });
 

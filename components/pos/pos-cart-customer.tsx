@@ -21,8 +21,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { createCustomer } from "@/lib/actions/customers";
-import { listCustomersForPos, type PosCustomer } from "@/lib/actions/sales";
+import {
+  createCustomerApi,
+  fetchPosCustomers,
+  invalidateCustomerQueries,
+  type PosCustomer,
+} from "@/lib/api/customers-fetch";
 import { formatTzs } from "@/lib/utils/currency";
 
 type Props = {
@@ -43,12 +47,12 @@ export function PosCartCustomer({
 
   const { data: customers = [], isLoading } = useQuery({
     queryKey: ["pos-customers"],
-    queryFn: listCustomersForPos,
+    queryFn: fetchPosCustomers,
   });
 
   const createMut = useMutation({
     mutationFn: () =>
-      createCustomer({
+      createCustomerApi({
         name: newName.trim(),
         phone: newPhone.trim() || undefined,
         customerType: "retail",
@@ -69,8 +73,7 @@ export function PosCartCustomer({
       setAddOpen(false);
       setNewName("");
       setNewPhone("");
-      void queryClient.invalidateQueries({ queryKey: ["pos-customers"] });
-      void queryClient.invalidateQueries({ queryKey: ["customers"] });
+      invalidateCustomerQueries(queryClient);
       onCustomerIdChange(res.id);
       onCustomerSelect?.({
         id: res.id,

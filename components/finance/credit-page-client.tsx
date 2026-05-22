@@ -16,7 +16,10 @@ import {
 } from "@/components/ui/table";
 import { PartyStatementDialog } from "@/components/finance/party-statement-dialog";
 import { RecordPartyPaymentDialog } from "@/components/finance/record-party-payment-dialog";
-import { listCustomersWithBalance } from "@/lib/actions/credit";
+import {
+  fetchCustomersWithBalance,
+  invalidateCustomerQueries,
+} from "@/lib/api/customers-fetch";
 import { formatTzs } from "@/lib/utils/currency";
 
 export function CreditPageClient() {
@@ -26,7 +29,7 @@ export function CreditPageClient() {
 
   const { data: balances = [], isLoading } = useQuery({
     queryKey: ["credit-balances"],
-    queryFn: listCustomersWithBalance,
+    queryFn: fetchCustomersWithBalance,
   });
 
   const payCustomer = balances.find((c) => c.id === payCustomerId);
@@ -105,10 +108,7 @@ export function CreditPageClient() {
           partyId={payCustomer.id}
           partyName={payCustomer.name}
           maxAmount={payCustomer.outstanding_balance}
-          onSuccess={() => {
-            queryClient.invalidateQueries({ queryKey: ["credit-balances"] });
-            queryClient.invalidateQueries({ queryKey: ["customers"] });
-          }}
+          onSuccess={() => invalidateCustomerQueries(queryClient)}
         />
       )}
       {stmtCustomer && (

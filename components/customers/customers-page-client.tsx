@@ -28,7 +28,11 @@ import {
 } from "@/components/ui/table";
 import { PartyStatementDialog } from "@/components/finance/party-statement-dialog";
 import { RecordPartyPaymentDialog } from "@/components/finance/record-party-payment-dialog";
-import { createCustomer, listCustomers } from "@/lib/actions/customers";
+import {
+  createCustomerApi,
+  fetchCustomers,
+  invalidateCustomerQueries,
+} from "@/lib/api/customers-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 
@@ -63,21 +67,29 @@ export function CustomersPageClient() {
     },
   });
 
-  const { data: customers = [], isLoading } = useQuery({
+  const { data: customers = [], isLoading, isError, error } = useQuery({
     queryKey: ["customers"],
-    queryFn: listCustomers,
+    queryFn: fetchCustomers,
     staleTime: 0,
     refetchOnMount: "always",
   });
 
   const createMut = useMutation({
-    mutationFn: createCustomer,
+    mutationFn: (values: FormValues) =>
+      createCustomerApi({
+        name: values.name.trim(),
+        phone: values.phone || undefined,
+        creditLimit: values.creditLimit,
+        creditDays: values.creditDays,
+        openingCredit: values.openingCredit,
+        openingDeposit: values.openingDeposit,
+      }),
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Customer created");
         setOpen(false);
         reset();
-        queryClient.invalidateQueries({ queryKey: ["customers"] });
+        invalidateCustomerQueries(queryClient);
         router.push(`/customers/${r.id}`);
       } else toast.error(r.message);
     },
@@ -97,7 +109,12 @@ export function CustomersPageClient() {
           </Button>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isError ? (
+            <p className="py-8 text-center text-sm text-destructive">
+              Could not load customers:{" "}
+              {error instanceof Error ? error.message : "Unknown error"}
+            </p>
+          ) : isLoading ? (
             <div className="flex justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
@@ -210,16 +227,7 @@ export function CustomersPageClient() {
                 toast.error("Customer name is required");
                 return;
               }
-              createMut.mutate({
-                name: v.name.trim(),
-                phone: v.phone,
-                creditLimit: Number(v.creditLimit),
-                creditDays: Number(v.creditDays),
-                openingCredit: Number(v.openingCredit) || 0,
-                openingDeposit: Number(v.openingDeposit) || 0,
-                customerType: "retail",
-                priceType: "retail",
-              });
+              createMut.mutate(v);
             })}
             className="space-y-4"
           >
@@ -283,10 +291,7 @@ export function CustomersPageClient() {
           partyId={payCustomer.id}
           partyName={payCustomer.name}
           maxAmount={payCustomer.balance}
-          onSuccess={() => {
-            queryClient.invalidateQueries({ queryKey: ["customers"] });
-            queryClient.invalidateQueries({ queryKey: ["credit-balances"] });
-          }}
+          onSuccess={() => invalidateCustomerQueries(queryClient)}
         />
       )}
       {stmtCustomer && (

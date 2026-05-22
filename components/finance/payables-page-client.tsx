@@ -32,7 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { listOpenPayables } from "@/lib/actions/payables";
-import { listSuppliers } from "@/lib/actions/suppliers";
+import { fetchSuppliers, invalidateSupplierQueries } from "@/lib/api/suppliers-fetch";
 import {
   createManualBillApi,
   paySupplierBillApi,
@@ -57,7 +57,7 @@ export function PayablesPageClient() {
 
   const { data: suppliers = [] } = useQuery({
     queryKey: ["suppliers-list"],
-    queryFn: listSuppliers,
+    queryFn: fetchSuppliers,
   });
 
   const totalDue = bills.reduce((s, b) => s + b.balance, 0);
@@ -92,7 +92,7 @@ export function PayablesPageClient() {
         toast.success("Payment recorded");
         setPayOpen(false);
         void queryClient.invalidateQueries({ queryKey: ["payables-open"] });
-        void queryClient.invalidateQueries({ queryKey: ["suppliers-list"] });
+        invalidateSupplierQueries(queryClient);
         void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
       } else toast.error(r.message);
     },

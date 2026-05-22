@@ -21,6 +21,7 @@ import {
   formatInvoiceNo,
   outletInvoicePrefix,
 } from "@/lib/utils/invoice-number";
+import type { PosCustomer } from "@/lib/api/customers-fetch";
 import {
   maxSellQtyInUnit,
   sellQtyToBaseQty,
@@ -735,14 +736,7 @@ export async function getSaleById(saleId: string): Promise<SaleDetail | null> {
   };
 }
 
-export type PosCustomer = {
-  id: string;
-  name: string;
-  phone: string | null;
-  outstanding_balance: number;
-  credit_limit: number;
-  price_type: string;
-};
+export type { PosCustomer };
 
 async function loadSaleJournalLines(
   supabase: Supabase,
@@ -921,6 +915,7 @@ export async function voidSale(
   }
 }
 
+/** @deprecated Prefer fetchPosCustomers() from client; kept for API route. */
 export async function listCustomersForPos(): Promise<PosCustomer[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
