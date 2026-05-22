@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
+import { SaleVoidActions } from "@/components/sales/sale-void-actions";
 import { buttonVariants } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { getSaleById } from "@/lib/actions/sales";
@@ -29,13 +30,20 @@ export default async function InvoiceDetailPage({ params }: Props) {
         title={sale.invoice_no}
         description={`${saleTypeLabel(sale.sale_type)} · ${sale.status}`}
         actions={
-          <Link
-            href="/invoices"
-            className={cn(buttonVariants({ variant: "outline" }))}
-          >
-            <ArrowLeft className="mr-2 size-4" />
-            Back
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <SaleVoidActions
+              saleId={sale.id}
+              invoiceNo={sale.invoice_no}
+              status={sale.status}
+            />
+            <Link
+              href="/invoices"
+              className={cn(buttonVariants({ variant: "outline" }))}
+            >
+              <ArrowLeft className="mr-2 size-4" />
+              Back
+            </Link>
+          </div>
         }
       />
 

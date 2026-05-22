@@ -6,7 +6,8 @@ export default function SalesListPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Sales</h1>
         <p className="text-sm text-muted-foreground">
-          Invoices and payment history for your organization.
+          Find sales by receipt or invoice number. Managers can void completed
+          sales from the list or sale detail.
         </p>
       </div>
       <SalesListClient />

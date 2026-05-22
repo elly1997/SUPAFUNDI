@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import { PartyStatementDialog } from "@/components/finance/party-statement-dialog";
 import { RecordPartyPaymentDialog } from "@/components/finance/record-party-payment-dialog";
+import { SupplierPurchaseHistory } from "@/components/suppliers/supplier-purchase-history";
 import {
   fetchSupplierDetail,
   invalidateSupplierQueries,
@@ -140,6 +141,8 @@ export function SupplierDetailClient({ supplierId }: Props) {
           )}
         </CardContent>
       </Card>
+
+      <SupplierPurchaseHistory supplierId={supplierId} />
 
       <Card>
         <CardHeader>

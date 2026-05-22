@@ -35,6 +35,8 @@ export function GrnVoidButton({ grnId, referenceLabel, onVoided }: Props) {
       toast.success(`Receipt ${referenceLabel} voided`);
       void queryClient.invalidateQueries({ queryKey: ["item-statement"] });
       void queryClient.invalidateQueries({ queryKey: ["stock-catalog"] });
+      void queryClient.invalidateQueries({ queryKey: ["supplier-receipts"] });
+      void queryClient.invalidateQueries({ queryKey: ["supplier"] });
       onVoided?.();
     },
     onError: (e) =>

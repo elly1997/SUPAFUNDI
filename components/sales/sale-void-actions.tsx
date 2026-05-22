@@ -1,26 +1,42 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Loader2, Ban } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { canManageSettings } from "@/lib/auth/roles";
 import { voidSale } from "@/lib/actions/sales";
+import { useAuthStore } from "@/stores/authStore";
+import { cn } from "@/lib/utils";
 
 type Props = {
   saleId: string;
   invoiceNo: string;
   status: string;
+  /** Compact row action for sales list tables. */
+  compact?: boolean;
+  onVoided?: () => void;
 };
 
-export function SaleVoidActions({ saleId, invoiceNo, status }: Props) {
+export function SaleVoidActions({
+  saleId,
+  invoiceNo,
+  status,
+  compact = false,
+  onVoided,
+}: Props) {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const role = useAuthStore((s) => s.session?.role ?? null);
 
   const voidMut = useMutation({
     mutationFn: () => voidSale(saleId),
     onSuccess: (r) => {
       if (r.ok) {
         toast.success(`Sale ${invoiceNo} voided`);
+        void queryClient.invalidateQueries({ queryKey: ["sales-list"] });
+        onVoided?.();
         router.refresh();
       } else toast.error(r.message);
     },
@@ -28,13 +44,14 @@ export function SaleVoidActions({ saleId, invoiceNo, status }: Props) {
       toast.error(e instanceof Error ? e.message : "Void failed"),
   });
 
-  if (status !== "completed") return null;
+  if (status !== "completed" || !canManageSettings(role)) return null;
 
   return (
     <Button
       type="button"
       variant="destructive"
-      className="rounded-xl"
+      size={compact ? "sm" : "default"}
+      className={cn(compact ? "h-7 rounded-md px-2 text-xs" : "rounded-xl")}
       disabled={voidMut.isPending}
       onClick={() => {
         if (
@@ -48,11 +65,13 @@ export function SaleVoidActions({ saleId, invoiceNo, status }: Props) {
       }}
     >
       {voidMut.isPending ? (
-        <Loader2 className="mr-2 size-4 animate-spin" />
+        <Loader2
+          className={cn("animate-spin", compact ? "mr-1 size-3" : "mr-2 size-4")}
+        />
       ) : (
-        <Ban className="mr-2 size-4" />
+        <Ban className={cn(compact ? "mr-1 size-3" : "mr-2 size-4")} />
       )}
-      Void sale
+      {compact ? "Void" : "Void sale"}
     </Button>
   );
 }

@@ -1,11 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { format, subDays } from "date-fns";
-import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { Loader2, Search } from "lucide-react";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
+import { SaleVoidActions } from "@/components/sales/sale-void-actions";
 import { buttonVariants } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Card,
   CardContent,
@@ -29,16 +33,51 @@ import { formatTzs, formatDateTimeEAT } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 export function SalesListClient() {
+  const router = useRouter();
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const [fromDate, setFromDate] = useState(
     format(subDays(new Date(businessDate + "T12:00:00"), 7), "yyyy-MM-dd")
   );
   const [toDate, setToDate] = useState(businessDate);
+  const [invoiceSearch, setInvoiceSearch] = useState("");
+  const [lookupPending, setLookupPending] = useState(false);
 
   const { data: sales = [], isLoading } = useQuery({
     queryKey: ["sales-list", fromDate, toDate],
     queryFn: () => listRecentSales(200, { fromDate, toDate }),
   });
+
+  const filteredSales = useMemo(() => {
+    const q = invoiceSearch.trim().toLowerCase();
+    if (!q) return sales;
+    return sales.filter((s) => s.invoice_no.toLowerCase().includes(q));
+  }, [sales, invoiceSearch]);
+
+  async function goToInvoice() {
+    const q = invoiceSearch.trim();
+    if (!q) return;
+    setLookupPending(true);
+    try {
+      const res = await fetch(
+        `/api/sales/lookup?invoice=${encodeURIComponent(q)}`,
+        { credentials: "include", cache: "no-store" }
+      );
+      if (res.status === 404) {
+        toast.error(`No sale found for invoice ${q}`);
+        return;
+      }
+      if (!res.ok) {
+        const body = (await res.json()) as { error?: string };
+        throw new Error(body.error ?? "Lookup failed");
+      }
+      const body = (await res.json()) as { sale: { id: string } };
+      router.push(`/sales/${body.sale.id}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Lookup failed");
+    } finally {
+      setLookupPending(false);
+    }
+  }
 
   return (
     <Card>
@@ -55,6 +94,45 @@ export function SalesListClient() {
         </Link>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <div className="flex-1 space-y-1">
+            <label
+              htmlFor="invoice-search"
+              className="text-xs font-medium text-muted-foreground"
+            >
+              Receipt / invoice #
+            </label>
+            <div className="flex gap-2">
+              <Input
+                id="invoice-search"
+                placeholder="e.g. MAIN-2026-00042"
+                value={invoiceSearch}
+                onChange={(e) => setInvoiceSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void goToInvoice();
+                }}
+                className="font-mono"
+              />
+              <button
+                type="button"
+                className={cn(buttonVariants({ variant: "outline" }), "shrink-0")}
+                disabled={lookupPending || !invoiceSearch.trim()}
+                onClick={() => void goToInvoice()}
+              >
+                {lookupPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Search className="size-4" />
+                )}
+                <span className="sr-only">Find sale</span>
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Filter the list below or press Enter to open a sale by exact invoice
+              number. Managers can void completed sales from the list or detail page.
+            </p>
+          </div>
+        </div>
         <DateRangePicker
           label="Sales date range"
           from={fromDate}
@@ -66,9 +144,11 @@ export function SalesListClient() {
           <div className="flex justify-center py-8">
             <Loader2 className="size-6 animate-spin text-muted-foreground" />
           </div>
-        ) : sales.length === 0 ? (
+        ) : filteredSales.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            No sales in this date range.
+            {invoiceSearch.trim()
+              ? "No sales match this invoice filter."
+              : "No sales in this date range."}
           </p>
         ) : (
           <Table>
@@ -82,15 +162,16 @@ export function SalesListClient() {
                 <TableHead className="text-right">Paid</TableHead>
                 <TableHead className="text-right">Due</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sales.map((sale) => (
+              {filteredSales.map((sale) => (
                 <TableRow key={sale.id}>
                   <TableCell>
                     <Link
                       href={`/sales/${sale.id}`}
-                      className="font-medium text-primary hover:underline"
+                      className="font-mono font-semibold text-primary hover:underline"
                     >
                       {sale.invoice_no}
                     </Link>
@@ -112,6 +193,25 @@ export function SalesListClient() {
                     {formatTzs(sale.balance_due)}
                   </TableCell>
                   <TableCell className="capitalize">{sale.status}</TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <Link
+                        href={`/sales/${sale.id}`}
+                        className={cn(
+                          buttonVariants({ variant: "outline", size: "sm" }),
+                          "h-7 rounded-md px-2 text-xs"
+                        )}
+                      >
+                        View
+                      </Link>
+                      <SaleVoidActions
+                        saleId={sale.id}
+                        invoiceNo={sale.invoice_no}
+                        status={sale.status}
+                        compact
+                      />
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>

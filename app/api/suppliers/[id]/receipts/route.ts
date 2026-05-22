@@ -1,0 +1,19 @@
+import { NextResponse } from "next/server";
+import { listSupplierReceipts } from "@/lib/actions/suppliers";
+import { requireOrgContext } from "@/lib/server/org-context";
+
+type Params = { params: Promise<{ id: string }> };
+
+export async function GET(_request: Request, { params }: Params) {
+  try {
+    await requireOrgContext();
+    const { id } = await params;
+    const receipts = await listSupplierReceipts(id);
+    return NextResponse.json({ receipts });
+  } catch (e) {
+    const message =
+      e instanceof Error ? e.message : "Failed to load purchase receipts";
+    const status = message.includes("signed in") ? 401 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
+}

@@ -73,6 +73,32 @@ export type SupplierDetail = {
   }[];
 };
 
+export type SupplierReceiptRow = {
+  id: string;
+  reference: string;
+  received_date: string;
+  total_amount: number;
+  subtotal: number;
+  tax_amount: number;
+  payment_method: string;
+  outlet_name: string | null;
+  po_id: string | null;
+  po_reference: string | null;
+  item_count: number;
+};
+
+function grnDisplayReference(row: {
+  reference_no: string | null;
+  invoice_no: string | null;
+  id: string;
+}): string {
+  return (
+    row.reference_no?.trim() ||
+    row.invoice_no?.trim() ||
+    `GRN-${row.id.slice(0, 8).toUpperCase()}`
+  );
+}
+
 type SupplierBillRow = {
   supplier_id: string | null;
   total_amount: number;
@@ -154,6 +180,89 @@ export async function listSuppliers(): Promise<SupplierListRow[]> {
     credit_limit: Number(r.credit_limit),
     payables_balance: payables.get(r.id) ?? 0,
     is_active: r.is_active,
+  }));
+}
+
+export async function listSupplierReceipts(
+  supplierId: string,
+  limit = 100
+): Promise<SupplierReceiptRow[]> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+
+  const { data: supplier } = await apDb(supabase)
+    .from("suppliers")
+    .select("id")
+    .eq("id", supplierId)
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+  if (!supplier) return [];
+
+  const { data: grns, error } = await supabase
+    .from("grns")
+    .select(
+      "id, reference_no, invoice_no, received_date, subtotal, tax_amount, total_amount, payment_method, outlet_id, po_id"
+    )
+    .eq("organization_id", ctx.organizationId)
+    .eq("supplier_id", supplierId)
+    .order("received_date", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+
+  const rows = grns ?? [];
+  const grnIds = rows.map((g) => g.id);
+  const outletIds = Array.from(
+    new Set(rows.map((g) => g.outlet_id).filter((id): id is string => !!id))
+  );
+  const poIds = Array.from(
+    new Set(rows.map((g) => g.po_id).filter((id): id is string => !!id))
+  );
+
+  const outletNames = new Map<string, string>();
+  if (outletIds.length > 0) {
+    const { data: outlets } = await supabase
+      .from("outlets")
+      .select("id, name")
+      .in("id", outletIds);
+    for (const o of outlets ?? []) {
+      outletNames.set(o.id, o.name);
+    }
+  }
+
+  const poRefs = new Map<string, string | null>();
+  if (poIds.length > 0) {
+    const { data: pos } = await supabase
+      .from("purchase_orders")
+      .select("id, reference_no")
+      .in("id", poIds);
+    for (const p of pos ?? []) {
+      poRefs.set(p.id, p.reference_no);
+    }
+  }
+
+  const itemCounts = new Map<string, number>();
+  if (grnIds.length > 0) {
+    const { data: items } = await supabase
+      .from("grn_items")
+      .select("grn_id")
+      .in("grn_id", grnIds);
+    for (const item of items ?? []) {
+      itemCounts.set(item.grn_id, (itemCounts.get(item.grn_id) ?? 0) + 1);
+    }
+  }
+
+  return rows.map((g) => ({
+    id: g.id,
+    reference: grnDisplayReference(g),
+    received_date: g.received_date,
+    total_amount: Number(g.total_amount),
+    subtotal: Number(g.subtotal),
+    tax_amount: Number(g.tax_amount),
+    payment_method: g.payment_method ?? "on_account",
+    outlet_name: g.outlet_id ? (outletNames.get(g.outlet_id) ?? null) : null,
+    po_id: g.po_id,
+    po_reference: g.po_id ? (poRefs.get(g.po_id) ?? null) : null,
+    item_count: itemCounts.get(g.id) ?? 0,
   }));
 }
 

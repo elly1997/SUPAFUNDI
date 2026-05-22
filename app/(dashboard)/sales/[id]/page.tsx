@@ -18,8 +18,6 @@ import {
 } from "@/components/ui/table";
 import { SaleVoidActions } from "@/components/sales/sale-void-actions";
 import { getSaleById } from "@/lib/actions/sales";
-import { getSessionProfile } from "@/lib/auth/session";
-import { canManageSettings } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
 import { formatTzs, formatDateTimeEAT } from "@/lib/utils/currency";
 
@@ -31,14 +29,10 @@ export default async function SalesDetailPage({
   params,
 }: SalesDetailPageProps) {
   const { id } = await params;
-  const [sale, profile] = await Promise.all([
-    getSaleById(id),
-    getSessionProfile(),
-  ]);
+  const sale = await getSaleById(id);
   if (!sale) {
     notFound();
   }
-  const canVoid = canManageSettings(profile?.role ?? null);
 
   return (
     <div className="space-y-6">
@@ -52,13 +46,11 @@ export default async function SalesDetailPage({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {canVoid && (
-            <SaleVoidActions
-              saleId={sale.id}
-              invoiceNo={sale.invoice_no}
-              status={sale.status}
-            />
-          )}
+          <SaleVoidActions
+            saleId={sale.id}
+            invoiceNo={sale.invoice_no}
+            status={sale.status}
+          />
           <Link
             href="/sales"
             className={cn(buttonVariants({ variant: "outline" }))}

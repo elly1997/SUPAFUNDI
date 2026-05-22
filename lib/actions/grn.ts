@@ -509,6 +509,10 @@ export async function voidGrn(
     revalidatePath("/inventory/purchase-orders");
     revalidatePath("/daily-closing");
     revalidatePath("/pos");
+    revalidatePath("/suppliers");
+    if (grn.supplier_id) {
+      revalidatePath(`/suppliers/${grn.supplier_id}`);
+    }
     return { ok: true };
   } catch (e) {
     return {

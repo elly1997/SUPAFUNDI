@@ -663,6 +663,28 @@ export async function listRecentSales(
   }));
 }
 
+/** Exact invoice/receipt lookup for sales history navigation. */
+export async function lookupSaleByInvoice(
+  invoiceNo: string
+): Promise<{ id: string; invoice_no: string; status: string } | null> {
+  const trimmed = invoiceNo.trim();
+  if (!trimmed) return null;
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("sales")
+    .select("id, invoice_no, status")
+    .eq("organization_id", ctx.organizationId)
+    .eq("invoice_no", trimmed)
+    .maybeSingle();
+  if (error || !data) return null;
+  return {
+    id: data.id,
+    invoice_no: data.invoice_no,
+    status: data.status,
+  };
+}
+
 export type SaleDetail = {
   id: string;
   invoice_no: string;

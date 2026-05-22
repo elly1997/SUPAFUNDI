@@ -12,7 +12,7 @@ export default function SupplierDetailPage({ params }: Props) {
     <div className="space-y-6">
       <PageHeader
         title="Supplier profile"
-        description="Bills, payables, and purchase orders."
+        description="Bills, payables, purchase receipts, and orders."
         actions={
           <Link
             href="/suppliers"

@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Plus } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,8 +37,20 @@ import {
   fetchOpenPayables,
   paySupplierBillApi,
 } from "@/lib/api/daily-ops-fetch";
+import { fetchPosPaymentAccounts } from "@/lib/api/banking-fetch";
+import type { PayableBillRow } from "@/lib/actions/payables";
+import {
+  formatAccountDetails,
+  paymentAccountTypeLabel,
+} from "@/lib/constants/payment-accounts";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
+
+type SupplierPayMethod = "cash" | "mpesa" | "bank_transfer" | "cheque";
+
+function formatPayableBillLabel(b: PayableBillRow): string {
+  return `${b.bill_no} · ${b.supplier_name}`;
+}
 
 export function PayablesPageClient() {
   const queryClient = useQueryClient();
@@ -49,6 +61,12 @@ export function PayablesPageClient() {
   const [billAmount, setBillAmount] = useState("");
   const [payBillId, setPayBillId] = useState("");
   const [payAmount, setPayAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<SupplierPayMethod>("cash");
+  const [paymentDate, setPaymentDate] = useState(
+    () => new Date().toISOString().slice(0, 10)
+  );
+  const [bankAccountId, setBankAccountId] = useState("");
+  const [paymentRef, setPaymentRef] = useState("");
 
   const { data: bills = [], isLoading } = useQuery({
     queryKey: ["payables-open"],
@@ -61,6 +79,45 @@ export function PayablesPageClient() {
   });
 
   const totalDue = bills.reduce((s, b) => s + b.balance, 0);
+
+  const selectedPayBill = useMemo(
+    () => bills.find((b) => b.id === payBillId),
+    [bills, payBillId]
+  );
+
+  const needsBankPicker = paymentMethod === "bank_transfer";
+
+  const { data: bankAccounts = [] } = useQuery({
+    queryKey: ["pos-accounts", "bank_transfer", "payables"],
+    enabled: payOpen && needsBankPicker,
+    queryFn: () => fetchPosPaymentAccounts("bank_transfer"),
+  });
+
+  const showBankAccountSelect =
+    needsBankPicker && bankAccounts.length > 1;
+
+  useEffect(() => {
+    if (!payOpen || !needsBankPicker) return;
+    if (bankAccounts.length === 1) {
+      setBankAccountId(bankAccounts[0]!.id);
+    } else if (bankAccounts.length !== 1) {
+      setBankAccountId("");
+    }
+  }, [payOpen, needsBankPicker, bankAccounts]);
+
+  useEffect(() => {
+    if (!payOpen) return;
+    setPaymentDate(new Date().toISOString().slice(0, 10));
+    setPaymentMethod("cash");
+    setBankAccountId("");
+    setPaymentRef("");
+  }, [payOpen]);
+
+  useEffect(() => {
+    if (!payOpen || payBillId || bills.length === 0) return;
+    setPayBillId(bills[0]!.id);
+    setPayAmount(String(bills[0]!.balance));
+  }, [payOpen, payBillId, bills]);
 
   const createMut = useMutation({
     mutationFn: () =>
@@ -80,13 +137,37 @@ export function PayablesPageClient() {
       toast.error(e instanceof Error ? e.message : "Bill create failed"),
   });
 
+  const payAmountNum = Number(payAmount);
+  const payAmountInvalid =
+    !payAmount ||
+    !Number.isFinite(payAmountNum) ||
+    payAmountNum <= 0 ||
+    (selectedPayBill != null && payAmountNum > selectedPayBill.balance);
+
   const payMut = useMutation({
-    mutationFn: () =>
-      paySupplierBillApi({
+    mutationFn: () => {
+      if (!selectedPayBill) {
+        throw new Error("Select a bill");
+      }
+      const amt = Number(payAmount);
+      if (!amt || amt <= 0) throw new Error("Enter a valid amount");
+      if (amt > selectedPayBill.balance) {
+        throw new Error(
+          `Amount cannot exceed balance due (${formatTzs(selectedPayBill.balance)})`
+        );
+      }
+      if (showBankAccountSelect && !bankAccountId) {
+        throw new Error("Select a bank account");
+      }
+      return paySupplierBillApi({
         billId: payBillId,
-        amount: Number(payAmount),
-        paymentMethod: "bank_transfer",
-      }),
+        amount: amt,
+        paymentMethod,
+        paymentDate,
+        bankAccountId: bankAccountId || undefined,
+        referenceNo: paymentRef.trim() || undefined,
+      });
+    },
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Payment recorded");
@@ -256,45 +337,154 @@ export function PayablesPageClient() {
       </Dialog>
 
       <Dialog open={payOpen} onOpenChange={setPayOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Pay supplier bill</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            <div>
+          <div className="space-y-4 text-sm">
+            <div className="space-y-2">
               <Label>Bill</Label>
               <Select
                 value={payBillId}
-                onValueChange={(v) => setPayBillId(v ?? "")}
+                onValueChange={(v) => {
+                  const id = v ?? "";
+                  setPayBillId(id);
+                  const bill = bills.find((b) => b.id === id);
+                  if (bill) setPayAmount(String(bill.balance));
+                }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select bill" />
+                  <span className="truncate">
+                    {selectedPayBill
+                      ? formatPayableBillLabel(selectedPayBill)
+                      : "Select bill"}
+                  </span>
                 </SelectTrigger>
                 <SelectContent>
                   {bills.map((b) => (
                     <SelectItem key={b.id} value={b.id}>
-                      {b.bill_no} — {b.supplier_name} ({formatTzs(b.balance)})
+                      {formatPayableBillLabel(b)} · {formatTzs(b.balance)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {selectedPayBill && (
+                <p className="form-hint">
+                  Balance due:{" "}
+                  <span className="font-money font-semibold text-warning">
+                    {formatTzs(selectedPayBill.balance)}
+                  </span>
+                </p>
+              )}
             </div>
-            <div>
-              <Label>Amount (TZS)</Label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Payment date</Label>
+                <Input
+                  type="date"
+                  value={paymentDate}
+                  onChange={(e) => setPaymentDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Amount (TZS)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={selectedPayBill?.balance}
+                  className="font-money"
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(e.target.value)}
+                />
+              </div>
+            </div>
+            {payAmountInvalid && selectedPayBill && payAmountNum > 0 && (
+              <p className="text-xs text-destructive">
+                Amount cannot exceed {formatTzs(selectedPayBill.balance)}
+              </p>
+            )}
+            <div className="space-y-2">
+              <Label>Payment method</Label>
+              <Select
+                value={paymentMethod}
+                onValueChange={(v) => {
+                  setPaymentMethod(v as SupplierPayMethod);
+                  setBankAccountId("");
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="mpesa">M-Pesa</SelectItem>
+                  <SelectItem value="bank_transfer">Bank</SelectItem>
+                  <SelectItem value="cheque">Cheque</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {showBankAccountSelect && (
+              <div className="space-y-2">
+                <Label>Bank account</Label>
+                <Select
+                  value={bankAccountId}
+                  onValueChange={(v) => setBankAccountId(v ?? "")}
+                >
+                  <SelectTrigger>
+                    <span className="truncate">
+                      {bankAccounts.find((a) => a.id === bankAccountId)?.name ??
+                        "Select account"}
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {bankAccounts.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.name}
+                        <span className="ml-1 text-muted-foreground">
+                          · {paymentAccountTypeLabel(a.account_type)}
+                          {formatAccountDetails(a) !== "—"
+                            ? ` · ${formatAccountDetails(a)}`
+                            : ""}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="form-hint">
+                  Withdrawal is recorded against this account in Banking.
+                </p>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Reference (optional)</Label>
               <Input
-                type="number"
-                min={0}
-                value={payAmount}
-                onChange={(e) => setPayAmount(e.target.value)}
+                value={paymentRef}
+                onChange={(e) => setPaymentRef(e.target.value)}
+                placeholder="M-Pesa code, cheque no., transfer ref…"
               />
             </div>
           </div>
           <DialogFooter>
             <Button
               type="button"
-              onClick={() => payMut.mutate()}
-              disabled={!payBillId || !payAmount || payMut.isPending}
+              variant="outline"
+              onClick={() => setPayOpen(false)}
             >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => payMut.mutate()}
+              disabled={
+                !payBillId ||
+                payAmountInvalid ||
+                payMut.isPending ||
+                (showBankAccountSelect && !bankAccountId)
+              }
+            >
+              {payMut.isPending ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : null}
               Record payment
             </Button>
           </DialogFooter>
