@@ -120,7 +120,10 @@ type PostJournalParams = {
     | "supplier_payment"
     | "supplier_return"
     | "stock_adjustment"
-    | "manual";
+    | "opening_balance"
+    | "manual"
+    | "transfer"
+    | "payroll";
   sourceId?: string;
   outletId?: string;
   entryDate?: string;
