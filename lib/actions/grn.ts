@@ -5,6 +5,7 @@ import { z } from "zod";
 import { buildGrnJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { createSupplierBillFromGrn } from "@/lib/actions/payables";
+import { createReceivedPoFromGrn } from "@/lib/actions/purchase-orders";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { computeVat, roundMoney } from "@/lib/utils/calculations";
@@ -62,7 +63,9 @@ export async function listSuppliersForOrg(): Promise<
 
 export async function receiveGoods(
   raw: ReceiveGoodsInput
-): Promise<{ ok: true; grnId: string } | { ok: false; message: string }> {
+): Promise<
+  { ok: true; grnId: string; poId: string } | { ok: false; message: string }
+> {
   let grnId: string | null = null;
   const stockRollbacks: { stockId: string; qty: number; prevQty: number; prevCost: number }[] = [];
 
@@ -208,6 +211,20 @@ export async function receiveGoods(
       throw new Error(journal.message);
     }
 
+    const poResult = await createReceivedPoFromGrn({
+      outletId: input.outletId,
+      supplierId: input.supplierId ?? null,
+      orderDate: receivedDate,
+      paymentMethod,
+      taxRate: input.taxRate,
+      grnId: grn.id,
+      lines: input.lines,
+      referenceHint: input.referenceNo,
+    });
+    if (!poResult.ok) {
+      throw new Error(poResult.message);
+    }
+
     if (paymentMethod === "on_account" && input.supplierId) {
       const bill = await createSupplierBillFromGrn({
         grnId: grn.id,
@@ -217,6 +234,7 @@ export async function receiveGoods(
         taxAmount,
         totalAmount,
         referenceNo: input.referenceNo,
+        poId: poResult.poId,
         lines: input.lines.map((l) => ({
           productId: l.productId,
           quantity: l.quantity,
@@ -232,8 +250,9 @@ export async function receiveGoods(
     revalidatePath("/finance/payables");
     revalidatePath("/inventory/receive");
     revalidatePath("/inventory/products");
+    revalidatePath("/inventory/purchase-orders");
     revalidatePath("/daily-closing");
-    return { ok: true, grnId: grn.id };
+    return { ok: true, grnId: grn.id, poId: poResult.poId };
   } catch (e) {
     if (grnId) {
       const supabase = await createServerSupabaseClient();

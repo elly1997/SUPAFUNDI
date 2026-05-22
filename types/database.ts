@@ -621,6 +621,8 @@ export type Database = {
         Update: {
           payment_method?: string;
           received_date?: string;
+          po_id?: string | null;
+          supplier_id?: string | null;
         };
         Relationships: [];
       };
@@ -691,6 +693,11 @@ export type Database = {
           notes: string | null;
           created_by: string | null;
           created_at: string;
+          updated_at: string;
+          source: string;
+          payment_status: string;
+          payment_method: string | null;
+          paid_at: string | null;
         };
         Insert: {
           id?: string;
@@ -706,9 +713,17 @@ export type Database = {
           total_amount?: number;
           notes?: string | null;
           created_by?: string | null;
+          source?: string;
+          payment_status?: string;
+          payment_method?: string | null;
+          paid_at?: string | null;
         };
         Update: {
           status?: string;
+          payment_status?: string;
+          payment_method?: string | null;
+          paid_at?: string | null;
+          source?: string;
         };
         Relationships: [];
       };

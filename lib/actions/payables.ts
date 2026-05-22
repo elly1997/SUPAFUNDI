@@ -93,6 +93,7 @@ export async function createSupplierBillFromGrn(params: {
   taxAmount: number;
   totalAmount: number;
   referenceNo?: string | null;
+  poId?: string | null;
   lines: { productId: string; quantity: number; unitCost: number }[];
 }): Promise<{ ok: true; billId: string } | { ok: false; message: string }> {
   try {
@@ -117,7 +118,7 @@ export async function createSupplierBillFromGrn(params: {
       .insert({
         organization_id: ctx.organizationId,
         supplier_id: params.supplierId,
-        po_id: null,
+        po_id: params.poId ?? null,
         bill_no: billNo,
         bill_date: params.billDate,
         due_date: due.toISOString().slice(0, 10),
@@ -154,6 +155,10 @@ export async function createSupplierBillFromGrn(params: {
 
     revalidatePath("/finance/payables");
     revalidatePath("/suppliers");
+    revalidatePath("/inventory/purchase-orders");
+    if (params.poId) {
+      revalidatePath(`/inventory/purchase-orders/${params.poId}`);
+    }
     return { ok: true, billId: bill.id };
   } catch (e) {
     return {

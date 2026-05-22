@@ -41,6 +41,14 @@ type Line = { productId: string; name: string; quantity: number; unitCost: numbe
 const selectFieldClass =
   "h-9 w-full min-w-0 rounded-lg bg-surface-1 font-sans text-sm";
 
+const GRN_SUPPLIER_KEY = "supafundi-grn-supplier-draft";
+
+type GrnSupplierDraft = {
+  outletId: string;
+  supplierId: string;
+  supplierName: string;
+};
+
 export function ReceiveGoodsClient() {
   const queryClient = useQueryClient();
   const activeOutletId = useAuthStore((s) => s.activeOutletId);
@@ -49,6 +57,7 @@ export function ReceiveGoodsClient() {
   const setBusinessDate = useBusinessDateStore((s) => s.setBusinessDate);
   const [outletId, setOutletId] = useState("");
   const [supplierId, setSupplierId] = useState("");
+  const [stickySupplierName, setStickySupplierName] = useState("");
   const [newSupplier, setNewSupplier] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<
     "on_account" | "cash" | "mpesa" | "bank_transfer"
@@ -75,10 +84,61 @@ export function ReceiveGoodsClient() {
     [outlets, outletId]
   );
 
-  const supplierLabel = useMemo(() => {
-    if (!supplierId) return "No supplier";
-    return suppliers.find((s) => s.id === supplierId)?.name ?? "Supplier";
-  }, [suppliers, supplierId]);
+  const supplierDisplayName = useMemo(() => {
+    if (!supplierId) return null;
+    return (
+      stickySupplierName ||
+      suppliers.find((s) => s.id === supplierId)?.name ||
+      null
+    );
+  }, [supplierId, stickySupplierName, suppliers]);
+
+  const setSupplier = (id: string, name?: string) => {
+    setSupplierId(id);
+    if (!id) {
+      setStickySupplierName("");
+      try {
+        sessionStorage.removeItem(GRN_SUPPLIER_KEY);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    const resolved =
+      name ?? suppliers.find((s) => s.id === id)?.name ?? stickySupplierName;
+    if (resolved) setStickySupplierName(resolved);
+  };
+
+  useEffect(() => {
+    if (!outletId || !supplierId || !supplierDisplayName) return;
+    try {
+      sessionStorage.setItem(
+        GRN_SUPPLIER_KEY,
+        JSON.stringify({
+          outletId,
+          supplierId,
+          supplierName: supplierDisplayName,
+        } satisfies GrnSupplierDraft)
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [outletId, supplierId, supplierDisplayName]);
+
+  useEffect(() => {
+    if (!outletId) return;
+    try {
+      const raw = sessionStorage.getItem(GRN_SUPPLIER_KEY);
+      if (!raw) return;
+      const draft = JSON.parse(raw) as GrnSupplierDraft;
+      if (draft.outletId === outletId && draft.supplierId) {
+        setSupplierId(draft.supplierId);
+        setStickySupplierName(draft.supplierName);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [outletId]);
 
   useEffect(() => {
     if (outlets.length === 0) return;
@@ -105,8 +165,9 @@ export function ReceiveGoodsClient() {
     mutationFn: (name: string) => createSupplierApi(name),
     onSuccess: async (r) => {
       if (r.ok) {
+        const name = newSupplier.trim();
         toast.success("Supplier added");
-        setSupplierId(r.id);
+        setSupplier(r.id, name);
         setNewSupplier("");
         await refetchSuppliers();
         void queryClient.invalidateQueries({ queryKey: ["suppliers-list"] });
@@ -120,17 +181,21 @@ export function ReceiveGoodsClient() {
     mutationFn: receiveGoodsApi,
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success("Goods received and posted to GL", {
-          action: {
-            label: "View stock",
-            onClick: () => {
-              window.location.href = "/inventory/stock";
-            },
-          },
+        toast.success("Goods received · PO recorded", {
+          action: r.poId
+            ? {
+                label: "View PO",
+                onClick: () => {
+                  window.location.href = `/inventory/purchase-orders/${r.poId}`;
+                },
+              }
+            : undefined,
         });
         setLines([]);
+        void queryClient.invalidateQueries({ queryKey: ["purchase-orders"] });
         void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
         void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+        void queryClient.invalidateQueries({ queryKey: ["payables-open"] });
       } else toast.error(r.message);
     },
     onError: (e) =>
@@ -185,22 +250,29 @@ export function ReceiveGoodsClient() {
         </Link>
       </div>
 
-      <Card>
+      <Card className="overflow-visible">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <PackagePlus className="h-5 w-5" />
             Receive goods (GRN)
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-6">
-          <DatePicker
-            label="Received on (business date)"
-            value={businessDate}
-            onChange={setBusinessDate}
-            showPresets={false}
-          />
+        <CardContent className="space-y-8">
+          <section className="space-y-4" aria-labelledby="grn-delivery-heading">
+            <h3
+              id="grn-delivery-heading"
+              className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+            >
+              1. Delivery details
+            </h3>
+            <DatePicker
+              label="Received on (business date)"
+              value={businessDate}
+              onChange={setBusinessDate}
+              showPresets={false}
+            />
 
-          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div className="space-y-2">
               <Label>Outlet</Label>
               {outletsLoading ? (
@@ -239,30 +311,6 @@ export function ReceiveGoodsClient() {
             </div>
 
             <div className="space-y-2">
-              <Label>Supplier (optional)</Label>
-              <Select
-                value={supplierId || "none"}
-                onValueChange={(v) =>
-                  setSupplierId(!v || v === "none" ? "" : v)
-                }
-              >
-                <SelectTrigger className={selectFieldClass}>
-                  <SelectValue placeholder="No supplier">
-                    {supplierLabel}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No supplier</SelectItem>
-                  {suppliers.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
               <Label>Payment</Label>
               <Select
                 value={paymentMethod}
@@ -284,8 +332,58 @@ export function ReceiveGoodsClient() {
               </Select>
             </div>
           </div>
+          </section>
 
-          <div className="rounded-lg border border-border bg-muted/20 p-3">
+          <section className="space-y-4" aria-labelledby="grn-supplier-heading">
+            <h3
+              id="grn-supplier-heading"
+              className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+            >
+              2. Supplier
+            </h3>
+            {supplierDisplayName ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2.5">
+                <p className="text-sm">
+                  <span className="text-muted-foreground">Supplier for this receipt: </span>
+                  <span className="font-semibold text-foreground">
+                    {supplierDisplayName}
+                  </span>
+                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={() => setSupplier("")}
+                >
+                  Change supplier
+                </Button>
+              </div>
+            ) : null}
+            <div className="space-y-2">
+              <Label htmlFor="grn-supplier">Supplier (optional)</Label>
+              <Select
+                value={supplierId || "none"}
+                onValueChange={(v) =>
+                  setSupplier(!v || v === "none" ? "" : v)
+                }
+              >
+                <SelectTrigger id="grn-supplier" className={selectFieldClass}>
+                  <SelectValue placeholder="No supplier">
+                    {supplierDisplayName ?? "No supplier"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No supplier</SelectItem>
+                  {suppliers.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="rounded-lg border border-border bg-muted/20 p-3">
             <Label className="mb-2 block text-xs font-medium text-muted-foreground">
               Add supplier (if not in the list)
             </Label>
@@ -317,66 +415,91 @@ export function ReceiveGoodsClient() {
               </Button>
             </div>
           </div>
+          </section>
 
-          <div className="flex flex-wrap items-end gap-2 rounded-lg border p-3">
-            <div className="min-w-[min(100%,280px)] flex-1 space-y-1">
-              <Label>Product</Label>
-              <SearchableSelect
-                options={productOptions}
-                value={pickProduct}
-                onValueChange={setPickProduct}
-                placeholder={
-                  outletId ? "Search name or code…" : "Select outlet first"
-                }
-                searchPlaceholder="Search product name or code…"
-                disabled={!outletId || productOptions.length === 0}
-                emptyMessage={
-                  outletId ? "No products match" : "Select an outlet first"
-                }
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Qty</Label>
-              <Input
-                type="number"
-                min={0.001}
-                step="any"
-                className="w-24"
-                value={qty}
-                onChange={(e) => setQty(Number(e.target.value))}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Unit cost</Label>
-              <Input
-                type="number"
-                min={0}
-                className="w-28 font-money"
-                value={unitCost || ""}
-                onChange={(e) => setUnitCost(Number(e.target.value))}
-                placeholder={
-                  pickProduct
-                    ? String(
-                        products.find((p) => p.id === pickProduct)?.costPrice ??
-                          ""
-                      )
-                    : undefined
-                }
-              />
-            </div>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={!pickProduct}
-              onClick={addLine}
+          <section className="space-y-4" aria-labelledby="grn-lines-heading">
+            <h3
+              id="grn-lines-heading"
+              className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
             >
-              <Plus className="mr-1 h-4 w-4" />
-              Add line
-            </Button>
-          </div>
+              3. Line items
+            </h3>
+            <div className="space-y-3 rounded-lg border border-border bg-card/60 p-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="grn-product">Product</Label>
+                <SearchableSelect
+                  options={productOptions}
+                  value={pickProduct}
+                  onValueChange={(id) => {
+                    setPickProduct(id);
+                    const p = products.find((x) => x.id === id);
+                    if (p) setUnitCost(p.costPrice);
+                  }}
+                  placeholder={
+                    outletId ? "Search name or code…" : "Select outlet first"
+                  }
+                  searchPlaceholder="Search product name or code…"
+                  disabled={!outletId || productOptions.length === 0}
+                  emptyMessage={
+                    outletId ? "No products match" : "Select an outlet first"
+                  }
+                  minPanelWidth={320}
+                  className="w-full"
+                />
+                {!outletId ? (
+                  <p className="text-xs text-muted-foreground">
+                    Choose an outlet to load products for that branch.
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="grn-qty">Qty</Label>
+                  <Input
+                    id="grn-qty"
+                    type="number"
+                    min={0.001}
+                    step="any"
+                    className="w-28 font-money"
+                    value={qty}
+                    onChange={(e) => setQty(Number(e.target.value))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="grn-cost">Unit cost (TZS)</Label>
+                  <Input
+                    id="grn-cost"
+                    type="number"
+                    min={0}
+                    className="w-36 font-money"
+                    value={unitCost || ""}
+                    onChange={(e) => setUnitCost(Number(e.target.value))}
+                    placeholder={
+                      pickProduct
+                        ? String(
+                            products.find((p) => p.id === pickProduct)
+                              ?.costPrice ?? ""
+                          )
+                        : undefined
+                    }
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="min-h-9"
+                  disabled={!pickProduct}
+                  onClick={addLine}
+                >
+                  <Plus className="mr-1 h-4 w-4" />
+                  Add line
+                </Button>
+              </div>
+            </div>
+          </section>
 
           {lines.length > 0 && (
-            <ul className="space-y-2 text-sm">
+            <ul className="space-y-2 text-sm" aria-label="GRN lines added">
               {lines.map((l) => (
                 <li
                   key={l.productId}
@@ -403,11 +526,15 @@ export function ReceiveGoodsClient() {
             </ul>
           )}
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 border-t border-border pt-6">
             <Button
               type="button"
               disabled={!outletId || lines.length === 0 || receiveMut.isPending}
-              onClick={() =>
+              onClick={() => {
+                if (paymentMethod === "on_account" && !supplierId) {
+                  toast.error("Select or add a supplier for on-account purchases");
+                  return;
+                }
                 receiveMut.mutate({
                   outletId,
                   supplierId: supplierId || null,
@@ -419,8 +546,8 @@ export function ReceiveGoodsClient() {
                     quantity: l.quantity,
                     unitCost: l.unitCost,
                   })),
-                })
-              }
+                });
+              }}
             >
               {receiveMut.isPending ? (
                 <>

@@ -4,8 +4,18 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { buildGrnJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { createSupplierBillFromGrn } from "@/lib/actions/payables";
+import { paySupplier } from "@/lib/actions/suppliers";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+
+type SupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
+
+function apDb(supabase: SupabaseClient) {
+  return supabase as unknown as {
+    from: (table: string) => ReturnType<SupabaseClient["from"]>;
+  };
+}
 import { listStockLevels } from "@/lib/actions/stock";
 import { computeVat, roundMoney } from "@/lib/utils/calculations";
 import {
@@ -53,6 +63,10 @@ export type PurchaseOrderListRow = {
   total_amount: number;
   supplier_name: string | null;
   outlet_name: string | null;
+  source: string;
+  payment_status: string;
+  payment_method: string | null;
+  paid_at: string | null;
 };
 
 export type PurchaseOrderDetail = {
@@ -69,6 +83,12 @@ export type PurchaseOrderDetail = {
   supplier_name: string | null;
   outlet_id: string | null;
   outlet_name: string | null;
+  source: string;
+  payment_status: string;
+  payment_method: string | null;
+  paid_at: string | null;
+  bill_id: string | null;
+  bill_balance: number | null;
   items: {
     id: string;
     product_id: string | null;
@@ -109,7 +129,7 @@ export async function listPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
   const { data, error } = await supabase
     .from("purchase_orders")
     .select(
-      "id, reference_no, status, order_date, expected_date, total_amount, outlet_id, supplier_id"
+      "id, reference_no, status, order_date, expected_date, total_amount, outlet_id, supplier_id, source, payment_status, payment_method, paid_at"
     )
     .eq("organization_id", ctx.organizationId)
     .order("created_at", { ascending: false })
@@ -149,6 +169,10 @@ export async function listPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
     supplier_name: r.supplier_id
       ? (supplierMap.get(r.supplier_id) ?? null)
       : null,
+    source: r.source ?? "manual",
+    payment_status: r.payment_status ?? "unpaid",
+    payment_method: r.payment_method ?? null,
+    paid_at: r.paid_at ?? null,
   }));
 }
 
@@ -160,7 +184,7 @@ export async function getPurchaseOrderById(
   const { data: po, error } = await supabase
     .from("purchase_orders")
     .select(
-      "id, reference_no, status, order_date, expected_date, subtotal, tax_amount, total_amount, notes, supplier_id, outlet_id"
+      "id, reference_no, status, order_date, expected_date, subtotal, tax_amount, total_amount, notes, supplier_id, outlet_id, source, payment_status, payment_method, paid_at"
     )
     .eq("id", id)
     .eq("organization_id", ctx.organizationId)
@@ -206,6 +230,25 @@ export async function getPurchaseOrderById(
     outletName = o?.name ?? null;
   }
 
+  let billId: string | null = null;
+  let billBalance: number | null = null;
+  const { data: bill } = await apDb(supabase)
+    .from("supplier_bills")
+    .select("id, total_amount, amount_paid, status")
+    .eq("po_id", id)
+    .maybeSingle();
+  if (bill) {
+    const b = bill as {
+      id: string;
+      total_amount: number;
+      amount_paid: number;
+      status: string;
+    };
+    billId = b.id;
+    const bal = roundMoney(Number(b.total_amount) - Number(b.amount_paid));
+    if (b.status !== "paid" && bal > 0) billBalance = bal;
+  }
+
   return {
     id: po.id,
     reference_no: po.reference_no,
@@ -220,6 +263,12 @@ export async function getPurchaseOrderById(
     supplier_name: supplierName,
     outlet_id: po.outlet_id,
     outlet_name: outletName,
+    source: po.source ?? "manual",
+    payment_status: po.payment_status ?? "unpaid",
+    payment_method: po.payment_method ?? null,
+    paid_at: po.paid_at ?? null,
+    bill_id: billId,
+    bill_balance: billBalance,
     items: (items ?? []).map((i) => {
       const p = i.product_id ? productMap.get(i.product_id) : null;
       const ordered = Number(i.ordered_qty);
@@ -537,6 +586,12 @@ export async function receiveFromPurchaseOrder(
     });
     if (!journal.ok) throw new Error(journal.message);
 
+    const paymentMethod =
+      input.paymentMethod ??
+      (input.onAccount === false ? "cash" : "on_account");
+    const isCredit = paymentMethod === "on_account";
+    const receivedDate = new Date().toISOString().slice(0, 10);
+
     const updated = await getPurchaseOrderById(po.id);
     const allReceived =
       updated?.items.every((i) => i.remaining_qty <= 0) ?? false;
@@ -545,10 +600,33 @@ export async function receiveFromPurchaseOrder(
       .from("purchase_orders")
       .update({
         status: allReceived ? "received" : anyReceived ? "partial" : po.status,
+        payment_status: isCredit ? "unpaid" : "paid",
+        payment_method: paymentMethod,
+        paid_at: isCredit ? null : receivedDate,
       })
       .eq("id", po.id);
 
+    if (isCredit && po.supplier_id) {
+      const bill = await createSupplierBillFromGrn({
+        grnId: grn.id,
+        supplierId: po.supplier_id,
+        billDate: receivedDate,
+        subtotal: inventoryValue,
+        taxAmount,
+        totalAmount,
+        referenceNo: po.reference_no,
+        poId: po.id,
+        lines: receiveLines.map((l) => ({
+          productId: l.productId,
+          quantity: l.quantity,
+          unitCost: l.unitCost,
+        })),
+      });
+      if (!bill.ok) throw new Error(bill.message);
+    }
+
     revalidatePath("/inventory/purchase-orders");
+    revalidatePath("/finance/payables");
     revalidatePath("/inventory/stock");
     revalidatePath("/inventory/receive");
     return { ok: true, grnId: grn.id };
@@ -572,6 +650,187 @@ export async function receiveFromPurchaseOrder(
     return {
       ok: false,
       message: e instanceof Error ? e.message : "Receive from PO failed",
+    };
+  }
+}
+
+type GrnPoLine = { productId: string; quantity: number; unitCost: number };
+
+/** Create a received PO linked to a GRN (direct receive goods flow). */
+export async function createReceivedPoFromGrn(params: {
+  outletId: string;
+  supplierId: string | null;
+  orderDate: string;
+  paymentMethod: "cash" | "mpesa" | "bank_transfer" | "on_account";
+  taxRate: number;
+  grnId: string;
+  lines: GrnPoLine[];
+  referenceHint?: string | null;
+}): Promise<{ ok: true; poId: string } | { ok: false; message: string }> {
+  try {
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const subtotal = roundMoney(
+      params.lines.reduce((s, l) => s + l.quantity * l.unitCost, 0)
+    );
+    const taxAmount = computeVat(subtotal, params.taxRate);
+    const totalAmount = roundMoney(subtotal + taxAmount);
+    const isCredit = params.paymentMethod === "on_account";
+    const referenceNo = await nextPoReference(
+      supabase,
+      ctx.organizationId,
+      params.outletId
+    );
+
+    const { data: po, error: poErr } = await supabase
+      .from("purchase_orders")
+      .insert({
+        organization_id: ctx.organizationId,
+        outlet_id: params.outletId,
+        supplier_id: params.supplierId,
+        reference_no: referenceNo,
+        status: "received",
+        source: "grn",
+        payment_status: isCredit ? "unpaid" : "paid",
+        payment_method: params.paymentMethod,
+        paid_at: isCredit ? null : params.orderDate,
+        order_date: params.orderDate,
+        subtotal,
+        tax_amount: taxAmount,
+        total_amount: totalAmount,
+        notes: `Goods receipt (GRN) · ${params.referenceHint ?? params.grnId.slice(0, 8)}`,
+        created_by: ctx.userId,
+      })
+      .select("id")
+      .single();
+    if (poErr || !po) {
+      return { ok: false, message: poErr?.message ?? "PO create failed" };
+    }
+
+    const itemRows = params.lines.map((l) => ({
+      po_id: po.id,
+      product_id: l.productId,
+      ordered_qty: l.quantity,
+      received_qty: l.quantity,
+      unit_cost: l.unitCost,
+      total_cost: roundMoney(l.quantity * l.unitCost),
+    }));
+    const { error: itemsErr } = await supabase
+      .from("purchase_order_items")
+      .insert(itemRows);
+    if (itemsErr) {
+      await supabase.from("purchase_orders").delete().eq("id", po.id);
+      return { ok: false, message: itemsErr.message };
+    }
+
+    await supabase
+      .from("grns")
+      .update({ po_id: po.id })
+      .eq("id", params.grnId);
+
+    revalidatePath("/inventory/purchase-orders");
+    return { ok: true, poId: po.id };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "PO from GRN failed",
+    };
+  }
+}
+
+const payPoInput = z.object({
+  poId: z.string().uuid(),
+  paymentMethod: z.enum(["cash", "mpesa", "bank_transfer", "cheque"]),
+  paymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  amount: z.number().positive().optional(),
+  referenceNo: z.string().max(100).optional(),
+  bankAccountId: z.string().uuid().optional(),
+});
+
+export async function payPurchaseOrder(
+  raw: z.infer<typeof payPoInput>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const input = payPoInput.parse(raw);
+    const po = await getPurchaseOrderById(input.poId);
+    if (!po) return { ok: false, message: "Purchase order not found." };
+    if (po.payment_status === "paid") {
+      return { ok: false, message: "This purchase order is already paid." };
+    }
+    if (!po.supplier_id) {
+      return { ok: false, message: "PO has no supplier for payment." };
+    }
+
+    const paymentDate =
+      input.paymentDate ?? new Date().toISOString().slice(0, 10);
+    const amount = roundMoney(input.amount ?? po.total_amount);
+
+    let billId = po.bill_id;
+    if (!billId && po.supplier_id) {
+      const supabase = await createServerSupabaseClient();
+      const { data: grn } = await supabase
+        .from("grns")
+        .select("id")
+        .eq("po_id", input.poId)
+        .maybeSingle();
+      const bill = await createSupplierBillFromGrn({
+        grnId: grn?.id ?? input.poId,
+        supplierId: po.supplier_id,
+        billDate: po.order_date,
+        subtotal: po.subtotal,
+        taxAmount: po.tax_amount,
+        totalAmount: po.total_amount,
+        referenceNo: po.reference_no,
+        poId: po.id,
+        lines: po.items
+          .filter((i) => i.product_id)
+          .map((i) => ({
+            productId: i.product_id!,
+            quantity: i.received_qty || i.ordered_qty,
+            unitCost: i.unit_cost,
+          })),
+      });
+      if (!bill.ok) return bill;
+      billId = bill.billId;
+    }
+
+    const payResult = await paySupplier({
+      supplierId: po.supplier_id,
+      amount,
+      paymentMethod: input.paymentMethod,
+      paymentDate,
+      billId: billId ?? undefined,
+      referenceNo: input.referenceNo ?? po.reference_no ?? undefined,
+      bankAccountId: input.bankAccountId,
+    });
+    if (!payResult.ok) return payResult;
+
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase
+      .from("purchase_orders")
+      .update({
+        payment_status: "paid",
+        payment_method: input.paymentMethod,
+        paid_at: paymentDate,
+      })
+      .eq("id", input.poId)
+      .eq("organization_id", ctx.organizationId);
+    if (error) return { ok: false, message: error.message };
+
+    revalidatePath("/inventory/purchase-orders");
+    revalidatePath(`/inventory/purchase-orders/${input.poId}`);
+    revalidatePath("/finance/payables");
+    revalidatePath("/suppliers");
+    if (po.supplier_id) {
+      revalidatePath(`/suppliers/${po.supplier_id}`);
+    }
+    revalidatePath("/daily-closing");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "PO payment failed",
     };
   }
 }

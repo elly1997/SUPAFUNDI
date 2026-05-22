@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { CreditCard, ExternalLink, Loader2 } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,9 @@ import {
   receiveFromPurchaseOrderApi,
   sendPurchaseOrderApi,
 } from "@/lib/api/daily-ops-fetch";
+import { PoPayDialog } from "@/components/procurement/po-pay-dialog";
+import { PoStatusBadges } from "@/components/procurement/po-status-badges";
+import { isPoPaid } from "@/lib/procurement/po-payment";
 import { formatTzs } from "@/lib/utils/currency";
 
 type Props = { poId: string };
@@ -31,6 +35,7 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
   const [paymentMethod, setPaymentMethod] = useState<
     "on_account" | "cash" | "mpesa" | "bank_transfer"
   >("on_account");
+  const [payOpen, setPayOpen] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: po, isLoading } = useQuery({
@@ -105,12 +110,45 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle>{po.reference_no ?? "Purchase order"}</CardTitle>
-            <p className="text-sm capitalize text-muted-foreground">
-              {po.status} · {po.supplier_name ?? "No supplier"} ·{" "}
+            <p className="text-sm text-muted-foreground">
+              {po.order_date} · {po.supplier_name ?? "No supplier"} ·{" "}
               {po.outlet_name}
             </p>
+            <PoStatusBadges
+              className="mt-2"
+              status={po.status}
+              paymentStatus={po.payment_status}
+              paymentMethod={po.payment_method}
+              paidAt={po.paid_at}
+              source={po.source}
+            />
+            {!isPoPaid(po.payment_status) && po.bill_balance != null ? (
+              <p className="mt-2 text-sm text-warning">
+                Outstanding (AP): {formatTzs(po.bill_balance)} — recorded on
+                supplier account
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
+            {!isPoPaid(po.payment_status) && po.supplier_id ? (
+              <Button
+                type="button"
+                className="gap-1.5"
+                onClick={() => setPayOpen(true)}
+              >
+                <CreditCard className="size-4" />
+                Pay supplier
+              </Button>
+            ) : null}
+            {po.supplier_id ? (
+              <Link
+                href={`/suppliers/${po.supplier_id}`}
+                className="inline-flex h-9 items-center gap-1 rounded-lg border border-border px-3 text-sm font-medium hover:bg-muted/50"
+              >
+                Supplier
+                <ExternalLink className="size-3.5" />
+              </Link>
+            ) : null}
             {canSend && (
               <Button onClick={() => sendMut.mutate()} disabled={sendMut.isPending}>
                 Mark sent
@@ -244,6 +282,17 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
           </CardContent>
         </Card>
       )}
+
+      <PoPayDialog
+        open={payOpen}
+        onOpenChange={setPayOpen}
+        poId={poId}
+        referenceNo={po.reference_no}
+        supplierName={po.supplier_name}
+        totalAmount={po.total_amount}
+        balance={po.bill_balance}
+        onPaid={invalidate}
+      />
     </div>
   );
 }

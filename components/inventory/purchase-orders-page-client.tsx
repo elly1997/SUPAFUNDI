@@ -1,11 +1,11 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardList, Loader2, Plus, Trash2 } from "lucide-react";
+import { ClipboardList, CreditCard, Loader2, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -35,7 +35,10 @@ import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { listSuppliersForOrg } from "@/lib/actions/grn";
 import { createSupplier, listPurchaseOrders } from "@/lib/actions/purchase-orders";
+import { PoPayDialog } from "@/components/procurement/po-pay-dialog";
+import { PoStatusBadges } from "@/components/procurement/po-status-badges";
 import { createPurchaseOrderApi } from "@/lib/api/daily-ops-fetch";
+import { isPoPaid } from "@/lib/procurement/po-payment";
 import { usePosProducts } from "@/hooks/usePosProducts";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
@@ -61,6 +64,12 @@ export function PurchaseOrdersPageClient() {
   const [qty, setQty] = useState(1);
   const [unitCost, setUnitCost] = useState(0);
   const [newSupplier, setNewSupplier] = useState("");
+  const [payPo, setPayPo] = useState<{
+    id: string;
+    reference: string | null;
+    supplier: string | null;
+    total: number;
+  } | null>(null);
   const queryClient = useQueryClient();
 
   const { data: orders = [], isLoading } = useQuery({
@@ -190,8 +199,9 @@ export function PurchaseOrdersPageClient() {
                 <TableHead>Supplier</TableHead>
                 <TableHead>Outlet</TableHead>
                 <TableHead>Date</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead>Payment</TableHead>
                 <TableHead className="text-right">Total</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -208,9 +218,48 @@ export function PurchaseOrdersPageClient() {
                   <TableCell>{o.supplier_name ?? "—"}</TableCell>
                   <TableCell>{o.outlet_name ?? "—"}</TableCell>
                   <TableCell>{o.order_date}</TableCell>
-                  <TableCell className="capitalize">{o.status}</TableCell>
+                  <TableCell>
+                    <PoStatusBadges
+                      status={o.status}
+                      paymentStatus={o.payment_status}
+                      paymentMethod={o.payment_method}
+                      paidAt={o.paid_at}
+                      source={o.source}
+                    />
+                  </TableCell>
                   <TableCell className="text-right font-money">
                     {formatTzs(o.total_amount)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-1">
+                      <Link
+                        href={`/inventory/purchase-orders/${o.id}`}
+                        className={cn(
+                          buttonVariants({ variant: "outline", size: "sm" })
+                        )}
+                      >
+                        Details
+                      </Link>
+                      {!isPoPaid(o.payment_status) && o.supplier_name ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="gap-1"
+                          onClick={() =>
+                            setPayPo({
+                              id: o.id,
+                              reference: o.reference_no,
+                              supplier: o.supplier_name,
+                              total: o.total_amount,
+                            })
+                          }
+                        >
+                          <CreditCard className="size-3.5" />
+                          Pay
+                        </Button>
+                      ) : null}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -218,6 +267,21 @@ export function PurchaseOrdersPageClient() {
           </Table>
         )}
       </CardContent>
+
+      {payPo ? (
+        <PoPayDialog
+          open={!!payPo}
+          onOpenChange={(v) => !v && setPayPo(null)}
+          poId={payPo.id}
+          referenceNo={payPo.reference}
+          supplierName={payPo.supplier}
+          totalAmount={payPo.total}
+          onPaid={() => {
+            setPayPo(null);
+            void queryClient.invalidateQueries({ queryKey: ["purchase-orders"] });
+          }}
+        />
+      ) : null}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[min(92vh,720px)] overflow-y-auto font-sans sm:max-w-xl">

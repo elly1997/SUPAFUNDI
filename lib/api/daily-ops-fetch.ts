@@ -105,7 +105,10 @@ export async function completeSaleApi(
 /** Purchases / GRN */
 export async function receiveGoodsApi(
   payload: ReceiveGoodsInput
-): Promise<{ ok: true; grnId: string } | { ok: false; message: string }> {
+): Promise<
+  | { ok: true; grnId: string; poId?: string }
+  | { ok: false; message: string }
+> {
   const res = await fetch("/api/inventory/grn/receive", {
     method: "POST",
     credentials: "include",
@@ -189,6 +192,20 @@ export async function createManualBillApi(
   >[0]
 ): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
   const res = await fetch("/api/finance/payables/bill", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+export async function payPurchaseOrderApi(
+  payload: Parameters<
+    typeof import("@/lib/actions/purchase-orders").payPurchaseOrder
+  >[0]
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await fetch("/api/inventory/purchase-orders/pay", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
