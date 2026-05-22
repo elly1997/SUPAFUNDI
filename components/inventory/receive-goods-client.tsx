@@ -1,10 +1,20 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Loader2, PackagePlus, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ClipboardList,
+  Loader2,
+  PackagePlus,
+  Plus,
+  Trash2,
+  Truck,
+  Warehouse,
+} from "lucide-react";
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { SearchableSelect } from "@/components/shared/searchable-select";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,20 +27,29 @@ import {
 } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
-import { listSuppliersForOrg, receiveGoods } from "@/lib/actions/grn";
+import { createSupplierApi, receiveGoodsApi } from "@/lib/api/daily-ops-fetch";
+import { listSuppliersForOrg } from "@/lib/actions/grn";
 import { usePosProducts } from "@/hooks/usePosProducts";
+import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
+import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type Line = { productId: string; name: string; quantity: number; unitCost: number };
 
+const selectFieldClass =
+  "h-9 w-full min-w-0 rounded-lg bg-surface-1 font-sans text-sm";
+
 export function ReceiveGoodsClient() {
-  const defaultOutlet = useAuthStore((s) => s.activeOutletId);
+  const queryClient = useQueryClient();
+  const activeOutletId = useAuthStore((s) => s.activeOutletId);
+  const sessionOutletId = useAuthStore((s) => s.session?.outletId);
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const setBusinessDate = useBusinessDateStore((s) => s.setBusinessDate);
-  const [outletId, setOutletId] = useState(defaultOutlet ?? "");
+  const [outletId, setOutletId] = useState("");
   const [supplierId, setSupplierId] = useState("");
+  const [newSupplier, setNewSupplier] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<
     "on_account" | "cash" | "mpesa" | "bank_transfer"
   >("on_account");
@@ -39,29 +58,91 @@ export function ReceiveGoodsClient() {
   const [qty, setQty] = useState(1);
   const [unitCost, setUnitCost] = useState(0);
 
-  const { data: outlets = [] } = useQuery({
+  const { data: outlets = [], isLoading: outletsLoading } = useQuery({
     queryKey: ["org-outlets"],
     queryFn: fetchOrgOutlets,
   });
-  const { data: suppliers = [] } = useQuery({
+
+  const { data: suppliers = [], refetch: refetchSuppliers } = useQuery({
     queryKey: ["suppliers"],
     queryFn: listSuppliersForOrg,
   });
+
   const { data: products = [] } = usePosProducts(outletId || null);
 
-  const receiveMut = useMutation({
-    mutationFn: receiveGoods,
-    onSuccess: (r) => {
+  const outletLabel = useMemo(
+    () => outlets.find((o) => o.id === outletId)?.name,
+    [outlets, outletId]
+  );
+
+  const supplierLabel = useMemo(() => {
+    if (!supplierId) return "No supplier";
+    return suppliers.find((s) => s.id === supplierId)?.name ?? "Supplier";
+  }, [suppliers, supplierId]);
+
+  useEffect(() => {
+    if (outlets.length === 0) return;
+    const valid = outlets.some((o) => o.id === outletId);
+    if (valid) return;
+    const next = resolveActiveOutletId(outlets, {
+      stored: activeOutletId,
+      profileOutletId: sessionOutletId,
+    });
+    if (next) setOutletId(next);
+  }, [outlets, outletId, activeOutletId, sessionOutletId]);
+
+  const productOptions = useMemo(
+    () =>
+      products.map((p) => ({
+        value: p.id,
+        label: `${p.name} (${p.code})`,
+        keywords: `${p.name} ${p.code ?? ""} ${p.barcode ?? ""}`,
+      })),
+    [products]
+  );
+
+  const addSupplierMut = useMutation({
+    mutationFn: (name: string) => createSupplierApi(name),
+    onSuccess: async (r) => {
       if (r.ok) {
-        toast.success("Goods received and posted to GL");
-        setLines([]);
+        toast.success("Supplier added");
+        setSupplierId(r.id);
+        setNewSupplier("");
+        await refetchSuppliers();
+        void queryClient.invalidateQueries({ queryKey: ["suppliers-list"] });
       } else toast.error(r.message);
     },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Could not add supplier"),
+  });
+
+  const receiveMut = useMutation({
+    mutationFn: receiveGoodsApi,
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Goods received and posted to GL", {
+          action: {
+            label: "View stock",
+            onClick: () => {
+              window.location.href = "/inventory/stock";
+            },
+          },
+        });
+        setLines([]);
+        void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
+        void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+      } else toast.error(r.message);
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Receive failed"),
   });
 
   const addLine = () => {
     const p = products.find((x) => x.id === pickProduct);
-    if (!p || qty <= 0) return;
+    if (!p || qty <= 0) {
+      toast.error("Select a product and enter quantity");
+      return;
+    }
     setLines((prev) => [
       ...prev.filter((l) => l.productId !== p.id),
       {
@@ -79,184 +160,285 @@ export function ReceiveGoodsClient() {
   const subtotal = lines.reduce((s, l) => s + l.quantity * l.unitCost, 0);
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <PackagePlus className="h-5 w-5" />
-          Receive goods (GRN)
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <DatePicker
-          label="Received on (business date)"
-          value={businessDate}
-          onChange={setBusinessDate}
-          showPresets={false}
-        />
-        <div className="grid gap-4 sm:grid-cols-3">
-          <div className="space-y-2">
-            <Label>Outlet</Label>
-            <Select
-              value={outletId}
-              onValueChange={(v) => setOutletId(v ?? "")}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select outlet" />
-              </SelectTrigger>
-              <SelectContent>
-                {outlets.map((o) => (
-                  <SelectItem key={o.id} value={o.id}>
-                    {o.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Supplier (optional)</Label>
-            <Select
-              value={supplierId || "__none__"}
-              onValueChange={(v) =>
-                setSupplierId(!v || v === "__none__" ? "" : v)
-              }
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="None" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">None</SelectItem>
-                {suppliers.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label>Payment</Label>
-            <Select
-              value={paymentMethod}
-              onValueChange={(v) =>
-                setPaymentMethod(
-                  v as "on_account" | "cash" | "mpesa" | "bank_transfer"
-                )
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="on_account">On account (AP)</SelectItem>
-                <SelectItem value="cash">Cash</SelectItem>
-                <SelectItem value="mpesa">M-Pesa</SelectItem>
-                <SelectItem value="bank_transfer">Bank transfer</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-end gap-2 rounded-lg border p-3">
-          <div className="min-w-[200px] flex-1 space-y-1">
-            <Label>Product</Label>
-            <Select
-              value={pickProduct}
-              onValueChange={(v) => setPickProduct(v ?? "")}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select product" />
-              </SelectTrigger>
-              <SelectContent>
-                {products.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name} ({p.code})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label>Qty</Label>
-            <Input
-              type="number"
-              min={0.001}
-              step="any"
-              className="w-24"
-              value={qty}
-              onChange={(e) => setQty(Number(e.target.value))}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label>Unit cost</Label>
-            <Input
-              type="number"
-              min={0}
-              className="w-28"
-              value={unitCost || ""}
-              onChange={(e) => setUnitCost(Number(e.target.value))}
-            />
-          </div>
-          <Button type="button" variant="secondary" onClick={addLine}>
-            <Plus className="mr-1 h-4 w-4" />
-            Add
-          </Button>
-        </div>
-
-        {lines.length > 0 && (
-          <ul className="space-y-2 text-sm">
-            {lines.map((l) => (
-              <li
-                key={l.productId}
-                className="flex items-center justify-between rounded border px-3 py-2"
-              >
-                <span>
-                  {l.name} × {l.quantity} @ {formatTzs(l.unitCost)}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() =>
-                    setLines((prev) =>
-                      prev.filter((x) => x.productId !== l.productId)
-                    )
-                  }
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </li>
-            ))}
-            <p className="font-semibold">Subtotal: {formatTzs(subtotal)}</p>
-          </ul>
-        )}
-
-        <Button
-          disabled={!outletId || lines.length === 0 || receiveMut.isPending}
-          onClick={() =>
-            receiveMut.mutate({
-              outletId,
-              supplierId: supplierId || null,
-              paymentMethod,
-              taxRate: 18,
-              businessDate,
-              lines: lines.map((l) => ({
-                productId: l.productId,
-                quantity: l.quantity,
-                unitCost: l.unitCost,
-              })),
-            })
-          }
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        <Link
+          href="/inventory/stock"
+          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
         >
-          {receiveMut.isPending ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Posting…
-            </>
-          ) : (
-            "Receive & post to GL"
+          <Warehouse className="mr-1.5 size-4" />
+          Stock levels
+        </Link>
+        <Link
+          href="/inventory/purchase-orders"
+          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+        >
+          <ClipboardList className="mr-1.5 size-4" />
+          Purchase orders
+        </Link>
+        <Link
+          href="/suppliers"
+          className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+        >
+          <Truck className="mr-1.5 size-4" />
+          Supplier registry
+        </Link>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <PackagePlus className="h-5 w-5" />
+            Receive goods (GRN)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <DatePicker
+            label="Received on (business date)"
+            value={businessDate}
+            onChange={setBusinessDate}
+            showPresets={false}
+          />
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label>Outlet</Label>
+              {outletsLoading ? (
+                <div className="flex h-9 items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  Loading outlets…
+                </div>
+              ) : outlets.length === 0 ? (
+                <p className="text-sm text-destructive">
+                  No outlets —{" "}
+                  <Link href="/settings/outlets" className="underline">
+                    add one in Settings
+                  </Link>
+                  .
+                </p>
+              ) : (
+                <Select
+                  value={outletId || undefined}
+                  onValueChange={(v) => setOutletId(v ?? "")}
+                >
+                  <SelectTrigger className={selectFieldClass}>
+                    <SelectValue placeholder="Select outlet">
+                      {outletLabel ?? "Select outlet"}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {outlets.map((o) => (
+                      <SelectItem key={o.id} value={o.id}>
+                        {o.name}
+                        {o.code ? ` (${o.code})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Supplier (optional)</Label>
+              <Select
+                value={supplierId || "none"}
+                onValueChange={(v) =>
+                  setSupplierId(!v || v === "none" ? "" : v)
+                }
+              >
+                <SelectTrigger className={selectFieldClass}>
+                  <SelectValue placeholder="No supplier">
+                    {supplierLabel}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No supplier</SelectItem>
+                  {suppliers.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Payment</Label>
+              <Select
+                value={paymentMethod}
+                onValueChange={(v) =>
+                  setPaymentMethod(
+                    v as "on_account" | "cash" | "mpesa" | "bank_transfer"
+                  )
+                }
+              >
+                <SelectTrigger className={selectFieldClass}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="on_account">On account (AP)</SelectItem>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="mpesa">M-Pesa</SelectItem>
+                  <SelectItem value="bank_transfer">Bank transfer</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border bg-muted/20 p-3">
+            <Label className="mb-2 block text-xs font-medium text-muted-foreground">
+              Add supplier (if not in the list)
+            </Label>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                className="h-9 flex-1 rounded-lg bg-surface-1"
+                placeholder="New supplier name"
+                value={newSupplier}
+                onChange={(e) => setNewSupplier(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (newSupplier.trim()) addSupplierMut.mutate(newSupplier.trim());
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 shrink-0 sm:w-28"
+                disabled={!newSupplier.trim() || addSupplierMut.isPending}
+                onClick={() => addSupplierMut.mutate(newSupplier.trim())}
+              >
+                {addSupplierMut.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  "Add supplier"
+                )}
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-2 rounded-lg border p-3">
+            <div className="min-w-[min(100%,280px)] flex-1 space-y-1">
+              <Label>Product</Label>
+              <SearchableSelect
+                options={productOptions}
+                value={pickProduct}
+                onValueChange={setPickProduct}
+                placeholder={
+                  outletId ? "Search name or code…" : "Select outlet first"
+                }
+                searchPlaceholder="Search product name or code…"
+                disabled={!outletId || productOptions.length === 0}
+                emptyMessage={
+                  outletId ? "No products match" : "Select an outlet first"
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Qty</Label>
+              <Input
+                type="number"
+                min={0.001}
+                step="any"
+                className="w-24"
+                value={qty}
+                onChange={(e) => setQty(Number(e.target.value))}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label>Unit cost</Label>
+              <Input
+                type="number"
+                min={0}
+                className="w-28 font-money"
+                value={unitCost || ""}
+                onChange={(e) => setUnitCost(Number(e.target.value))}
+                placeholder={
+                  pickProduct
+                    ? String(
+                        products.find((p) => p.id === pickProduct)?.costPrice ??
+                          ""
+                      )
+                    : undefined
+                }
+              />
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!pickProduct}
+              onClick={addLine}
+            >
+              <Plus className="mr-1 h-4 w-4" />
+              Add line
+            </Button>
+          </div>
+
+          {lines.length > 0 && (
+            <ul className="space-y-2 text-sm">
+              {lines.map((l) => (
+                <li
+                  key={l.productId}
+                  className="flex items-center justify-between rounded border px-3 py-2"
+                >
+                  <span>
+                    {l.name} × {l.quantity} @ {formatTzs(l.unitCost)}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() =>
+                      setLines((prev) =>
+                        prev.filter((x) => x.productId !== l.productId)
+                      )
+                    }
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </li>
+              ))}
+              <p className="font-semibold">Subtotal: {formatTzs(subtotal)}</p>
+            </ul>
           )}
-        </Button>
-      </CardContent>
-    </Card>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              disabled={!outletId || lines.length === 0 || receiveMut.isPending}
+              onClick={() =>
+                receiveMut.mutate({
+                  outletId,
+                  supplierId: supplierId || null,
+                  paymentMethod,
+                  taxRate: 18,
+                  businessDate,
+                  lines: lines.map((l) => ({
+                    productId: l.productId,
+                    quantity: l.quantity,
+                    unitCost: l.unitCost,
+                  })),
+                })
+              }
+            >
+              {receiveMut.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Posting…
+                </>
+              ) : (
+                "Receive & post to GL"
+              )}
+            </Button>
+            {paymentMethod === "on_account" && !supplierId ? (
+              <p className="self-center text-xs text-warning">
+                On-account GRN needs a supplier for AP.
+              </p>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

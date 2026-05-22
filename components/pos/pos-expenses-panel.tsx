@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PosExpenseCategorySelect } from "@/components/pos/pos-expense-category-select";
-import { listExpenses, recordExpense } from "@/lib/actions/expenses";
+import { listExpenses } from "@/lib/actions/expenses";
+import { recordExpenseApi } from "@/lib/api/daily-ops-fetch";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
@@ -30,7 +31,7 @@ export function PosExpensesPanel() {
   const todayExpenses = expenses.filter((e) => e.expense_date === businessDate);
 
   const recordMut = useMutation({
-    mutationFn: recordExpense,
+    mutationFn: recordExpenseApi,
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Expense recorded");
@@ -39,6 +40,8 @@ export function PosExpensesPanel() {
         queryClient.invalidateQueries({ queryKey: ["pos-expenses"] });
       } else toast.error(r.message);
     },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Expense failed"),
   });
 
   return (

@@ -31,7 +31,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { listExpenses, recordExpense } from "@/lib/actions/expenses";
+import { listExpenses } from "@/lib/actions/expenses";
+import { recordExpenseApi } from "@/lib/api/daily-ops-fetch";
 import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { formatTzs } from "@/lib/utils/currency";
 
@@ -49,7 +50,7 @@ export function ExpensesPageClient() {
   });
 
   const recordMut = useMutation({
-    mutationFn: recordExpense,
+    mutationFn: recordExpenseApi,
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Expense recorded and posted to GL");
@@ -57,8 +58,11 @@ export function ExpensesPageClient() {
         setAmount("");
         setDescription("");
         queryClient.invalidateQueries({ queryKey: ["expenses"] });
+        queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
       } else toast.error(r.message);
     },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Expense failed"),
   });
 
   return (

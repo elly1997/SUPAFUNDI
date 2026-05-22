@@ -626,6 +626,7 @@ export async function createSupplier(
     return { ok: false, message: error?.message ?? "Create failed" };
   }
   revalidatePath("/inventory/purchase-orders");
+  revalidatePath("/inventory/receive");
   revalidatePath("/purchase-orders");
   revalidatePath("/suppliers");
   return { ok: true, id: data.id };

@@ -50,11 +50,8 @@ import {
   type PosPricingMode,
   type PosProductRow,
 } from "@/hooks/usePosProducts";
-import {
-  completeSale,
-  type CompleteSaleInput,
-  type PosCustomer,
-} from "@/lib/actions/sales";
+import type { CompleteSaleInput, PosCustomer } from "@/lib/actions/sales";
+import { completeSaleApi } from "@/lib/api/daily-ops-fetch";
 import { cartLineKey, resolveUnitPrice } from "@/lib/products/units";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
@@ -337,7 +334,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
         businessDate,
         ...(paymentAccountId ? { paymentAccountId } : {}),
       };
-      const result = await completeSale(payload);
+      const result = await completeSaleApi(payload);
       if (!result.ok) {
         throw new Error(result.message);
       }

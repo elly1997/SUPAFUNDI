@@ -16,12 +16,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { getPurchaseOrderById } from "@/lib/actions/purchase-orders";
 import {
-  cancelPurchaseOrder,
-  getPurchaseOrderById,
-  receiveFromPurchaseOrder,
-  sendPurchaseOrder,
-} from "@/lib/actions/purchase-orders";
+  cancelPurchaseOrderApi,
+  receiveFromPurchaseOrderApi,
+  sendPurchaseOrderApi,
+} from "@/lib/api/daily-ops-fetch";
 import { formatTzs } from "@/lib/utils/currency";
 
 type Props = { poId: string };
@@ -44,34 +44,40 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
   };
 
   const sendMut = useMutation({
-    mutationFn: () => sendPurchaseOrder(poId),
+    mutationFn: () => sendPurchaseOrderApi(poId),
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("PO marked as sent");
         invalidate();
       } else toast.error(r.message);
     },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Send failed"),
   });
 
   const cancelMut = useMutation({
-    mutationFn: () => cancelPurchaseOrder(poId),
+    mutationFn: () => cancelPurchaseOrderApi(poId),
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("PO cancelled");
         invalidate();
       } else toast.error(r.message);
     },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Cancel failed"),
   });
 
   const receiveMut = useMutation({
-    mutationFn: receiveFromPurchaseOrder,
+    mutationFn: receiveFromPurchaseOrderApi,
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Goods received and posted to GL");
         setReceiveQty({});
         invalidate();
+        queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
       } else toast.error(r.message);
     },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Receive failed"),
   });
 
   if (isLoading || !po) {

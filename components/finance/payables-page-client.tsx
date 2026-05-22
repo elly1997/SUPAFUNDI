@@ -31,8 +31,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { createManualSupplierBill, listOpenPayables } from "@/lib/actions/payables";
-import { listSuppliers, paySupplierBill } from "@/lib/actions/suppliers";
+import { listOpenPayables } from "@/lib/actions/payables";
+import { listSuppliers } from "@/lib/actions/suppliers";
+import {
+  createManualBillApi,
+  paySupplierBillApi,
+} from "@/lib/api/daily-ops-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 
@@ -60,7 +64,7 @@ export function PayablesPageClient() {
 
   const createMut = useMutation({
     mutationFn: () =>
-      createManualSupplierBill({
+      createManualBillApi({
         supplierId,
         billDate,
         totalAmount: Number(billAmount),
@@ -72,11 +76,13 @@ export function PayablesPageClient() {
         void queryClient.invalidateQueries({ queryKey: ["payables-open"] });
       } else toast.error(r.message);
     },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Bill create failed"),
   });
 
   const payMut = useMutation({
     mutationFn: () =>
-      paySupplierBill({
+      paySupplierBillApi({
         billId: payBillId,
         amount: Number(payAmount),
         paymentMethod: "bank_transfer",
@@ -87,8 +93,11 @@ export function PayablesPageClient() {
         setPayOpen(false);
         void queryClient.invalidateQueries({ queryKey: ["payables-open"] });
         void queryClient.invalidateQueries({ queryKey: ["suppliers-list"] });
+        void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
       } else toast.error(r.message);
     },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Payment failed"),
   });
 
   return (

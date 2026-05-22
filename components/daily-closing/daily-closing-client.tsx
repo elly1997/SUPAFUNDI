@@ -22,11 +22,11 @@ import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
 import { KpiCard } from "@/components/ui/kpi-card";
 import {
-  buildClosingReportForWhatsApp,
-  computeDayCashSummary,
-  listUnreconciledDays,
-  reconcileDailyClosing,
-} from "@/lib/actions/daily-closing";
+  buildClosingWhatsAppApi,
+  fetchDayCashSummary,
+  fetchUnreconciledDays,
+  reconcileDailyClosingApi,
+} from "@/lib/api/daily-ops-fetch";
 import { formatClosingReportText } from "@/lib/utils/closing-report";
 import {
   resolveActiveOutletId,
@@ -68,13 +68,13 @@ export function DailyClosingClient({ outlets }: Props) {
 
   const { data: summary, isLoading } = useQuery({
     queryKey: ["day-cash-summary", effectiveOutlet, businessDate],
-    queryFn: () => computeDayCashSummary(effectiveOutlet!, businessDate),
+    queryFn: () => fetchDayCashSummary(effectiveOutlet!, businessDate),
     enabled: !!effectiveOutlet,
   });
 
   const { data: unreconciled = [] } = useQuery({
     queryKey: ["unreconciled-days", effectiveOutlet],
-    queryFn: () => listUnreconciledDays(effectiveOutlet, 30),
+    queryFn: () => fetchUnreconciledDays(effectiveOutlet, 30),
     enabled: !!effectiveOutlet,
   });
 
@@ -107,7 +107,7 @@ export function DailyClosingClient({ outlets }: Props) {
       if (!Number.isFinite(counted) || counted < 0) {
         throw new Error("Enter counted closing cash");
       }
-      return reconcileDailyClosing({
+      return reconcileDailyClosingApi({
         outletId: effectiveOutlet,
         businessDate,
         countedClosing: counted,
@@ -132,8 +132,9 @@ export function DailyClosingClient({ outlets }: Props) {
   const whatsappMut = useMutation({
     mutationFn: async () => {
       if (!effectiveOutlet) throw new Error("Select an outlet");
-      return buildClosingReportForWhatsApp(effectiveOutlet, businessDate);
+      return buildClosingWhatsAppApi(effectiveOutlet, businessDate);
     },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "WhatsApp failed"),
     onSuccess: async (r) => {
       if (!r.ok) {
         toast.error(r.message);
@@ -228,6 +229,13 @@ export function DailyClosingClient({ outlets }: Props) {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                <form
+                  className="space-y-4"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    reconcileMut.mutate();
+                  }}
+                >
                 <div className="space-y-1">
                   <Label>Opening override (optional)</Label>
                   <Input
@@ -244,6 +252,7 @@ export function DailyClosingClient({ outlets }: Props) {
                   <Input
                     type="number"
                     min={0}
+                    required
                     value={countedClosing}
                     onChange={(e) => setCountedClosing(e.target.value)}
                     className="font-money text-lg"
@@ -260,10 +269,9 @@ export function DailyClosingClient({ outlets }: Props) {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button
-                    type="button"
+                    type="submit"
                     className="btn-reconcile"
-                    disabled={reconcileMut.isPending}
-                    onClick={() => reconcileMut.mutate()}
+                    disabled={reconcileMut.isPending || !countedClosing.trim()}
                   >
                     {reconcileMut.isPending && (
                       <Loader2 className="mr-2 size-4 animate-spin" />
@@ -296,6 +304,7 @@ export function DailyClosingClient({ outlets }: Props) {
                     Print
                   </Button>
                 </div>
+                </form>
                 {summary.status === "reconciled" && summary.closingBalance != null ? (
                   <p className="text-sm text-inflow">
                     Reconciled · closing {formatTzs(summary.closingBalance)}

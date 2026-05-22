@@ -34,11 +34,8 @@ import {
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { listSuppliersForOrg } from "@/lib/actions/grn";
-import {
-  createPurchaseOrder,
-  createSupplier,
-  listPurchaseOrders,
-} from "@/lib/actions/purchase-orders";
+import { createSupplier, listPurchaseOrders } from "@/lib/actions/purchase-orders";
+import { createPurchaseOrderApi } from "@/lib/api/daily-ops-fetch";
 import { usePosProducts } from "@/hooks/usePosProducts";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
@@ -117,7 +114,7 @@ export function PurchaseOrdersPageClient() {
   };
 
   const createMut = useMutation({
-    mutationFn: createPurchaseOrder,
+    mutationFn: createPurchaseOrderApi,
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Purchase order created (draft)");
@@ -126,6 +123,8 @@ export function PurchaseOrdersPageClient() {
         queryClient.invalidateQueries({ queryKey: ["purchase-orders"] });
       } else toast.error(r.message);
     },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Create PO failed"),
   });
 
   const addLine = () => {

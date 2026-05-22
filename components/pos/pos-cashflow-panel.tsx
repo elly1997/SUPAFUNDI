@@ -10,8 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PosExpenseCategorySelect } from "@/components/pos/pos-expense-category-select";
 import { PosRecordDate } from "@/components/pos/pos-record-date";
-import { listExpenses, recordExpense } from "@/lib/actions/expenses";
-import { listSuppliersForOrg, receiveGoods } from "@/lib/actions/grn";
+import { listExpenses } from "@/lib/actions/expenses";
+import { listSuppliersForOrg } from "@/lib/actions/grn";
+import { receiveGoodsApi, recordExpenseApi } from "@/lib/api/daily-ops-fetch";
 import { cn } from "@/lib/utils";
 import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { formatTzs } from "@/lib/utils/currency";
@@ -66,19 +67,22 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
   const dayTotal = dayExpenses.reduce((s, e) => s + e.amount, 0);
 
   const recordMut = useMutation({
-    mutationFn: recordExpense,
+    mutationFn: recordExpenseApi,
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Expense recorded");
         setAmount("");
         setDescription("");
         queryClient.invalidateQueries({ queryKey: ["pos-expenses"] });
+        queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
       } else toast.error(r.message);
     },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Expense failed"),
   });
 
   const stockMut = useMutation({
-    mutationFn: receiveGoods,
+    mutationFn: receiveGoodsApi,
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Stock purchase recorded");
@@ -87,8 +91,11 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
         setProductId("");
         setDescription("");
         queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+        queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
       } else toast.error(r.message);
     },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Purchase failed"),
   });
 
   const selectedProduct = products.find((p) => p.id === productId);
