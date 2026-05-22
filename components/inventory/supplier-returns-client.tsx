@@ -21,8 +21,10 @@ import { createSupplierReturnApi } from "@/lib/api/procurement-fetch";
 import { usePosProducts } from "@/hooks/usePosProducts";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 export function SupplierReturnsClient() {
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
   const defaultOutlet = useAuthStore((s) => s.activeOutletId);
   const [outletId, setOutletId] = useState(defaultOutlet ?? "");
   const [supplierId, setSupplierId] = useState("");
@@ -182,6 +184,7 @@ export function SupplierReturnsClient() {
               outletId,
               supplierId: supplierId || null,
               paymentMethod,
+              businessDate,
               lines: [{ productId, quantity: qty, unitCost }],
             })
           }

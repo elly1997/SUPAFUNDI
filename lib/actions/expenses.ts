@@ -6,6 +6,7 @@ import { resolveExpenseAccountCode } from "@/lib/accounting/expense-coa";
 import { buildExpenseJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { requireOrgContext } from "@/lib/server/org-context";
+import { resolveBusinessDate } from "@/lib/utils/iso-date";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 const recordExpenseInput = z.object({
@@ -85,8 +86,7 @@ export async function recordExpense(
         amount: input.amount,
         payment_method: input.paymentMethod ?? (input.paidFromCash ? "cash" : "credit"),
         reference_no: input.referenceNo?.trim() || null,
-        expense_date:
-          input.expenseDate ?? new Date().toISOString().slice(0, 10),
+        expense_date: resolveBusinessDate(input.expenseDate),
         created_by: ctx.userId,
       })
       .select("id")
@@ -100,7 +100,7 @@ export async function recordExpense(
       sourceType: "expense",
       sourceId: expense.id,
       outletId: input.outletId ?? ctx.outletId ?? undefined,
-      entryDate: input.expenseDate,
+      entryDate: resolveBusinessDate(input.expenseDate),
       lines: buildExpenseJournalLines({
         amount: input.amount,
         paidFromCash: input.paidFromCash,

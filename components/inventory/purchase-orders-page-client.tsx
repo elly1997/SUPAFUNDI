@@ -47,6 +47,7 @@ import { usePosProducts } from "@/hooks/usePosProducts";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type Line = {
   productId: string;
@@ -59,6 +60,7 @@ const selectFieldClass =
   "h-10 w-full min-w-0 rounded-lg bg-surface-1 font-sans text-sm";
 
 export function PurchaseOrdersPageClient() {
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
   const defaultOutlet = useAuthStore((s) => s.activeOutletId);
   const [open, setOpen] = useState(false);
   const [outletId, setOutletId] = useState("");
@@ -499,6 +501,7 @@ export function PurchaseOrdersPageClient() {
                 createMut.mutate({
                   outletId,
                   supplierId: supplierId || null,
+                  businessDate,
                   taxRate: 18,
                   lines: lines.map((l) => ({
                     productId: l.productId,

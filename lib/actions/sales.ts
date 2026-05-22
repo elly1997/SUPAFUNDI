@@ -22,6 +22,7 @@ import {
   outletInvoicePrefix,
 } from "@/lib/utils/invoice-number";
 import type { PosCustomer } from "@/lib/api/customers-fetch";
+import { isoDateToTimestamptz, resolveBusinessDate } from "@/lib/utils/iso-date";
 import {
   maxSellQtyInUnit,
   sellQtyToBaseQty,
@@ -301,9 +302,8 @@ export async function completeSale(
       }
     }
 
-    const businessDate =
-      input.businessDate ?? new Date().toISOString().slice(0, 10);
-    const saleTimestamp = `${businessDate}T12:00:00.000Z`;
+    const businessDate = resolveBusinessDate(input.businessDate);
+    const saleTimestamp = isoDateToTimestamptz(businessDate);
 
     const invoiceNo = await generateInvoiceNo(
       supabase,
@@ -462,6 +462,7 @@ export async function completeSale(
         reference_type: "sale",
         notes: `Sale ${invoiceNo}`,
         created_by: ctx.userId,
+        created_at: saleTimestamp,
       });
       if (movErr) {
         await rollbackSale(supabase, sale.id, stockRollbacks);
@@ -789,7 +790,7 @@ export async function voidSale(
     const { data: sale } = await supabase
       .from("sales")
       .select(
-        "id, invoice_no, status, outlet_id, customer_id, balance_due, deposit_applied"
+        "id, invoice_no, status, outlet_id, customer_id, balance_due, deposit_applied, sale_date"
       )
       .eq("id", saleId)
       .eq("organization_id", ctx.organizationId)
@@ -847,6 +848,7 @@ export async function voidSale(
         reference_type: "sale_void",
         notes: `Void ${sale.invoice_no}`,
         created_by: ctx.userId,
+        created_at: sale.sale_date,
       });
     }
 

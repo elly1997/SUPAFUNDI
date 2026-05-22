@@ -202,17 +202,37 @@ export async function getProductItemStatement(
     .limit(limit);
   if (error) throw new Error(error.message);
 
+  const grnIds = (movements ?? [])
+    .filter((m) => m.reference_type === "grn" && m.reference_id)
+    .map((m) => m.reference_id as string);
+  const grnDateMap = new Map<string, string>();
+  if (grnIds.length > 0) {
+    const { data: grns } = await supabase
+      .from("grns")
+      .select("id, received_date")
+      .in("id", grnIds);
+    for (const g of grns ?? []) {
+      grnDateMap.set(g.id, `${g.received_date}T12:00:00.000Z`);
+    }
+  }
+
   const saleIds = (movements ?? [])
-    .filter((m) => m.reference_type === "sale" && m.reference_id)
+    .filter(
+      (m) =>
+        (m.reference_type === "sale" || m.reference_type === "sale_void") &&
+        m.reference_id
+    )
     .map((m) => m.reference_id as string);
   const saleNoMap = new Map<string, string>();
+  const saleDateMap = new Map<string, string>();
   if (saleIds.length > 0) {
     const { data: sales } = await supabase
       .from("sales")
-      .select("id, invoice_no")
+      .select("id, invoice_no, sale_date")
       .in("id", saleIds);
     for (const s of sales ?? []) {
       saleNoMap.set(s.id, s.invoice_no);
+      saleDateMap.set(s.id, s.sale_date);
     }
   }
 
@@ -248,9 +268,19 @@ export async function getProductItemStatement(
     } else if (m.notes) {
       reference = m.notes;
     }
+    let date = m.created_at as string;
+    if (m.reference_type === "grn" && m.reference_id) {
+      date = grnDateMap.get(m.reference_id) ?? date;
+    } else if (
+      (m.reference_type === "sale" || m.reference_type === "sale_void") &&
+      m.reference_id
+    ) {
+      date = saleDateMap.get(m.reference_id) ?? date;
+    }
+
     return {
       id: m.id,
-      date: m.created_at,
+      date,
       movementType: m.movement_type,
       label: typeLabels[m.movement_type] ?? m.movement_type,
       reference,

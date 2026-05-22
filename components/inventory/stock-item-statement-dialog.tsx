@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/table";
 import { fetchItemStatement } from "@/lib/api/inventory-catalog-fetch";
 import { cn } from "@/lib/utils";
-import { formatDateTimeEAT, formatTzs } from "@/lib/utils/currency";
+import { formatDateEAT, formatTzs } from "@/lib/utils/currency";
 
 type Props = {
   open: boolean;
@@ -74,7 +74,7 @@ export function StockItemStatementDialog({
               {lines.map((l) => (
                 <TableRow key={l.id}>
                   <TableCell className="text-xs whitespace-nowrap">
-                    {formatDateTimeEAT(l.date)}
+                    {formatDateEAT(l.date)}
                   </TableCell>
                   <TableCell className="text-xs">{l.label}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">

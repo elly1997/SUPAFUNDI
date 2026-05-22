@@ -20,3 +20,12 @@ export function formatDateTimeEAT(iso: string | Date): string {
     timeStyle: "short",
   }).format(d);
 }
+
+/** Business-day display (date only, EAT). */
+export function formatDateEAT(iso: string | Date): string {
+  const d = typeof iso === "string" ? new Date(iso) : iso;
+  return new Intl.DateTimeFormat("en-KE", {
+    timeZone: EAST_AFRICA_TZ,
+    dateStyle: "medium",
+  }).format(d);
+}

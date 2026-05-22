@@ -18,6 +18,7 @@ function apDb(supabase: SupabaseClient) {
 }
 import { listStockLevels } from "@/lib/actions/stock";
 import { computeVat, roundMoney } from "@/lib/utils/calculations";
+import { isoDateToTimestamptz, resolveBusinessDate } from "@/lib/utils/iso-date";
 import {
   formatPoReference,
   outletCodePrefix,
@@ -33,6 +34,7 @@ const createPoInput = z.object({
   outletId: z.string().uuid(),
   supplierId: z.string().uuid().nullable().optional(),
   expectedDate: z.string().optional(),
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   taxRate: z.number().min(0).max(100).default(18),
   notes: z.string().max(2000).optional(),
   lines: z.array(poLineInput).min(1),
@@ -52,6 +54,7 @@ const receivePoInput = z.object({
     .enum(["cash", "mpesa", "bank_transfer", "on_account"])
     .optional(),
   taxRate: z.number().min(0).max(100).default(18),
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 export type PurchaseOrderListRow = {
@@ -316,6 +319,7 @@ export async function createPurchaseOrder(
       input.outletId
     );
 
+    const orderDate = resolveBusinessDate(input.businessDate);
     const { data: po, error: poErr } = await supabase
       .from("purchase_orders")
       .insert({
@@ -324,6 +328,7 @@ export async function createPurchaseOrder(
         supplier_id: input.supplierId ?? null,
         reference_no: referenceNo,
         status: "draft",
+        order_date: orderDate,
         expected_date: input.expectedDate ?? null,
         subtotal,
         tax_amount: taxAmount,
@@ -465,6 +470,8 @@ export async function receiveFromPurchaseOrder(
     );
     const taxAmount = computeVat(inventoryValue, input.taxRate);
     const totalAmount = roundMoney(inventoryValue + taxAmount);
+    const receivedDate = resolveBusinessDate(input.businessDate);
+    const movementAt = isoDateToTimestamptz(receivedDate);
 
     const { data: grn, error: grnErr } = await supabase
       .from("grns")
@@ -475,6 +482,7 @@ export async function receiveFromPurchaseOrder(
         po_id: po.id,
         reference_no: po.reference_no,
         invoice_no: input.invoiceNo?.trim() || null,
+        received_date: receivedDate,
         payment_method:
           input.paymentMethod ??
           (input.onAccount === false ? "cash" : "on_account"),
@@ -561,6 +569,7 @@ export async function receiveFromPurchaseOrder(
         reference_type: "grn",
         notes: `PO ${po.reference_no ?? po.id.slice(0, 8)}`,
         created_by: ctx.userId,
+        created_at: movementAt,
       });
 
       const item = po.items.find((i) => i.id === line.poItemId)!;
@@ -576,6 +585,7 @@ export async function receiveFromPurchaseOrder(
       sourceType: "grn",
       sourceId: grn.id,
       outletId: po.outlet_id,
+      entryDate: receivedDate,
       lines: buildGrnJournalLines({
         inventoryValue,
         taxAmount,
@@ -590,7 +600,6 @@ export async function receiveFromPurchaseOrder(
       input.paymentMethod ??
       (input.onAccount === false ? "cash" : "on_account");
     const isCredit = paymentMethod === "on_account";
-    const receivedDate = new Date().toISOString().slice(0, 10);
 
     const updated = await getPurchaseOrderById(po.id);
     const allReceived =

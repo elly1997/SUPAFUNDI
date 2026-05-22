@@ -10,6 +10,7 @@ import { postJournalEntry } from "@/lib/actions/accounting";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
+import { isoDateToTimestamptz, resolveBusinessDate } from "@/lib/utils/iso-date";
 
 const lineInput = z.object({
   productId: z.string().uuid(),
@@ -35,8 +36,8 @@ export async function createSupplierReturn(
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
 
-    const returnDate =
-      input.businessDate ?? new Date().toISOString().slice(0, 10);
+    const returnDate = resolveBusinessDate(input.businessDate);
+    const movementAt = isoDateToTimestamptz(returnDate);
     const totalAmount = roundMoney(
       input.lines.reduce((s, l) => s + l.quantity * l.unitCost, 0)
     );
@@ -102,6 +103,7 @@ export async function createSupplierReturn(
         reference_type: "supplier_return",
         notes: input.notes?.trim() || null,
         created_by: ctx.userId,
+        created_at: movementAt,
       });
     }
 

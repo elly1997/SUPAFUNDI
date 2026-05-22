@@ -9,6 +9,7 @@ import { createReceivedPoFromGrn } from "@/lib/actions/purchase-orders";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { computeVat, roundMoney } from "@/lib/utils/calculations";
+import { isoDateToTimestamptz, resolveBusinessDate } from "@/lib/utils/iso-date";
 
 const grnLineInput = z.object({
   productId: z.string().uuid(),
@@ -87,8 +88,8 @@ export async function receiveGoods(
     const totalAmount = roundMoney(inventoryValue + taxAmount);
 
     const paymentMethod = resolvePurchasePayment(input);
-    const receivedDate =
-      input.businessDate ?? new Date().toISOString().slice(0, 10);
+    const receivedDate = resolveBusinessDate(input.businessDate);
+    const movementAt = isoDateToTimestamptz(receivedDate);
 
     const { data: grn, error: grnErr } = await supabase
       .from("grns")
@@ -187,6 +188,7 @@ export async function receiveGoods(
         reference_id: grn.id,
         reference_type: "grn",
         created_by: ctx.userId,
+        created_at: movementAt,
       });
       if (movErr) throw new Error(movErr.message);
     }

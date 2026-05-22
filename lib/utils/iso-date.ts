@@ -14,3 +14,12 @@ export function toIsoDate(date: Date): string {
 export function todayIso(): string {
   return toIsoDate(new Date());
 }
+
+/** UTC noon on a business date — use for sale_date, movement created_at, etc. */
+export function isoDateToTimestamptz(iso: string): string {
+  return `${iso}T12:00:00.000Z`;
+}
+
+export function resolveBusinessDate(iso?: string | null): string {
+  return iso?.trim() || todayIso();
+}
