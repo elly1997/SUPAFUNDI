@@ -15,6 +15,7 @@ export type DatePickerProps = {
   placeholder?: string;
   minDate?: string;
   maxDate?: string;
+  disabledDates?: string[];
   showPresets?: boolean;
   className?: string;
   buttonClassName?: string;
@@ -28,6 +29,7 @@ export function DatePicker({
   placeholder = "Pick date",
   minDate,
   maxDate,
+  disabledDates,
   showPresets = true,
   className,
   buttonClassName,
@@ -113,6 +115,7 @@ export function DatePicker({
             value={value}
             minDate={minDate}
             maxDate={maxDate}
+            disabledDates={disabledDates}
             onSelect={(iso) => {
               onChange(iso);
               setOpen(false);

@@ -2,7 +2,7 @@
 
 import { useMutation } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { payPurchaseOrderApi } from "@/lib/api/daily-ops-fetch";
 import { formatTzs } from "@/lib/utils/currency";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type Props = {
   open: boolean;
@@ -45,14 +46,21 @@ export function PoPayDialog({
   balance,
   onPaid,
 }: Props) {
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
   const [paymentMethod, setPaymentMethod] = useState<
     "cash" | "mpesa" | "bank_transfer"
   >("cash");
-  const [paymentDate, setPaymentDate] = useState(
-    new Date().toISOString().slice(0, 10)
-  );
+  const [paymentDate, setPaymentDate] = useState(businessDate);
   const [amount, setAmount] = useState(String(balance ?? totalAmount));
   const [paymentRef, setPaymentRef] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setPaymentDate(businessDate);
+    setAmount(String(balance ?? totalAmount));
+    setPaymentRef("");
+    setPaymentMethod("cash");
+  }, [open, businessDate, balance, totalAmount]);
 
   const payMut = useMutation({
     mutationFn: () =>

@@ -20,6 +20,7 @@ export async function fetchOpenCashSession(
 export async function openCashSessionApi(params: {
   outletId: string;
   openingBalance: number;
+  businessDate?: string;
   notes?: string;
 }): Promise<{ ok: true; sessionId: string } | { ok: false; message: string }> {
   const res = await fetch("/api/pos/cash-session/open", {
@@ -46,6 +47,7 @@ export async function openCashSessionApi(params: {
 export async function closeCashSessionApi(params: {
   sessionId: string;
   closingBalance: number;
+  businessDate?: string;
   notes?: string;
 }): Promise<{ ok: true; variance: number } | { ok: false; message: string }> {
   const res = await fetch("/api/pos/cash-session/close", {

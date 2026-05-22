@@ -2,6 +2,10 @@
 
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import {
+  fetchAllPaginated,
+  fetchByInChunks,
+} from "@/lib/supabase/query-chunks";
 import { listCategoriesForOrg } from "@/lib/actions/inventory";
 
 export type PosCategory = { id: string; name: string };
@@ -16,6 +20,97 @@ export type PosRecentProduct = {
   code: string | null;
   saleCount: number;
 };
+
+/** Full active catalogue for POS (paginated server-side; not capped at 500). */
+export type PosCatalogRow = {
+  id: string;
+  name: string;
+  code: string | null;
+  barcode: string | null;
+  unit: string;
+  categoryId: string | null;
+  retailPrice: number;
+  wholesalePrice: number;
+  stockQty: number;
+  costPrice: number;
+};
+
+export async function listPosCatalogProducts(
+  outletId: string
+): Promise<PosCatalogRow[]> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+
+  const products = await fetchAllPaginated(async (from, to) => {
+    const { data, error } = await supabase
+      .from("products")
+      .select("id, name, code, barcode, unit, category_id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("is_active", true)
+      .order("name", { ascending: true })
+      .range(from, to);
+    return { data, error };
+  });
+
+  if (!products.length) return [];
+
+  const ids = products.map((p) => p.id);
+
+  const [priceRows, stockRows] = await Promise.all([
+    fetchByInChunks(ids, async (chunk) => {
+      const { data, error } = await supabase
+        .from("product_prices")
+        .select("product_id, price_type, price")
+        .in("product_id", chunk)
+        .in("price_type", ["retail", "wholesale"])
+        .is("effective_to", null);
+      return { data, error };
+    }),
+    fetchAllPaginated(async (from, to) => {
+      const { data, error } = await supabase
+        .from("stock")
+        .select("product_id, quantity, cost_price")
+        .eq("outlet_id", outletId)
+        .range(from, to);
+      return { data, error };
+    }),
+  ]);
+
+  const retailMap = new Map<string, number>();
+  const wholesaleMap = new Map<string, number>();
+  for (const p of priceRows) {
+    const price = Number(p.price);
+    if (p.price_type === "retail") retailMap.set(p.product_id, price);
+    if (p.price_type === "wholesale") wholesaleMap.set(p.product_id, price);
+  }
+
+  const stockMap = new Map(
+    stockRows.map((s) => [
+      s.product_id,
+      { qty: Number(s.quantity), cost: Number(s.cost_price) },
+    ])
+  );
+
+  return products
+    .map((p) => {
+      const stock = stockMap.get(p.id);
+      const retailPrice = retailMap.get(p.id) ?? 0;
+      const wholesalePrice = wholesaleMap.get(p.id) ?? retailPrice;
+      return {
+        id: p.id,
+        name: p.name,
+        code: p.code,
+        barcode: p.barcode,
+        unit: p.unit,
+        categoryId: p.category_id as string | null,
+        retailPrice,
+        wholesalePrice,
+        stockQty: stock?.qty ?? 0,
+        costPrice: stock?.cost ?? 0,
+      };
+    })
+    .filter((p) => p.stockQty > 0 || p.retailPrice > 0 || p.wholesalePrice > 0);
+}
 
 /** Best-selling products at an outlet (last 30 days) for POS quick picks. */
 export async function getTopPosProducts(

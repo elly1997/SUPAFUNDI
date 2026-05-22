@@ -932,6 +932,7 @@ export type Database = {
           cashier_id?: string | null;
           opening_balance: number;
           status?: string;
+          opened_at?: string;
           notes?: string | null;
         };
         Update: {
@@ -939,6 +940,7 @@ export type Database = {
           expected_balance?: number;
           variance?: number;
           status?: string;
+          opened_at?: string;
           closed_at?: string;
           notes?: string | null;
         };

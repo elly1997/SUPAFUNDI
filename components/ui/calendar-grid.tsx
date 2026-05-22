@@ -31,6 +31,8 @@ export type CalendarGridProps = {
   onRangeSelect?: (from: string, to: string) => void;
   minDate?: string;
   maxDate?: string;
+  /** YYYY-MM-DD values that cannot be selected (e.g. reconciled days). */
+  disabledDates?: string[];
   className?: string;
 };
 
@@ -42,6 +44,7 @@ export function CalendarGrid({
   onRangeSelect,
   minDate,
   maxDate,
+  disabledDates,
   className,
 }: CalendarGridProps) {
   const selected = value ? parseIsoDate(value) : undefined;
@@ -51,6 +54,10 @@ export function CalendarGrid({
 
   const min = minDate ? parseIsoDate(minDate) : undefined;
   const max = maxDate ? parseIsoDate(maxDate) : undefined;
+  const disabledSet = useMemo(
+    () => new Set(disabledDates ?? []),
+    [disabledDates]
+  );
   const from = rangeFrom ? parseIsoDate(rangeFrom) : undefined;
   const to = rangeTo ? parseIsoDate(rangeTo) : undefined;
 
@@ -61,6 +68,8 @@ export function CalendarGrid({
   }, [viewMonth]);
 
   function isDisabled(day: Date) {
+    const iso = format(day, "yyyy-MM-dd");
+    if (disabledSet.has(iso)) return true;
     if (min && isBefore(day, min) && !isSameDay(day, min)) return true;
     if (max && isAfter(day, max) && !isSameDay(day, max)) return true;
     return false;

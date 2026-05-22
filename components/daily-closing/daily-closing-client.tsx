@@ -123,6 +123,9 @@ export function DailyClosingClient({ outlets }: Props) {
         setCountedClosing("");
         void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
         void queryClient.invalidateQueries({ queryKey: ["unreconciled-days"] });
+        void queryClient.invalidateQueries({
+          queryKey: ["reconciled-business-dates"],
+        });
         void queryClient.invalidateQueries({ queryKey: ["reports"] });
       } else toast.error(r.message);
     },

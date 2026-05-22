@@ -51,6 +51,7 @@ async function recordCustomerPaymentApi(
   >;
 }
 import { formatTzs } from "@/lib/utils/currency";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type Props = {
   open: boolean;
@@ -73,9 +74,9 @@ export function RecordPartyPaymentDialog({
   billId,
   onSuccess,
 }: Props) {
-  const today = new Date().toISOString().slice(0, 10);
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
   const [amount, setAmount] = useState("");
-  const [paymentDate, setPaymentDate] = useState(today);
+  const [paymentDate, setPaymentDate] = useState(businessDate);
   const [method, setMethod] = useState<
     "cash" | "mpesa" | "bank_transfer" | "cheque"
   >("cash");
@@ -124,11 +125,11 @@ export function RecordPartyPaymentDialog({
 
   useEffect(() => {
     if (!open) return;
-    setPaymentDate(today);
+    setPaymentDate(businessDate);
     setAmount("");
     setPayAll(false);
     setSelected({});
-  }, [open, today]);
+  }, [open, businessDate]);
 
   const mut = useMutation({
     mutationFn: async () => {

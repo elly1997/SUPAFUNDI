@@ -21,6 +21,7 @@ import {
   recordCustomerDepositApi,
 } from "@/lib/api/customers-fetch";
 import { useAuthStore } from "@/stores/authStore";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type Props = {
   customerId: string;
@@ -31,9 +32,9 @@ export function CustomerDepositForm({ customerId, customerName }: Props) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const outletId = useAuthStore((s) => s.activeOutletId);
-  const today = new Date().toISOString().slice(0, 10);
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
   const [amount, setAmount] = useState("");
-  const [paymentDate, setPaymentDate] = useState(today);
+  const [paymentDate, setPaymentDate] = useState(businessDate);
   const [paymentMethod, setPaymentMethod] = useState<
     "cash" | "mpesa" | "bank_transfer"
   >("cash");

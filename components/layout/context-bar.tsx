@@ -3,7 +3,7 @@
 import { Store } from "lucide-react";
 import { DatePicker } from "@/components/ui/date-picker";
 import { useAuthStore } from "@/stores/authStore";
-import { useBusinessDateStore } from "@/stores/businessDateStore";
+import { useGuardedBusinessDate } from "@/hooks/use-guarded-business-date";
 
 type ContextBarProps = {
   outlets: { id: string; name: string }[];
@@ -19,8 +19,8 @@ export function ContextBar({
   outletChangeDisabled,
 }: ContextBarProps) {
   const session = useAuthStore((s) => s.session);
-  const businessDate = useBusinessDateStore((s) => s.businessDate);
-  const setBusinessDate = useBusinessDateStore((s) => s.setBusinessDate);
+  const { businessDate, onBusinessDateChange, reconciledDates } =
+    useGuardedBusinessDate();
 
   const orgName = session?.organizationName;
 
@@ -52,7 +52,8 @@ export function ContextBar({
       </span>
       <DatePicker
         value={businessDate}
-        onChange={setBusinessDate}
+        onChange={onBusinessDateChange}
+        disabledDates={reconciledDates}
         showPresets
         buttonClassName="h-8 min-w-[9rem] border-0 bg-transparent shadow-none"
       />

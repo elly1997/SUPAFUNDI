@@ -22,6 +22,7 @@ import {
 } from "@/lib/api/cash-session-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type Props = {
   outletId: string;
@@ -41,6 +42,7 @@ export function CashSessionBar({
   const [opening, setOpening] = useState("0");
   const [closing, setClosing] = useState("");
   const queryClient = useQueryClient();
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
 
   const { data: session, isLoading } = useQuery({
     queryKey: ["cash-session", outletId],
@@ -96,7 +98,7 @@ export function CashSessionBar({
       toast.error("Select an active outlet first");
       return;
     }
-    openMut.mutate({ outletId, openingBalance });
+    openMut.mutate({ outletId, openingBalance, businessDate });
   };
 
   const statusPill = (
@@ -158,6 +160,9 @@ export function CashSessionBar({
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Open cash drawer</DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              Business date: <span className="font-medium text-foreground">{businessDate}</span>
+            </p>
           </DialogHeader>
           <form
             className="space-y-4"
@@ -222,6 +227,7 @@ export function CashSessionBar({
               closeMut.mutate({
                 sessionId: session.id,
                 closingBalance,
+                businessDate,
               });
             }}
           >

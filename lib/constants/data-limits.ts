@@ -1,6 +1,6 @@
 /**
- * Client-side fetch caps to avoid loading unbounded rows into memory (POS terminal).
- * Price list / stock use server pagination — no practical item cap after chunked queries.
+ * Legacy client cap for simple product lists (e.g. settings picker).
+ * POS uses `/api/pos/products` with full server-side pagination.
  */
 export const PRODUCT_CATALOG_PAGE_SIZE = 500;
 

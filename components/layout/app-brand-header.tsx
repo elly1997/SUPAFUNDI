@@ -29,7 +29,7 @@ import { updateActiveOutlet, signOut } from "@/lib/actions/auth";
 import { cn } from "@/lib/utils";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
-import { useBusinessDateStore } from "@/stores/businessDateStore";
+import { useGuardedBusinessDate } from "@/hooks/use-guarded-business-date";
 
 type OutletOption = {
   id: string;
@@ -50,7 +50,8 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
   const session = useAuthStore((s) => s.session);
   const activeOutletId = useAuthStore((s) => s.activeOutletId);
   const setActiveOutletId = useAuthStore((s) => s.setActiveOutletId);
-  const businessDate = useBusinessDateStore((s) => s.businessDate);
+  const { businessDate, onBusinessDateChange, reconciledDates } =
+    useGuardedBusinessDate();
 
   if (!session) {
     return null;
@@ -175,9 +176,8 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
       >
         <DatePicker
           value={businessDate}
-          onChange={(iso) =>
-            useBusinessDateStore.getState().setBusinessDate(iso)
-          }
+          onChange={onBusinessDateChange}
+          disabledDates={reconciledDates}
           showPresets
           className="sm:hidden"
           buttonClassName="h-8 min-w-[8.5rem] text-xs"
@@ -188,9 +188,8 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
         <span className="hidden text-xs text-muted-foreground sm:inline">·</span>
         <DatePicker
           value={businessDate}
-          onChange={(iso) =>
-            useBusinessDateStore.getState().setBusinessDate(iso)
-          }
+          onChange={onBusinessDateChange}
+          disabledDates={reconciledDates}
           showPresets
           className="hidden sm:inline-block"
           buttonClassName="h-8 min-w-[10rem] text-xs"

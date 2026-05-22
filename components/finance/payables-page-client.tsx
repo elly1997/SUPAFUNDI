@@ -45,6 +45,7 @@ import {
 } from "@/lib/constants/payment-accounts";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type SupplierPayMethod = "cash" | "mpesa" | "bank_transfer" | "cheque";
 
@@ -54,17 +55,16 @@ function formatPayableBillLabel(b: PayableBillRow): string {
 
 export function PayablesPageClient() {
   const queryClient = useQueryClient();
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
   const [billOpen, setBillOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
   const [supplierId, setSupplierId] = useState("");
-  const [billDate, setBillDate] = useState(new Date().toISOString().slice(0, 10));
+  const [billDate, setBillDate] = useState(businessDate);
   const [billAmount, setBillAmount] = useState("");
   const [payBillId, setPayBillId] = useState("");
   const [payAmount, setPayAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<SupplierPayMethod>("cash");
-  const [paymentDate, setPaymentDate] = useState(
-    () => new Date().toISOString().slice(0, 10)
-  );
+  const [paymentDate, setPaymentDate] = useState(businessDate);
   const [bankAccountId, setBankAccountId] = useState("");
   const [paymentRef, setPaymentRef] = useState("");
 
@@ -125,11 +125,16 @@ export function PayablesPageClient() {
 
   useEffect(() => {
     if (!payOpen) return;
-    setPaymentDate(new Date().toISOString().slice(0, 10));
+    setPaymentDate(businessDate);
     setPaymentMethod("cash");
     setBankAccountId("");
     setPaymentRef("");
-  }, [payOpen]);
+  }, [payOpen, businessDate]);
+
+  useEffect(() => {
+    if (!billOpen) return;
+    setBillDate(businessDate);
+  }, [billOpen, businessDate]);
 
   useEffect(() => {
     if (!payOpen || payBillId || bills.length === 0) return;

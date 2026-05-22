@@ -16,7 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { formatTzs } from "@/lib/utils/currency";
+import { formatDateEAT, formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
 
 export function CashSessionsPageClient() {
@@ -84,7 +84,7 @@ export function CashSessionsPageClient() {
                 {sessions.map((s) => (
                   <TableRow key={s.id}>
                     <TableCell className="text-xs">
-                      {new Date(s.opened_at).toLocaleString()}
+                      {formatDateEAT(s.opened_at)}
                     </TableCell>
                     <TableCell className="capitalize">{s.status}</TableCell>
                     <TableCell className="text-right font-money">

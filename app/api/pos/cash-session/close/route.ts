@@ -8,6 +8,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       sessionId?: string;
       closingBalance?: number;
+      businessDate?: string;
       notes?: string;
     };
     if (!body.sessionId) {
@@ -19,6 +20,7 @@ export async function POST(request: Request) {
     const result = await closeCashSession({
       sessionId: body.sessionId,
       closingBalance: Number(body.closingBalance) || 0,
+      businessDate: body.businessDate,
       notes: body.notes,
     });
     if (!result.ok) {

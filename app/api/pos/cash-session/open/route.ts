@@ -8,6 +8,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as {
       outletId?: string;
       openingBalance?: number;
+      businessDate?: string;
       notes?: string;
     };
     if (!body.outletId) {
@@ -19,6 +20,7 @@ export async function POST(request: Request) {
     const result = await openCashSession({
       outletId: body.outletId,
       openingBalance: Number(body.openingBalance) || 0,
+      businessDate: body.businessDate,
       notes: body.notes,
     });
     if (!result.ok) {

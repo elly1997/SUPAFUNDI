@@ -4,7 +4,14 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { getReconciledDatesInRange } from "@/lib/actions/daily-closing";
 import { roundMoney } from "@/lib/utils/calculations";
+import {
+  businessDateFromTimestamptz,
+  businessDayBounds,
+  isoDateToTimestamptz,
+  resolveBusinessDate,
+} from "@/lib/utils/iso-date";
 
 export type CashSessionRow = {
   id: string;
@@ -87,6 +94,7 @@ export async function getOpenCashSession(
 const openSessionInput = z.object({
   outletId: z.string().uuid(),
   openingBalance: z.coerce.number().nonnegative(),
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   notes: z.string().max(500).optional(),
 });
 
@@ -103,6 +111,20 @@ export async function openCashSession(
       return { ok: false, message: "A cash session is already open for this outlet." };
     }
 
+    const businessDate = resolveBusinessDate(input.businessDate);
+    const reconciled = await getReconciledDatesInRange(
+      businessDate,
+      businessDate,
+      input.outletId
+    );
+    if (reconciled.includes(businessDate)) {
+      return {
+        ok: false,
+        message:
+          "This business day is already reconciled. Choose another date in the header.",
+      };
+    }
+
     const { data, error } = await supabase
       .from("cash_sessions")
       .insert({
@@ -111,6 +133,7 @@ export async function openCashSession(
         cashier_id: ctx.userId,
         opening_balance: input.openingBalance,
         status: "open",
+        opened_at: isoDateToTimestamptz(businessDate),
         notes: input.notes?.trim() || null,
       })
       .select("id")
@@ -132,6 +155,7 @@ export async function openCashSession(
 const closeSessionInput = z.object({
   sessionId: z.string().uuid(),
   closingBalance: z.coerce.number().nonnegative(),
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   notes: z.string().max(500).optional(),
 });
 
@@ -153,13 +177,16 @@ export async function closeCashSession(
       return { ok: false, message: "Session not found or already closed." };
     }
 
+    const sessionBusinessDate = businessDateFromTimestamptz(session.opened_at);
+    const { from, to } = businessDayBounds(sessionBusinessDate);
     let cashQuery = supabase
       .from("payments")
       .select("amount")
       .eq("organization_id", ctx.organizationId)
       .eq("payment_method", "cash")
       .eq("status", "completed")
-      .gte("payment_date", session.opened_at);
+      .gte("payment_date", from)
+      .lte("payment_date", to);
     if (session.outlet_id) {
       cashQuery = cashQuery.eq("outlet_id", session.outlet_id);
     }
@@ -179,7 +206,9 @@ export async function closeCashSession(
         expected_balance: expected,
         variance,
         status: "closed",
-        closed_at: new Date().toISOString(),
+        closed_at: isoDateToTimestamptz(
+          resolveBusinessDate(input.businessDate ?? sessionBusinessDate)
+        ),
         notes: input.notes?.trim() || null,
       })
       .eq("id", input.sessionId);

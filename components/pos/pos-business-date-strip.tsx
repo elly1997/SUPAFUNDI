@@ -7,6 +7,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { cn } from "@/lib/utils";
 import { todayIso } from "@/lib/utils/iso-date";
+import { useGuardedBusinessDate } from "@/hooks/use-guarded-business-date";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type Props = {
@@ -27,8 +28,8 @@ export function PosBusinessDateStrip({
   className,
   compact,
 }: Props) {
-  const businessDate = useBusinessDateStore((s) => s.businessDate);
-  const setBusinessDate = useBusinessDateStore((s) => s.setBusinessDate);
+  const { businessDate, onBusinessDateChange, reconciledDates } =
+    useGuardedBusinessDate();
   const resetToToday = useBusinessDateStore((s) => s.resetToToday);
 
   const isBackdated = businessDate !== todayIso();
@@ -44,7 +45,8 @@ export function PosBusinessDateStrip({
         <DatePicker
           label="Record on"
           value={businessDate}
-          onChange={setBusinessDate}
+          onChange={onBusinessDateChange}
+          disabledDates={reconciledDates}
           buttonClassName="h-8 min-w-0 flex-1 sm:min-w-[11rem]"
           align="start"
         />
