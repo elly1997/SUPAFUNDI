@@ -119,6 +119,39 @@ export async function receiveGoodsApi(
 }
 
 /** Expenses */
+export async function fetchExpenses(
+  limit = 50,
+  filters?: {
+    outletId?: string | null;
+    fromDate?: string;
+    toDate?: string;
+  }
+): Promise<
+  import("@/lib/actions/expenses").ExpenseListRow[]
+> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (filters?.outletId) params.set("outletId", filters.outletId);
+  if (filters?.fromDate) params.set("fromDate", filters.fromDate);
+  if (filters?.toDate) params.set("toDate", filters.toDate);
+  const res = await fetch(`/api/finance/expenses?${params}`, {
+    credentials: "include",
+    cache: "no-store",
+  });
+  const body = await readJson<{ expenses: import("@/lib/actions/expenses").ExpenseListRow[] }>(res);
+  return body.expenses ?? [];
+}
+
+export async function fetchOpenPayables(): Promise<
+  import("@/lib/actions/payables").PayableBillRow[]
+> {
+  const res = await fetch("/api/finance/payables/open", {
+    credentials: "include",
+    cache: "no-store",
+  });
+  const body = await readJson<{ bills: import("@/lib/actions/payables").PayableBillRow[] }>(res);
+  return body.bills ?? [];
+}
+
 export async function recordExpenseApi(
   payload: Parameters<
     typeof import("@/lib/actions/expenses").recordExpense

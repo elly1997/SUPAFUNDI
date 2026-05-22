@@ -33,10 +33,10 @@ import {
 } from "@/components/ui/table";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
-import { listPurchaseOrders } from "@/lib/actions/purchase-orders";
 import { PoPayDialog } from "@/components/procurement/po-pay-dialog";
 import { PoStatusBadges } from "@/components/procurement/po-status-badges";
 import { createPurchaseOrderApi } from "@/lib/api/daily-ops-fetch";
+import { fetchPurchaseOrders } from "@/lib/api/procurement-fetch";
 import {
   createSupplierApi,
   fetchSupplierOptions,
@@ -78,7 +78,7 @@ export function PurchaseOrdersPageClient() {
 
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ["purchase-orders"],
-    queryFn: listPurchaseOrders,
+    queryFn: fetchPurchaseOrders,
   });
   const { data: outlets = [], isLoading: outletsLoading } = useQuery({
     queryKey: ["org-outlets"],

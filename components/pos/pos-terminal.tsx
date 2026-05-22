@@ -50,7 +50,8 @@ import {
   type PosPricingMode,
   type PosProductRow,
 } from "@/hooks/usePosProducts";
-import type { CompleteSaleInput, PosCustomer } from "@/lib/actions/sales";
+import type { CompleteSaleInput } from "@/lib/actions/sales";
+import type { PosCustomer } from "@/lib/api/customers-fetch";
 import { completeSaleApi } from "@/lib/api/daily-ops-fetch";
 import { cartLineKey, resolveUnitPrice } from "@/lib/products/units";
 import { cn } from "@/lib/utils";

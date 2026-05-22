@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { fetchSupplierOptions } from "@/lib/api/suppliers-fetch";
-import { createSupplierReturn } from "@/lib/actions/supplier-returns";
+import { createSupplierReturnApi } from "@/lib/api/procurement-fetch";
 import { usePosProducts } from "@/hooks/usePosProducts";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
@@ -44,7 +44,7 @@ export function SupplierReturnsClient() {
   const { data: products = [] } = usePosProducts(outletId || null);
 
   const returnMut = useMutation({
-    mutationFn: createSupplierReturn,
+    mutationFn: createSupplierReturnApi,
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Return posted — stock reduced");

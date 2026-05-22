@@ -8,8 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PosExpenseCategorySelect } from "@/components/pos/pos-expense-category-select";
-import { listExpenses } from "@/lib/actions/expenses";
-import { recordExpenseApi } from "@/lib/api/daily-ops-fetch";
+import { fetchExpenses, recordExpenseApi } from "@/lib/api/daily-ops-fetch";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
@@ -25,7 +24,7 @@ export function PosExpensesPanel() {
 
   const { data: expenses = [], isLoading } = useQuery({
     queryKey: ["pos-expenses"],
-    queryFn: () => listExpenses(15),
+    queryFn: () => fetchExpenses(15),
   });
 
   const todayExpenses = expenses.filter((e) => e.expense_date === businessDate);

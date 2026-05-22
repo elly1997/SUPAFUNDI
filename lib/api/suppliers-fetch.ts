@@ -1,4 +1,7 @@
-import type { SupplierListRow } from "@/lib/actions/suppliers";
+import type {
+  SupplierDetail,
+  SupplierListRow,
+} from "@/lib/actions/suppliers";
 
 export type SupplierOption = { id: string; name: string };
 
@@ -22,6 +25,21 @@ export async function fetchSuppliers(): Promise<SupplierListRow[]> {
   }
   const body = (await res.json()) as { suppliers: SupplierListRow[] };
   return body.suppliers ?? [];
+}
+
+export async function fetchSupplierDetail(
+  id: string
+): Promise<SupplierDetail | null> {
+  const res = await fetch(`/api/suppliers/${id}`, {
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(await readJsonError(res));
+  }
+  const body = (await res.json()) as { supplier: SupplierDetail };
+  return body.supplier ?? null;
 }
 
 export async function fetchSupplierOptions(): Promise<SupplierOption[]> {

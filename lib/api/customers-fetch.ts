@@ -106,6 +106,37 @@ export const CUSTOMER_QUERY_KEYS = [
   "credit-balances",
 ] as const;
 
+export async function recordCustomerDepositApi(
+  params: Parameters<
+    typeof import("@/lib/actions/customers").recordCustomerDeposit
+  >[0]
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await fetch("/api/customers/deposit", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  let body: { ok: true } | { ok: false; message?: string };
+  try {
+    body = (await res.json()) as typeof body;
+  } catch {
+    return { ok: false, message: res.statusText || "Deposit failed" };
+  }
+  if (!res.ok) {
+    return {
+      ok: false,
+      message:
+        ("message" in body && body.message) || "Deposit failed",
+    };
+  }
+  if (body.ok) return { ok: true };
+  return {
+    ok: false,
+    message: ("message" in body && body.message) || "Deposit failed",
+  };
+}
+
 export function invalidateCustomerQueries(
   queryClient: { invalidateQueries: (opts: { queryKey: string[] }) => void }
 ) {

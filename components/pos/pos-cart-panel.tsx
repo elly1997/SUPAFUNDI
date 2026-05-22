@@ -10,7 +10,7 @@ import { maxSellFromCartFields } from "@/lib/products/units";
 import { formatTzs } from "@/lib/utils/currency";
 import { PosInlineCheckout } from "@/components/pos/pos-inline-checkout";
 import type { PaymentMethod } from "@/components/pos/pos-payment-chips";
-import type { PosCustomer } from "@/lib/actions/sales";
+import type { PosCustomer } from "@/lib/api/customers-fetch";
 import type { AddProductResult, CartLine } from "@/stores/cartStore";
 
 type Props = {

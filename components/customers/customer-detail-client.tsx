@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import { invalidateCustomerQueries } from "@/lib/api/customers-fetch";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { FileText, Wallet } from "lucide-react";
@@ -25,7 +26,7 @@ export function CustomerDetailActions({
   const [stmtOpen, setStmtOpen] = useState(false);
 
   const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: ["customers"] });
+    invalidateCustomerQueries(queryClient);
     router.refresh();
   };
 

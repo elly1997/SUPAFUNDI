@@ -10,8 +10,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PosExpenseCategorySelect } from "@/components/pos/pos-expense-category-select";
 import { PosRecordDate } from "@/components/pos/pos-record-date";
-import { listExpenses } from "@/lib/actions/expenses";
-import { receiveGoodsApi, recordExpenseApi } from "@/lib/api/daily-ops-fetch";
+import {
+  fetchExpenses,
+  receiveGoodsApi,
+  recordExpenseApi,
+} from "@/lib/api/daily-ops-fetch";
 import {
   createSupplierApi,
   fetchSupplierOptions,
@@ -56,7 +59,7 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
   const { data: expenses = [], isLoading: expensesLoading } = useQuery({
     queryKey: ["pos-expenses", outletId, businessDate],
     queryFn: () =>
-      listExpenses(80, {
+      fetchExpenses(80, {
         outletId,
         fromDate: businessDate,
         toDate: businessDate,

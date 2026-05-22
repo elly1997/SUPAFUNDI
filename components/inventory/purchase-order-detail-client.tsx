@@ -17,7 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { getPurchaseOrderById } from "@/lib/actions/purchase-orders";
+import { fetchPurchaseOrderById } from "@/lib/api/procurement-fetch";
 import {
   cancelPurchaseOrderApi,
   receiveFromPurchaseOrderApi,
@@ -40,7 +40,7 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
 
   const { data: po, isLoading } = useQuery({
     queryKey: ["purchase-order", poId],
-    queryFn: () => getPurchaseOrderById(poId),
+    queryFn: () => fetchPurchaseOrderById(poId),
   });
 
   const invalidate = () => {

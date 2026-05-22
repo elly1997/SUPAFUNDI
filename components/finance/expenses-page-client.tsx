@@ -31,8 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { listExpenses } from "@/lib/actions/expenses";
-import { recordExpenseApi } from "@/lib/api/daily-ops-fetch";
+import { fetchExpenses, recordExpenseApi } from "@/lib/api/daily-ops-fetch";
 import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { formatTzs } from "@/lib/utils/currency";
 
@@ -46,7 +45,7 @@ export function ExpensesPageClient() {
 
   const { data: expenses = [], isLoading } = useQuery({
     queryKey: ["expenses"],
-    queryFn: () => listExpenses(50),
+    queryFn: () => fetchExpenses(50),
   });
 
   const recordMut = useMutation({

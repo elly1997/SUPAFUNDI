@@ -31,10 +31,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { listOpenPayables } from "@/lib/actions/payables";
 import { fetchSuppliers, invalidateSupplierQueries } from "@/lib/api/suppliers-fetch";
 import {
   createManualBillApi,
+  fetchOpenPayables,
   paySupplierBillApi,
 } from "@/lib/api/daily-ops-fetch";
 import { cn } from "@/lib/utils";
@@ -52,7 +52,7 @@ export function PayablesPageClient() {
 
   const { data: bills = [], isLoading } = useQuery({
     queryKey: ["payables-open"],
-    queryFn: listOpenPayables,
+    queryFn: fetchOpenPayables,
   });
 
   const { data: suppliers = [] } = useQuery({

@@ -16,7 +16,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { fetchPosPaymentAccounts } from "@/lib/api/banking-fetch";
-import { recordCustomerDeposit } from "@/lib/actions/customers";
+import {
+  invalidateCustomerQueries,
+  recordCustomerDepositApi,
+} from "@/lib/api/customers-fetch";
 import { useAuthStore } from "@/stores/authStore";
 
 type Props = {
@@ -49,12 +52,12 @@ export function CustomerDepositForm({ customerId, customerName }: Props) {
   });
 
   const mut = useMutation({
-    mutationFn: recordCustomerDeposit,
+    mutationFn: recordCustomerDepositApi,
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Deposit recorded");
         setAmount("");
-        void queryClient.invalidateQueries({ queryKey: ["customers"] });
+        invalidateCustomerQueries(queryClient);
         router.refresh();
       } else toast.error(r.message);
     },

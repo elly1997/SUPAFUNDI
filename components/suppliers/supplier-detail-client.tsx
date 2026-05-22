@@ -16,7 +16,10 @@ import {
 } from "@/components/ui/table";
 import { PartyStatementDialog } from "@/components/finance/party-statement-dialog";
 import { RecordPartyPaymentDialog } from "@/components/finance/record-party-payment-dialog";
-import { getSupplierDetail } from "@/lib/actions/suppliers";
+import {
+  fetchSupplierDetail,
+  invalidateSupplierQueries,
+} from "@/lib/api/suppliers-fetch";
 import { formatTzs } from "@/lib/utils/currency";
 
 type Props = { supplierId: string };
@@ -29,7 +32,7 @@ export function SupplierDetailClient({ supplierId }: Props) {
 
   const { data: supplier, isLoading } = useQuery({
     queryKey: ["supplier", supplierId],
-    queryFn: () => getSupplierDetail(supplierId),
+    queryFn: () => fetchSupplierDetail(supplierId),
   });
 
   if (isLoading) {
@@ -171,9 +174,12 @@ export function SupplierDetailClient({ supplierId }: Props) {
         partyName={supplier.name}
         maxAmount={supplier.payables_balance}
         billId={billId}
-        onSuccess={() =>
-          queryClient.invalidateQueries({ queryKey: ["supplier", supplierId] })
-        }
+        onSuccess={() => {
+          void queryClient.invalidateQueries({
+            queryKey: ["supplier", supplierId],
+          });
+          invalidateSupplierQueries(queryClient);
+        }}
       />
       <PartyStatementDialog
         open={stmtOpen}
