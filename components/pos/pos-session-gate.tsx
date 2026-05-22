@@ -5,7 +5,7 @@ import { AlertTriangle, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CashSessionBar } from "@/components/pos/cash-session-bar";
 import { canBypassCashSession } from "@/lib/auth/roles";
-import { getOpenCashSession } from "@/lib/actions/cash-sessions";
+import { fetchOpenCashSession } from "@/lib/api/cash-session-fetch";
 import { useClientMounted } from "@/hooks/useClientMounted";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
@@ -33,7 +33,7 @@ export function PosSessionGate({
 
   const { data: session, isLoading } = useQuery({
     queryKey: ["cash-session", outletId],
-    queryFn: () => getOpenCashSession(outletId),
+    queryFn: () => fetchOpenCashSession(outletId),
     enabled: mounted,
   });
 

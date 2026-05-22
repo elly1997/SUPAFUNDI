@@ -23,8 +23,33 @@ import {
 } from "@/components/ui/select";
 import { fetchCustomerOpenInvoices } from "@/lib/api/party-statements-fetch";
 import { fetchPosPaymentAccounts } from "@/lib/api/banking-fetch";
-import { recordCustomerPayment } from "@/lib/actions/credit";
-import { paySupplier } from "@/lib/actions/suppliers";
+async function paySupplierApi(
+  params: Parameters<typeof import("@/lib/actions/suppliers").paySupplier>[0]
+) {
+  const res = await fetch("/api/finance/party-payment/supplier", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return res.json() as Promise<
+    { ok: true } | { ok: false; message: string }
+  >;
+}
+
+async function recordCustomerPaymentApi(
+  params: Parameters<typeof import("@/lib/actions/credit").recordCustomerPayment>[0]
+) {
+  const res = await fetch("/api/finance/party-payment/customer", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return res.json() as Promise<
+    { ok: true } | { ok: false; message: string }
+  >;
+}
 import { formatTzs } from "@/lib/utils/currency";
 
 type Props = {
@@ -101,7 +126,7 @@ export function RecordPartyPaymentDialog({
       if (!amt || amt <= 0) throw new Error("Enter a valid amount");
 
       if (partyType === "supplier") {
-        return paySupplier({
+        return paySupplierApi({
           supplierId: partyId,
           amount: amt,
           paymentMethod: method === "cheque" ? "cheque" : method,
@@ -116,7 +141,7 @@ export function RecordPartyPaymentDialog({
         .filter(([, v]) => v && Number(v) > 0)
         .map(([saleId, v]) => ({ saleId, amount: Number(v) }));
 
-      return recordCustomerPayment({
+      return recordCustomerPaymentApi({
         customerId: partyId,
         amount: amt,
         paymentMethod:
@@ -135,7 +160,9 @@ export function RecordPartyPaymentDialog({
         onSuccess?.();
       } else toast.error(r.message);
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Payment failed");
+    },
   });
 
   return (

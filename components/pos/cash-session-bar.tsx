@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Banknote, Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -14,20 +15,27 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
 import {
-  closeCashSession,
-  getOpenCashSession,
-  openCashSession,
-} from "@/lib/actions/cash-sessions";
+  closeCashSessionApi,
+  fetchOpenCashSession,
+  openCashSessionApi,
+} from "@/lib/api/cash-session-fetch";
+import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 
 type Props = {
   outletId: string;
   variant?: "bar" | "inline";
+  /** After opening, navigate here (e.g. from finance cash-sessions page). */
+  redirectAfterOpen?: string;
 };
 
-export function CashSessionBar({ outletId, variant = "bar" }: Props) {
+export function CashSessionBar({
+  outletId,
+  variant = "bar",
+  redirectAfterOpen,
+}: Props) {
+  const router = useRouter();
   const [openDialog, setOpenDialog] = useState(false);
   const [closeDialog, setCloseDialog] = useState(false);
   const [opening, setOpening] = useState("0");
@@ -36,30 +44,60 @@ export function CashSessionBar({ outletId, variant = "bar" }: Props) {
 
   const { data: session, isLoading } = useQuery({
     queryKey: ["cash-session", outletId],
-    queryFn: () => getOpenCashSession(outletId),
+    queryFn: () => fetchOpenCashSession(outletId),
+    enabled: !!outletId,
   });
 
   const openMut = useMutation({
-    mutationFn: openCashSession,
-    onSuccess: (r) => {
+    mutationFn: openCashSessionApi,
+    onSuccess: async (r) => {
       if (r.ok) {
         toast.success("Cash drawer opened");
         setOpenDialog(false);
-        queryClient.invalidateQueries({ queryKey: ["cash-session", outletId] });
-      } else toast.error(r.message);
+        await queryClient.invalidateQueries({ queryKey: ["cash-session", outletId] });
+        await queryClient.invalidateQueries({ queryKey: ["cash-sessions-history"] });
+        if (redirectAfterOpen) {
+          router.push(redirectAfterOpen);
+        }
+      } else {
+        toast.error(r.message);
+      }
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Could not open drawer");
     },
   });
 
   const closeMut = useMutation({
-    mutationFn: closeCashSession,
-    onSuccess: (r) => {
+    mutationFn: closeCashSessionApi,
+    onSuccess: async (r) => {
       if (r.ok) {
         toast.success(`Drawer closed. Variance: ${formatTzs(r.variance)}`);
         setCloseDialog(false);
-        queryClient.invalidateQueries({ queryKey: ["cash-session", outletId] });
-      } else toast.error(r.message);
+        setClosing("");
+        await queryClient.invalidateQueries({ queryKey: ["cash-session", outletId] });
+        await queryClient.invalidateQueries({ queryKey: ["cash-sessions-history"] });
+      } else {
+        toast.error(r.message);
+      }
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Could not close drawer");
     },
   });
+
+  const handleOpen = () => {
+    const openingBalance = Number(opening);
+    if (!Number.isFinite(openingBalance) || openingBalance < 0) {
+      toast.error("Enter a valid opening float");
+      return;
+    }
+    if (!outletId) {
+      toast.error("Select an active outlet first");
+      return;
+    }
+    openMut.mutate({ outletId, openingBalance });
+  };
 
   const statusPill = (
     <span
@@ -83,6 +121,7 @@ export function CashSessionBar({ outletId, variant = "bar" }: Props) {
 
   const actionButton = session ? (
     <Button
+      type="button"
       size="sm"
       variant="outline"
       className="h-9 shrink-0 rounded-full px-4"
@@ -92,6 +131,7 @@ export function CashSessionBar({ outletId, variant = "bar" }: Props) {
     </Button>
   ) : (
     <Button
+      type="button"
       size="sm"
       className="h-9 shrink-0 rounded-full px-4"
       onClick={() => setOpenDialog(true)}
@@ -119,34 +159,48 @@ export function CashSessionBar({ outletId, variant = "bar" }: Props) {
           <DialogHeader>
             <DialogTitle>Open cash drawer</DialogTitle>
           </DialogHeader>
-          <div className="space-y-2">
-            <Label>Opening float (TZS)</Label>
-            <Input
-              type="number"
-              min={0}
-              className="h-11 rounded-xl"
-              value={opening}
-              onChange={(e) => setOpening(e.target.value)}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              className="h-11 w-full rounded-xl"
-              disabled={openMut.isPending}
-              onClick={() =>
-                openMut.mutate({
-                  outletId,
-                  openingBalance: Number(opening) || 0,
-                })
-              }
-            >
-              {openMut.isPending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                "Open drawer"
-              )}
-            </Button>
-          </DialogFooter>
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleOpen();
+            }}
+          >
+            <div className="space-y-2">
+              <Label htmlFor="opening-float">Opening float (TZS)</Label>
+              <Input
+                id="opening-float"
+                type="number"
+                min={0}
+                step={1}
+                className="h-11 rounded-xl font-money"
+                value={opening}
+                onChange={(e) => setOpening(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 rounded-xl"
+                onClick={() => setOpenDialog(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                className="h-11 flex-1 rounded-xl"
+                disabled={openMut.isPending || !outletId}
+              >
+                {openMut.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  "Open drawer"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -155,31 +209,53 @@ export function CashSessionBar({ outletId, variant = "bar" }: Props) {
           <DialogHeader>
             <DialogTitle>Close cash drawer</DialogTitle>
           </DialogHeader>
-          <div className="space-y-2">
-            <Label>Counted cash in drawer (TZS)</Label>
-            <Input
-              type="number"
-              min={0}
-              className="h-11 rounded-xl"
-              value={closing}
-              onChange={(e) => setClosing(e.target.value)}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              className="h-11 w-full rounded-xl"
-              disabled={closeMut.isPending || !session}
-              onClick={() =>
-                session &&
-                closeMut.mutate({
-                  sessionId: session.id,
-                  closingBalance: Number(closing) || 0,
-                })
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!session) return;
+              const closingBalance = Number(closing);
+              if (!Number.isFinite(closingBalance) || closingBalance < 0) {
+                toast.error("Enter counted cash in drawer");
+                return;
               }
-            >
-              {closeMut.isPending ? "Closing…" : "Close drawer"}
-            </Button>
-          </DialogFooter>
+              closeMut.mutate({
+                sessionId: session.id,
+                closingBalance,
+              });
+            }}
+          >
+            <div className="space-y-2">
+              <Label htmlFor="closing-count">Counted cash in drawer (TZS)</Label>
+              <Input
+                id="closing-count"
+                type="number"
+                min={0}
+                step={1}
+                className="h-11 rounded-xl font-money"
+                value={closing}
+                onChange={(e) => setClosing(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 rounded-xl"
+                onClick={() => setCloseDialog(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                className="h-11 flex-1 rounded-xl"
+                disabled={closeMut.isPending || !session}
+              >
+                {closeMut.isPending ? "Closing…" : "Close drawer"}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </>

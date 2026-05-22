@@ -1,11 +1,12 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Truck } from "lucide-react";
+import { ExternalLink, FileText, Loader2, Plus, Truck, Wallet } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -24,15 +25,27 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { PartyStatementDialog } from "@/components/finance/party-statement-dialog";
+import { RecordPartyPaymentDialog } from "@/components/finance/record-party-payment-dialog";
 import { createSupplierRecord, listSuppliers } from "@/lib/actions/suppliers";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 
 export function SuppliersPageClient() {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [openingBalance, setOpeningBalance] = useState("");
+  const [paySupplier, setPaySupplier] = useState<{
+    id: string;
+    name: string;
+    balance: number;
+  } | null>(null);
+  const [stmtSupplier, setStmtSupplier] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const queryClient = useQueryClient();
 
   const { data: suppliers = [], isLoading } = useQuery({
@@ -43,7 +56,7 @@ export function SuppliersPageClient() {
   const createMut = useMutation({
     mutationFn: () =>
       createSupplierRecord({
-        name,
+        name: name.trim(),
         phone: phone || undefined,
         creditLimit: 0,
         creditDays: 30,
@@ -57,7 +70,11 @@ export function SuppliersPageClient() {
         setPhone("");
         setOpeningBalance("");
         queryClient.invalidateQueries({ queryKey: ["suppliers"] });
+        router.push(`/suppliers/${r.id}`);
       } else toast.error(r.message);
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Could not create supplier");
     },
   });
 
@@ -87,7 +104,7 @@ export function SuppliersPageClient() {
             <Truck className="size-5" />
             Suppliers
           </CardTitle>
-          <Button onClick={() => setOpen(true)}>
+          <Button type="button" onClick={() => setOpen(true)}>
             <Plus className="mr-2 size-4" />
             Add supplier
           </Button>
@@ -97,6 +114,10 @@ export function SuppliersPageClient() {
             <div className="flex justify-center py-12">
               <Loader2 className="size-8 animate-spin" />
             </div>
+          ) : suppliers.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No suppliers yet. Add a supplier to track payables and payments.
+            </p>
           ) : (
             <Table>
               <TableHeader>
@@ -105,6 +126,7 @@ export function SuppliersPageClient() {
                   <TableHead>Phone</TableHead>
                   <TableHead className="text-right">Payables</TableHead>
                   <TableHead className="text-right">Credit limit</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -130,6 +152,46 @@ export function SuppliersPageClient() {
                     <TableCell className="text-right font-money">
                       {formatTzs(s.credit_limit)}
                     </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-1">
+                        <Link
+                          href={`/suppliers/${s.id}`}
+                          className={cn(
+                            buttonVariants({ size: "sm", variant: "outline" })
+                          )}
+                        >
+                          <ExternalLink className="mr-1 size-3.5" />
+                          View
+                        </Link>
+                        {s.payables_balance > 0 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() =>
+                              setPaySupplier({
+                                id: s.id,
+                                name: s.name,
+                                balance: s.payables_balance,
+                              })
+                            }
+                          >
+                            <Wallet className="mr-1 size-3.5" />
+                            Pay
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            setStmtSupplier({ id: s.id, name: s.name })
+                          }
+                          title="Statement"
+                        >
+                          <FileText className="size-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -143,7 +205,17 @@ export function SuppliersPageClient() {
           <DialogHeader>
             <DialogTitle>New supplier</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!name.trim()) {
+                toast.error("Supplier name is required");
+                return;
+              }
+              createMut.mutate();
+            }}
+          >
             <div className="space-y-2">
               <Label>Name</Label>
               <Input value={name} onChange={(e) => setName(e.target.value)} />
@@ -166,20 +238,45 @@ export function SuppliersPageClient() {
                 Creates an open supplier bill in accounts payable.
               </p>
             </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={!name.trim() || createMut.isPending}
-              onClick={() => createMut.mutate()}
-            >
-              Save
-            </Button>
-          </DialogFooter>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createMut.isPending}>
+                {createMut.isPending ? "Saving…" : "Save & open"}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
+
+      {paySupplier && (
+        <RecordPartyPaymentDialog
+          open={!!paySupplier}
+          onOpenChange={(o) => !o && setPaySupplier(null)}
+          partyType="supplier"
+          partyId={paySupplier.id}
+          partyName={paySupplier.name}
+          maxAmount={paySupplier.balance}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ["suppliers"] });
+            queryClient.invalidateQueries({ queryKey: ["payables-open"] });
+          }}
+        />
+      )}
+      {stmtSupplier && (
+        <PartyStatementDialog
+          open={!!stmtSupplier}
+          onOpenChange={(o) => !o && setStmtSupplier(null)}
+          partyType="supplier"
+          partyId={stmtSupplier.id}
+          partyName={stmtSupplier.name}
+        />
+      )}
     </>
   );
 }

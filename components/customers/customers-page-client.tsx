@@ -1,12 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, UserPlus } from "lucide-react";
+import { ExternalLink, FileText, Loader2, Plus, UserPlus, Wallet } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
@@ -25,7 +26,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { PartyStatementDialog } from "@/components/finance/party-statement-dialog";
+import { RecordPartyPaymentDialog } from "@/components/finance/record-party-payment-dialog";
 import { createCustomer, listCustomers } from "@/lib/actions/customers";
+import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 
 type FormValues = {
@@ -38,7 +42,17 @@ type FormValues = {
 };
 
 export function CustomersPageClient() {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [payCustomer, setPayCustomer] = useState<{
+    id: string;
+    name: string;
+    balance: number;
+  } | null>(null);
+  const [stmtCustomer, setStmtCustomer] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const queryClient = useQueryClient();
   const { register, handleSubmit, reset } = useForm<FormValues>({
     defaultValues: {
@@ -64,72 +78,123 @@ export function CustomersPageClient() {
         setOpen(false);
         reset();
         queryClient.invalidateQueries({ queryKey: ["customers"] });
+        router.push(`/customers/${r.id}`);
       } else toast.error(r.message);
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Could not create customer");
     },
   });
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle>Customers</CardTitle>
-        <Button onClick={() => setOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add customer
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead className="text-right">Credit limit</TableHead>
-                <TableHead className="text-right">Credit due</TableHead>
-                <TableHead className="text-right">Deposit</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {customers.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell>
-                    <Link
-                      href={`/customers/${c.id}`}
-                      className="font-medium text-primary hover:underline"
-                    >
-                      {c.name}
-                    </Link>
-                  </TableCell>
-                  <TableCell>{c.phone ?? "—"}</TableCell>
-                  <TableCell className="capitalize">{c.customer_type}</TableCell>
-                  <TableCell className="text-right">
-                    {formatTzs(c.credit_limit)}
-                  </TableCell>
-                  <TableCell className="text-right font-money">
-                    {c.outstanding_balance > 0 ? (
-                      <span className="text-warning">
-                        {formatTzs(c.outstanding_balance)}
-                      </span>
-                    ) : (
-                      "—"
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right font-money text-inflow">
-                    {c.deposit_balance > 0
-                      ? formatTzs(c.deposit_balance)
-                      : "—"}
-                  </TableCell>
+    <>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Customers</CardTitle>
+          <Button type="button" onClick={() => setOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add customer
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : customers.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No customers yet. Add your first customer to start tracking credit
+              and deposits.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead className="text-right">Credit limit</TableHead>
+                  <TableHead className="text-right">Credit due</TableHead>
+                  <TableHead className="text-right">Deposit</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
+              </TableHeader>
+              <TableBody>
+                {customers.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell>
+                      <Link
+                        href={`/customers/${c.id}`}
+                        className="font-medium text-primary hover:underline"
+                      >
+                        {c.name}
+                      </Link>
+                    </TableCell>
+                    <TableCell>{c.phone ?? "—"}</TableCell>
+                    <TableCell className="capitalize">{c.customer_type}</TableCell>
+                    <TableCell className="text-right">
+                      {formatTzs(c.credit_limit)}
+                    </TableCell>
+                    <TableCell className="text-right font-money">
+                      {c.outstanding_balance > 0 ? (
+                        <span className="text-warning">
+                          {formatTzs(c.outstanding_balance)}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right font-money text-inflow">
+                      {c.deposit_balance > 0
+                        ? formatTzs(c.deposit_balance)
+                        : "—"}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-1">
+                        <Link
+                          href={`/customers/${c.id}`}
+                          className={cn(
+                            buttonVariants({ size: "sm", variant: "outline" })
+                          )}
+                        >
+                          <ExternalLink className="mr-1 size-3.5" />
+                          View
+                        </Link>
+                        {c.outstanding_balance > 0 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() =>
+                              setPayCustomer({
+                                id: c.id,
+                                name: c.name,
+                                balance: c.outstanding_balance,
+                              })
+                            }
+                          >
+                            <Wallet className="mr-1 size-3.5" />
+                            Pay
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            setStmtCustomer({ id: c.id, name: c.name })
+                          }
+                        >
+                          <FileText className="size-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
@@ -140,9 +205,13 @@ export function CustomersPageClient() {
             </DialogTitle>
           </DialogHeader>
           <form
-            onSubmit={handleSubmit((v) =>
+            onSubmit={handleSubmit((v) => {
+              if (!v.name?.trim()) {
+                toast.error("Customer name is required");
+                return;
+              }
               createMut.mutate({
-                name: v.name,
+                name: v.name.trim(),
                 phone: v.phone,
                 creditLimit: Number(v.creditLimit),
                 creditDays: Number(v.creditDays),
@@ -150,8 +219,8 @@ export function CustomersPageClient() {
                 openingDeposit: Number(v.openingDeposit) || 0,
                 customerType: "retail",
                 priceType: "retail",
-              })
-            )}
+              });
+            })}
             className="space-y-4"
           >
             <div className="space-y-2">
@@ -191,13 +260,44 @@ export function CustomersPageClient() {
               </div>
             </div>
             <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOpen(false)}
+              >
+                Cancel
+              </Button>
               <Button type="submit" disabled={createMut.isPending}>
-                {createMut.isPending ? "Saving…" : "Save"}
+                {createMut.isPending ? "Saving…" : "Save & open"}
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
-    </Card>
+
+      {payCustomer && (
+        <RecordPartyPaymentDialog
+          open={!!payCustomer}
+          onOpenChange={(o) => !o && setPayCustomer(null)}
+          partyType="customer"
+          partyId={payCustomer.id}
+          partyName={payCustomer.name}
+          maxAmount={payCustomer.balance}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ["customers"] });
+            queryClient.invalidateQueries({ queryKey: ["credit-balances"] });
+          }}
+        />
+      )}
+      {stmtCustomer && (
+        <PartyStatementDialog
+          open={!!stmtCustomer}
+          onOpenChange={(o) => !o && setStmtCustomer(null)}
+          partyType="customer"
+          partyId={stmtCustomer.id}
+          partyName={stmtCustomer.name}
+        />
+      )}
+    </>
   );
 }

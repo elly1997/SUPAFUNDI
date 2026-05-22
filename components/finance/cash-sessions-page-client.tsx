@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import Link from "next/link";
+import { CashSessionBar } from "@/components/pos/cash-session-bar";
 import { listCashSessionHistory } from "@/lib/actions/cash-sessions";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,75 +31,90 @@ export function CashSessionsPageClient() {
   if (!outletId) {
     return (
       <p className="text-sm text-muted-foreground">
-        Select an active outlet to view cash session history.
+        Select an active outlet in the header to open or view cash sessions.
       </p>
     );
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Recent sessions</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <Loader2 className="mx-auto size-8 animate-spin" />
-        ) : sessions.length === 0 ? (
+    <div className="space-y-6">
+      <Card className="dash-stat-card">
+        <CardHeader>
+          <CardTitle className="text-base">Cash drawer</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center justify-between gap-4">
           <p className="text-sm text-muted-foreground">
-            No sessions yet. Open a drawer from the POS terminal.
+            Open the drawer with your opening float, then continue to POS to sell.
           </p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Opened</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Opening</TableHead>
-                <TableHead className="text-right">Expected</TableHead>
-                <TableHead className="text-right">Closed</TableHead>
-                <TableHead className="text-right">Variance</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sessions.map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell className="text-xs">
-                    {new Date(s.opened_at).toLocaleString()}
-                  </TableCell>
-                  <TableCell className="capitalize">{s.status}</TableCell>
-                  <TableCell className="text-right font-money">
-                    {formatTzs(s.opening_balance)}
-                  </TableCell>
-                  <TableCell className="text-right font-money">
-                    {s.expected_balance != null
-                      ? formatTzs(s.expected_balance)
-                      : "—"}
-                  </TableCell>
-                  <TableCell className="text-right font-money">
-                    {s.closing_balance != null
-                      ? formatTzs(s.closing_balance)
-                      : "—"}
-                  </TableCell>
-                  <TableCell
-                    className={cn(
-                      "text-right font-money",
-                      s.variance != null && s.variance !== 0 && "text-warning"
-                    )}
-                  >
-                    {s.variance != null ? formatTzs(s.variance) : "—"}
-                  </TableCell>
+          <CashSessionBar
+            outletId={outletId}
+            variant="inline"
+            redirectAfterOpen="/pos"
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+          <CardTitle>Recent sessions</CardTitle>
+          <Link href="/pos" className={cn(buttonVariants({ size: "sm" }))}>
+            Go to POS
+          </Link>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <Loader2 className="mx-auto size-8 animate-spin" />
+          ) : sessions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No sessions yet. Use Open drawer above to start.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Opened</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Opening</TableHead>
+                  <TableHead className="text-right">Expected</TableHead>
+                  <TableHead className="text-right">Closed</TableHead>
+                  <TableHead className="text-right">Variance</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-        <Link
-          href="/pos"
-          className={cn(buttonVariants(), "mt-4 rounded-xl")}
-        >
-          Open / close session on POS
-        </Link>
-      </CardContent>
-    </Card>
+              </TableHeader>
+              <TableBody>
+                {sessions.map((s) => (
+                  <TableRow key={s.id}>
+                    <TableCell className="text-xs">
+                      {new Date(s.opened_at).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="capitalize">{s.status}</TableCell>
+                    <TableCell className="text-right font-money">
+                      {formatTzs(s.opening_balance)}
+                    </TableCell>
+                    <TableCell className="text-right font-money">
+                      {s.expected_balance != null
+                        ? formatTzs(s.expected_balance)
+                        : "—"}
+                    </TableCell>
+                    <TableCell className="text-right font-money">
+                      {s.closing_balance != null
+                        ? formatTzs(s.closing_balance)
+                        : "—"}
+                    </TableCell>
+                    <TableCell
+                      className={cn(
+                        "text-right font-money",
+                        s.variance != null && s.variance !== 0 && "text-warning"
+                      )}
+                    >
+                      {s.variance != null ? formatTzs(s.variance) : "—"}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

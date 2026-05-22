@@ -1,7 +1,8 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,8 @@ type Props = {
 };
 
 export function CustomerDepositForm({ customerId, customerName }: Props) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const outletId = useAuthStore((s) => s.activeOutletId);
   const today = new Date().toISOString().slice(0, 10);
   const [amount, setAmount] = useState("");
@@ -51,8 +54,12 @@ export function CustomerDepositForm({ customerId, customerName }: Props) {
       if (r.ok) {
         toast.success("Deposit recorded");
         setAmount("");
-        window.location.reload();
+        void queryClient.invalidateQueries({ queryKey: ["customers"] });
+        router.refresh();
       } else toast.error(r.message);
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Deposit failed");
     },
   });
 
