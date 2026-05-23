@@ -191,6 +191,12 @@ export function StockPageClient() {
             <RefreshCw className="mr-2 size-4" />
             Refresh
           </Button>
+          <Link
+            href="/inventory/catch-up"
+            className={cn(buttonVariants({ variant: "outline" }))}
+          >
+            Catch-up
+          </Link>
           <Button
             type="button"
             variant="outline"

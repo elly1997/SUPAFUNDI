@@ -17,6 +17,7 @@ import {
   ShoppingCart,
   Store,
   Sun,
+  History,
   Users,
   Wallet,
   Warehouse,
@@ -167,6 +168,12 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "Products", href: "/inventory/products", icon: Package },
       { label: "Stock", href: "/inventory/stock", icon: Warehouse },
+      {
+        label: "Catch-up",
+        href: "/inventory/catch-up",
+        icon: History,
+        roles: ["owner", "manager", "accountant"],
+      },
       { label: "Receive goods", href: "/inventory/receive", icon: PackagePlus },
       { label: "Supplier returns", href: "/inventory/returns", icon: ArrowLeftRight },
       { label: "Transfers", href: "/inventory/transfers", icon: ArrowLeftRight },

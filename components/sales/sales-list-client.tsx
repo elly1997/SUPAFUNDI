@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { format, subDays } from "date-fns";
 import { Loader2, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { SaleVoidActions } from "@/components/sales/sale-void-actions";
 import { buttonVariants } from "@/components/ui/button";
@@ -34,11 +34,19 @@ import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 export function SalesListClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const [fromDate, setFromDate] = useState(
     format(subDays(new Date(businessDate + "T12:00:00"), 7), "yyyy-MM-dd")
   );
   const [toDate, setToDate] = useState(businessDate);
+
+  useEffect(() => {
+    const from = searchParams.get("from");
+    const to = searchParams.get("to");
+    if (from) setFromDate(from);
+    if (to) setToDate(to);
+  }, [searchParams]);
   const [invoiceSearch, setInvoiceSearch] = useState("");
   const [lookupPending, setLookupPending] = useState(false);
 
