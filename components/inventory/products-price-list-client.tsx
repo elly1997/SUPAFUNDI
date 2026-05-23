@@ -60,6 +60,14 @@ export function ProductsPriceListClient({
     [rows]
   );
 
+  const invalidateAfterPriceChange = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
+    void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+    void queryClient.invalidateQueries({ queryKey: ["stock-valuation"] });
+    void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+    void queryClient.invalidateQueries({ queryKey: ["inventory-analytics"] });
+  }, [queryClient]);
+
   const applyRetailMut = useMutation({
     mutationFn: () => applyMissingRetailPricesApi(outletId),
     onSuccess: (r) => {
@@ -69,10 +77,7 @@ export function ProductsPriceListClient({
             ? `Set retail on ${r.updated} product(s) using ${r.marginPct}% margin`
             : "All products with cost already have a retail price"
         );
-        void queryClient.invalidateQueries({
-          queryKey: ["product-price-catalog"],
-        });
-        void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+        invalidateAfterPriceChange();
       } else toast.error(r.message);
     },
     onError: (e) =>
@@ -88,8 +93,7 @@ export function ProductsPriceListClient({
     mutationFn: patchCatalogField,
     onSettled: () => setSavingId(null),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
-      void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      invalidateAfterPriceChange();
     },
     onError: (e) => {
       toast.error(e instanceof Error ? e.message : "Save failed");

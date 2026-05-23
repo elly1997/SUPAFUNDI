@@ -3,34 +3,50 @@ import type { ItemStatementLine } from "@/lib/actions/stock";
 
 async function parseError(res: Response): Promise<string> {
   try {
-    const body = (await res.json()) as { error?: string };
-    return body.error ?? res.statusText;
+    const body = (await res.json()) as { error?: string; message?: string };
+    return body.error ?? body.message ?? res.statusText;
   } catch {
     return res.statusText || "Request failed";
   }
 }
 
+type ApplyRetailResult =
+  | { ok: true; updated: number; marginPct: number }
+  | { ok: false; message: string };
+
+async function parseJsonResponse<T>(res: Response): Promise<T | null> {
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    return null;
+  }
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export async function applyMissingRetailPricesApi(
   outletId?: string | null
-): Promise<
-  | { ok: true; updated: number; marginPct: number }
-  | { ok: false; message: string }
-> {
+): Promise<ApplyRetailResult> {
   const res = await fetch("/api/inventory/catalog/apply-retail-margin", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ outletId: outletId ?? undefined }),
   });
-  const body = (await res.json()) as
-    | { ok: true; updated: number; marginPct: number }
-    | { ok: false; message?: string };
+  const body = await parseJsonResponse<ApplyRetailResult>(res);
+  if (!body) {
+    const hint =
+      res.status === 404
+        ? "Apply retail API not found — restart the dev server or redeploy."
+        : `Server returned ${res.status} (expected JSON).`;
+    return { ok: false, message: hint };
+  }
   if (!res.ok || !body.ok) {
-    return {
-      ok: false,
-      message:
-        (body as { message?: string }).message ?? "Could not apply retail prices",
-    };
+    const message =
+      body.ok === false ? body.message : "Could not apply retail prices";
+    return { ok: false, message: message ?? "Could not apply retail prices" };
   }
   return body;
 }

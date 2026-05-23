@@ -593,6 +593,7 @@ export async function applyMissingRetailPrices(
 
     revalidatePath("/inventory/products");
     revalidatePath("/inventory/stock");
+    revalidatePath("/reports");
     revalidatePath("/pos");
     return { ok: true, updated, marginPct };
   } catch (e) {
