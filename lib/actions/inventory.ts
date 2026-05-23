@@ -132,7 +132,9 @@ async function upsertRetailPrice(
 
 export async function createProduct(
   raw: CreateProductInput
-): Promise<{ ok: true; productId: string } | { ok: false; message: string }> {
+): Promise<
+  { ok: true; productId: string; code: string } | { ok: false; message: string }
+> {
   try {
     const input = createProductInput.parse(raw);
     const ctx = await requireOrgContext();
@@ -246,7 +248,7 @@ export async function createProduct(
       revalidatePath("/inventory/receive");
       revalidatePath("/inventory/stock");
       revalidatePath("/pos");
-      return { ok: true, productId: product.id };
+      return { ok: true, productId: product.id, code };
     }
     return { ok: false, message: "Could not allocate a unique product code." };
   } catch (e) {

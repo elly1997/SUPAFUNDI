@@ -42,7 +42,10 @@ export async function createProductQuickApi(params: {
   unit?: string;
   costPrice?: number;
   retailPrice?: number;
-}): Promise<{ ok: true; productId: string } | { ok: false; message: string }> {
+}): Promise<
+  | { ok: true; productId: string; code?: string | null }
+  | { ok: false; message: string }
+> {
   const res = await fetch("/api/inventory/products/create", {
     method: "POST",
     credentials: "include",
@@ -50,7 +53,7 @@ export async function createProductQuickApi(params: {
     body: JSON.stringify(params),
   });
   const body = (await res.json()) as
-    | { ok: true; productId: string }
+    | { ok: true; productId: string; code?: string | null }
     | { ok: false; message?: string };
   if (!res.ok || !body.ok) {
     return {

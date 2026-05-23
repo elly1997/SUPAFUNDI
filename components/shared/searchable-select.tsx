@@ -41,6 +41,8 @@ type Props = {
   maxVisible?: number;
   /** Minimum width of the floating panel (px). */
   minPanelWidth?: number;
+  /** Shown when `value` is set but not found in `options` (e.g. just created). */
+  selectedLabel?: string;
 };
 
 const PANEL_Z = 120;
@@ -58,6 +60,7 @@ export function SearchableSelect({
   listClassName,
   maxVisible = 80,
   minPanelWidth = 280,
+  selectedLabel,
 }: Props) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -69,6 +72,8 @@ export function SearchableSelect({
   const [panelPos, setPanelPos] = useState<PanelPosition | null>(null);
 
   const selected = options.find((o) => o.value === value);
+  const displayLabel =
+    selected?.label ?? (value && selectedLabel ? selectedLabel : null);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -243,7 +248,7 @@ export function SearchableSelect({
           "outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
           "disabled:cursor-not-allowed disabled:opacity-50",
           "dark:bg-input/30 dark:hover:bg-input/50",
-          !selected && "text-muted-foreground",
+          !displayLabel && "text-muted-foreground",
           open && "border-primary ring-2 ring-primary/30"
         )}
         onClick={() => {
@@ -253,7 +258,7 @@ export function SearchableSelect({
         }}
       >
         <span className="min-w-0 flex-1 truncate">
-          {selected?.label ?? placeholder}
+          {displayLabel ?? placeholder}
         </span>
         <ChevronDown
           className={cn(

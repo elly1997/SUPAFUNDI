@@ -33,8 +33,10 @@ import {
   fetchSupplierOptions,
   invalidateSupplierQueries,
 } from "@/lib/api/suppliers-fetch";
-import { createProductQuickApi } from "@/lib/api/inventory-catalog-fetch";
-import { usePosProducts } from "@/hooks/usePosProducts";
+import {
+  createProductQuickApi,
+  fetchProductPriceCatalog,
+} from "@/lib/api/inventory-catalog-fetch";
 import { useTaxRate } from "@/hooks/useTaxRate";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { cn } from "@/lib/utils";
@@ -45,6 +47,13 @@ import { useAuthStore } from "@/stores/authStore";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type Line = { productId: string; name: string; quantity: number; unitCost: number };
+
+type ReceivePickProduct = {
+  id: string;
+  name: string;
+  code: string | null;
+  costPrice: number;
+};
 
 const selectFieldClass =
   "h-9 w-full min-w-0 rounded-lg bg-surface-1 font-sans text-sm";
@@ -78,6 +87,9 @@ export function ReceiveGoodsClient() {
   const [unitCost, setUnitCost] = useState(0);
   const [newProductName, setNewProductName] = useState("");
   const [newProductCategory, setNewProductCategory] = useState("General");
+  const [pendingPick, setPendingPick] = useState<ReceivePickProduct | null>(
+    null
+  );
 
   const { data: outlets = [], isLoading: outletsLoading } = useQuery({
     queryKey: ["org-outlets"],
@@ -95,9 +107,26 @@ export function ReceiveGoodsClient() {
   });
 
   const {
-    data: products = [],
-    refetch: refetchProducts,
-  } = usePosProducts(outletId || null);
+    data: catalogProducts = [],
+    refetch: refetchCatalog,
+  } = useQuery({
+    queryKey: ["product-price-catalog", outletId],
+    queryFn: () => fetchProductPriceCatalog(outletId),
+    enabled: !!outletId,
+  });
+
+  const products = useMemo((): ReceivePickProduct[] => {
+    const rows: ReceivePickProduct[] = catalogProducts.map((p) => ({
+      id: p.id,
+      name: p.name,
+      code: p.code,
+      costPrice: p.costPrice,
+    }));
+    if (pendingPick && !rows.some((r) => r.id === pendingPick.id)) {
+      return [pendingPick, ...rows];
+    }
+    return rows;
+  }, [catalogProducts, pendingPick]);
 
   const outletLabel = useMemo(
     () => outlets.find((o) => o.id === outletId)?.name,
@@ -171,15 +200,27 @@ export function ReceiveGoodsClient() {
     if (next) setOutletId(next);
   }, [outlets, outletId, activeOutletId, sessionOutletId]);
 
+  useEffect(() => {
+    setPendingPick(null);
+    setPickProduct("");
+  }, [outletId]);
+
   const productOptions = useMemo(
     () =>
       products.map((p) => ({
         value: p.id,
-        label: `${p.name} (${p.code})`,
-        keywords: `${p.name} ${p.code ?? ""} ${p.barcode ?? ""}`,
+        label: p.code ? `${p.name} (${p.code})` : p.name,
+        keywords: `${p.name} ${p.code ?? ""}`,
       })),
     [products]
   );
+
+  const pickDisplayLabel = useMemo(() => {
+    if (!pickProduct) return undefined;
+    const p = products.find((x) => x.id === pickProduct);
+    if (!p) return undefined;
+    return p.code ? `${p.name} (${p.code})` : p.name;
+  }, [pickProduct, products]);
 
   const addProductMut = useMutation({
     mutationFn: () => {
@@ -197,14 +238,27 @@ export function ReceiveGoodsClient() {
     },
     onSuccess: async (r) => {
       if (r.ok) {
-        toast.success("Product added — set qty and add line");
+        const createdName = newProductName.trim() || "New product";
+        const created: ReceivePickProduct = {
+          id: r.productId,
+          name: createdName,
+          code: r.code ?? null,
+          costPrice: unitCost > 0 ? unitCost : 0,
+        };
+        setPendingPick(created);
         setPickProduct(r.productId);
         setNewProductName("");
-        await refetchProducts();
-        void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+        toast.success(
+          unitCost > 0
+            ? "Product added — set qty and tap Add line"
+            : "Product added — enter unit cost, qty, then Add line"
+        );
+        await refetchCatalog();
         void queryClient.invalidateQueries({
           queryKey: ["product-price-catalog"],
         });
+        void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+        void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
       } else toast.error(r.message);
     },
     onError: (e) =>
@@ -245,6 +299,8 @@ export function ReceiveGoodsClient() {
         void queryClient.invalidateQueries({ queryKey: ["purchase-orders"] });
         void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
         void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+        void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
+        void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
         void queryClient.invalidateQueries({ queryKey: ["payables-open"] });
       } else toast.error(r.message);
     },
@@ -268,6 +324,7 @@ export function ReceiveGoodsClient() {
       },
     ]);
     setPickProduct("");
+    setPendingPick(null);
     setQty(1);
     setUnitCost(0);
   };
@@ -488,10 +545,12 @@ export function ReceiveGoodsClient() {
                 <SearchableSelect
                   options={productOptions}
                   value={pickProduct}
+                  selectedLabel={pickDisplayLabel}
                   onValueChange={(id) => {
                     setPickProduct(id);
                     const p = products.find((x) => x.id === id);
                     if (p) setUnitCost(p.costPrice);
+                    if (id !== pendingPick?.id) setPendingPick(null);
                   }}
                   placeholder={
                     outletId ? "Search name or code…" : "Select outlet first"
@@ -504,6 +563,7 @@ export function ReceiveGoodsClient() {
                       : "Select an outlet first"
                   }
                   minPanelWidth={320}
+                  maxVisible={120}
                   className="w-full"
                 />
                 {!outletId ? (
