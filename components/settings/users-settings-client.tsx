@@ -31,7 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { USER_ROLES } from "@/lib/auth/roles";
-import { listOutletsForOrg } from "@/lib/actions/inventory";
+import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { UserInviteStatusBadge } from "@/components/settings/user-invite-status-badge";
 import { fetchSettingsUsers } from "@/lib/api/settings-team-fetch";
@@ -61,9 +61,13 @@ export function UsersSettingsClient() {
     queryKey: ["settings-users"],
     queryFn: fetchSettingsUsers,
   });
-  const { data: outlets = [] } = useQuery({
-    queryKey: ["outlets"],
-    queryFn: listOutletsForOrg,
+  const {
+    data: outlets = [],
+    isLoading: outletsLoading,
+    isError: outletsError,
+  } = useQuery({
+    queryKey: ["org-outlets"],
+    queryFn: fetchOrgOutlets,
   });
 
   const defaultOutletId = resolveDefaultOutletId(outlets) ?? "";
@@ -100,7 +104,7 @@ export function UsersSettingsClient() {
         setOpen(false);
         reset();
         queryClient.invalidateQueries({ queryKey: ["settings-users"] });
-        queryClient.invalidateQueries({ queryKey: ["outlets"] });
+        queryClient.invalidateQueries({ queryKey: ["org-outlets"] });
       } else toast.error(r.message);
     },
   });
@@ -233,19 +237,35 @@ export function UsersSettingsClient() {
               <Select
                 value={outletId || "__none__"}
                 onValueChange={(v) => setOutletId(!v || v === "__none__" ? "" : v)}
+                disabled={outletsLoading}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Optional" />
+                  <SelectValue
+                    placeholder={
+                      outletsLoading ? "Loading outlets…" : "Optional"
+                    }
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">None</SelectItem>
                   {outlets.map((o) => (
                     <SelectItem key={o.id} value={o.id}>
                       {o.name}
+                      {o.code ? ` (${o.code})` : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {outletsError ? (
+                <p className="text-xs text-destructive">
+                  Could not load outlets. Check your connection and refresh the
+                  page.
+                </p>
+              ) : !outletsLoading && outlets.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No outlets yet. Add one under Settings → Outlets first.
+                </p>
+              ) : null}
             </div>
             {edit && (
               <label className="flex items-center gap-2 text-sm">
