@@ -27,6 +27,7 @@ import {
 } from "@/lib/api/inventory-catalog-fetch";
 import { useOrgSettingsStore } from "@/stores/orgSettingsStore";
 import { groupCatalogByCategory } from "@/lib/products/catalog-grouping";
+import { invalidatePriceDependentQueries } from "@/lib/query/invalidate-price-queries";
 import { useAuthStore } from "@/stores/authStore";
 
 type Props = {
@@ -61,11 +62,7 @@ export function ProductsPriceListClient({
   );
 
   const invalidateAfterPriceChange = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
-    void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
-    void queryClient.invalidateQueries({ queryKey: ["stock-valuation"] });
-    void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
-    void queryClient.invalidateQueries({ queryKey: ["inventory-analytics"] });
+    invalidatePriceDependentQueries(queryClient);
   }, [queryClient]);
 
   const applyRetailMut = useMutation({

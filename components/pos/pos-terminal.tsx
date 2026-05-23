@@ -114,7 +114,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const [sessionOverride, setSessionOverride] = useState(false);
   const [qtyProduct, setQtyProduct] = useState<PosProductRow | null>(null);
   const [qtyOpen, setQtyOpen] = useState(false);
-  const pricingSyncRef = useRef<PosPricingMode>(pricingMode);
+  const prevPricingModeRef = useRef<PosPricingMode>(pricingMode);
 
   useEffect(() => {
     if (!outlets.length) return;
@@ -155,8 +155,10 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   } = usePosProducts(effectiveOutletId, pricingMode);
 
   useEffect(() => {
-    if (pricingSyncRef.current === pricingMode) return;
-    pricingSyncRef.current = pricingMode;
+    const modeChanged = prevPricingModeRef.current !== pricingMode;
+    prevPricingModeRef.current = pricingMode;
+    if (!lines.length || !products.length) return;
+
     const map = new Map<
       string,
       { unitPrice: number; pricingMode: PosPricingMode }
@@ -178,7 +180,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       });
     }
     const updated = syncLinePrices(map);
-    if (updated > 0) {
+    if (updated > 0 && modeChanged) {
       toast.message(`Updated ${updated} cart line price(s)`);
     }
   }, [pricingMode, products, syncLinePrices, lines]);

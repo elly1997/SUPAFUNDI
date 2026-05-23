@@ -19,6 +19,7 @@ import {
   fetchProductEditDetail,
   saveProductEdit,
 } from "@/lib/api/product-units-fetch";
+import { invalidatePriceDependentQueries } from "@/lib/query/invalidate-price-queries";
 type UnitDraft = {
   key: string;
   id?: string;
@@ -97,9 +98,7 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
     onSuccess: () => {
       toast.success("Product updated");
       onOpenChange(false);
-      void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
-      void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
-      void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+      invalidatePriceDependentQueries(queryClient);
       void queryClient.invalidateQueries({ queryKey: ["categories"] });
     },
     onError: (e) => {

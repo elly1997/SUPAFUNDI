@@ -326,6 +326,8 @@ export async function adjustProductStock(
 
     revalidatePath("/inventory/products");
     revalidatePath("/inventory/stock");
+    revalidatePath("/pos");
+    revalidatePath("/reports");
     return { ok: true };
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unexpected error";
@@ -585,6 +587,8 @@ export async function patchProductCatalogField(
 
     revalidatePath("/inventory/products");
     revalidatePath("/inventory/stock");
+    revalidatePath("/pos");
+    revalidatePath("/reports");
     return { ok: true };
   } catch (e) {
     return {

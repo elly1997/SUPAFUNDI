@@ -204,6 +204,20 @@ export async function updateProductEdit(
   }
 }
 
+/** Keep POS unit overrides aligned with catalog retail price updates. */
+export async function syncBaseUnitRetailPrice(
+  supabase: Supabase,
+  productId: string,
+  retailPrice: number
+): Promise<void> {
+  const { error } = await unitsDb(supabase)
+    .from("product_units")
+    .update({ retail_price: retailPrice })
+    .eq("product_id", productId)
+    .eq("is_base", true);
+  if (error) throw new Error(error.message);
+}
+
 export async function ensureBaseProductUnit(
   supabase: Supabase,
   productId: string,
