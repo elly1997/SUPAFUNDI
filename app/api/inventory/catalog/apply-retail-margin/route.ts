@@ -1,11 +1,11 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
-import { applyMissingRetailPrices } from "@/lib/actions/inventory";
-import { requireManagerContext } from "@/lib/server/require-manager";
+import { applyMissingRetailPricesCore } from "@/lib/inventory/apply-missing-retail-prices";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   try {
-    await requireManagerContext();
     let outletId: string | null = null;
     try {
       const body = (await request.json()) as { outletId?: string };
@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     } catch {
       /* empty body ok */
     }
-    const result = await applyMissingRetailPrices(outletId);
+    const result = await applyMissingRetailPricesCore(outletId);
     if (!result.ok) {
       return NextResponse.json(result, { status: 400 });
     }

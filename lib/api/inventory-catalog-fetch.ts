@@ -14,15 +14,32 @@ type ApplyRetailResult =
   | { ok: true; updated: number; marginPct: number }
   | { ok: false; message: string };
 
-async function parseJsonResponse<T>(res: Response): Promise<T | null> {
-  const contentType = res.headers.get("content-type") ?? "";
-  if (!contentType.includes("application/json")) {
-    return null;
+async function readJsonBody<T>(
+  res: Response
+): Promise<{ data: T | null; message?: string }> {
+  const text = (await res.text()).trim();
+  if (!text) {
+    return {
+      data: null,
+      message: `Server returned ${res.status} with an empty response.`,
+    };
+  }
+  if (text.startsWith("<")) {
+    return {
+      data: null,
+      message:
+        res.status === 404
+          ? "Apply retail API not found — restart the dev server or redeploy."
+          : `Server returned ${res.status} (HTML error page instead of JSON).`,
+    };
   }
   try {
-    return (await res.json()) as T;
+    return { data: JSON.parse(text) as T };
   } catch {
-    return null;
+    return {
+      data: null,
+      message: `Server returned ${res.status}: ${text.slice(0, 160)}`,
+    };
   }
 }
 
@@ -35,13 +52,10 @@ export async function applyMissingRetailPricesApi(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ outletId: outletId ?? undefined }),
   });
-  const body = await parseJsonResponse<ApplyRetailResult>(res);
+  const { data: body, message: parseMessage } =
+    await readJsonBody<ApplyRetailResult>(res);
   if (!body) {
-    const hint =
-      res.status === 404
-        ? "Apply retail API not found — restart the dev server or redeploy."
-        : `Server returned ${res.status} (expected JSON).`;
-    return { ok: false, message: hint };
+    return { ok: false, message: parseMessage ?? "Could not apply retail prices" };
   }
   if (!res.ok || !body.ok) {
     const message =
