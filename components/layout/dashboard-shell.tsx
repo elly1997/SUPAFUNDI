@@ -19,7 +19,7 @@ export function DashboardShell({ outlets, children }: DashboardShellProps) {
       <main
         className={cn(
           "min-h-0 flex-1",
-          isPos ? "overflow-hidden" : "overflow-y-auto p-4 md:p-6"
+          isPos ? "overflow-hidden" : "overflow-y-auto overscroll-y-contain touch-pan-y p-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:p-6"
         )}
       >
         {children}

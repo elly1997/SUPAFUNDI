@@ -88,7 +88,7 @@ export function SalesListClient() {
   }
 
   return (
-    <Card>
+    <Card className="overflow-visible">
       <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <CardTitle>Sales</CardTitle>
@@ -101,7 +101,14 @@ export function SalesListClient() {
           Open POS
         </Link>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 overflow-visible">
+        <DateRangePicker
+          label="Sales date range"
+          from={fromDate}
+          to={toDate}
+          onFromChange={setFromDate}
+          onToChange={setToDate}
+        />
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
           <div className="flex-1 space-y-1">
             <label
@@ -135,19 +142,12 @@ export function SalesListClient() {
                 <span className="sr-only">Find sale</span>
               </button>
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground hidden sm:block">
               Filter the list below or press Enter to open a sale by exact invoice
               number. Managers can void completed sales from the list or detail page.
             </p>
           </div>
         </div>
-        <DateRangePicker
-          label="Sales date range"
-          from={fromDate}
-          to={toDate}
-          onFromChange={setFromDate}
-          onToChange={setToDate}
-        />
         {isLoading ? (
           <div className="flex justify-center py-8">
             <Loader2 className="size-6 animate-spin text-muted-foreground" />
@@ -159,7 +159,8 @@ export function SalesListClient() {
               : "No sales in this date range."}
           </p>
         ) : (
-          <Table>
+          <div className="-mx-1 overflow-x-auto overscroll-x-contain pb-1">
+            <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Invoice</TableHead>
@@ -224,6 +225,7 @@ export function SalesListClient() {
               ))}
             </TableBody>
           </Table>
+          </div>
         )}
       </CardContent>
     </Card>
