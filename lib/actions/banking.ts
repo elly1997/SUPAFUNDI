@@ -143,6 +143,14 @@ export async function listBankAccounts(): Promise<PaymentAccountRow[]> {
   return all.filter((a) => a.is_active);
 }
 
+/** All active bank accounts for POS cash-to-bank deposits (not limited to Show on POS). */
+export async function listCashDepositAccounts(): Promise<PaymentAccountRow[]> {
+  const accounts = await listBankAccounts();
+  return accounts
+    .filter((a) => a.account_type === "bank")
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /** Accounts offered on POS when collecting M-Pesa / bank / card. */
 export async function listPosPaymentAccounts(
   posMethod: "mpesa" | "bank_transfer" | "card"

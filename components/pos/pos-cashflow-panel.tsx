@@ -17,9 +17,9 @@ import {
 } from "@/lib/api/daily-ops-fetch";
 import {
   fetchBankTransactions,
-  fetchPaymentAccounts,
   recordCashDepositApi,
 } from "@/lib/api/banking-fetch";
+import { PosBankDepositAccountPicker } from "@/components/pos/pos-payment-account-picker";
 import {
   createSupplierApi,
   fetchSupplierOptions,
@@ -73,16 +73,6 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
         toDate: businessDate,
       }),
   });
-
-  const { data: bankAccounts = [] } = useQuery({
-    queryKey: ["payment-accounts"],
-    queryFn: fetchPaymentAccounts,
-    staleTime: 60_000,
-  });
-
-  const depositAccounts = bankAccounts.filter(
-    (a) => a.is_active && (a.account_type === "bank" || a.account_type === "mpesa")
-  );
 
   const { data: bankTransactions = [], isLoading: depositsLoading } = useQuery({
     queryKey: ["pos-bank-deposits", outletId, businessDate],
@@ -157,7 +147,7 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
         setDescription("");
         queryClient.invalidateQueries({ queryKey: ["pos-bank-deposits"] });
         queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
-        queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
+        queryClient.invalidateQueries({ queryKey: ["cash-deposit-accounts"] });
         queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
       } else toast.error(r.message);
     },
@@ -387,32 +377,10 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
                 });
               }}
             >
-              <div className="space-y-1">
-                <Label className="text-xs">Deposit to</Label>
-                <select
-                  aria-label="Bank account"
-                  className="flex h-10 w-full rounded-lg border border-input bg-surface-1 px-2.5 text-sm text-foreground"
-                  value={bankAccountId}
-                  onChange={(e) => setBankAccountId(e.target.value)}
-                >
-                  <option value="">Select account…</option>
-                  {depositAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                      {a.bank_name ? ` · ${a.bank_name}` : ""}
-                    </option>
-                  ))}
-                </select>
-                {depositAccounts.length === 0 ? (
-                  <p className="form-hint">
-                    Add a bank account under{" "}
-                    <Link href="/finance/banking" className="text-primary">
-                      Banking
-                    </Link>
-                    .
-                  </p>
-                ) : null}
-              </div>
+              <PosBankDepositAccountPicker
+                value={bankAccountId}
+                onChange={setBankAccountId}
+              />
               <div className="space-y-1">
                 <Label className="text-xs">Amount (TZS)</Label>
                 <Input
@@ -436,7 +404,7 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
               <Button
                 type="submit"
                 className="h-10 w-full rounded-xl btn-primary-gradient"
-                disabled={depositMut.isPending || depositAccounts.length === 0}
+                disabled={depositMut.isPending || !bankAccountId}
               >
                 {depositMut.isPending ? (
                   <Loader2 className="size-4 animate-spin" />

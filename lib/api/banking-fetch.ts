@@ -84,3 +84,17 @@ export async function fetchPosPaymentAccounts(
   }
   return body.accounts ?? [];
 }
+
+export async function fetchCashDepositAccounts(): Promise<PaymentAccountRow[]> {
+  const res = await fetch("/api/finance/banking/deposit-accounts", {
+    credentials: "include",
+  });
+  const body = (await res.json()) as {
+    accounts?: PaymentAccountRow[];
+    error?: string;
+  };
+  if (!res.ok) {
+    throw new Error(body.error ?? "Failed to load bank accounts");
+  }
+  return body.accounts ?? [];
+}
