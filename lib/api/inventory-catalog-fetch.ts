@@ -65,6 +65,53 @@ export async function applyMissingRetailPricesApi(
   return body;
 }
 
+export async function fetchInventoryCategories(): Promise<
+  { id: string; name: string }[]
+> {
+  const res = await fetch("/api/inventory/categories", {
+    cache: "no-store",
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  const body = (await res.json()) as {
+    categories: { id: string; name: string }[];
+  };
+  return body.categories ?? [];
+}
+
+export async function createProductApi(params: {
+  name: string;
+  outletId: string;
+  categoryId?: string | null;
+  categoryName?: string;
+  unit?: string;
+  costPrice?: number;
+  retailPrice?: number;
+  quantity?: number;
+  code?: string;
+}): Promise<
+  | { ok: true; productId: string; code?: string | null }
+  | { ok: false; message: string }
+> {
+  const res = await fetch("/api/inventory/products/create", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const body = (await res.json()) as
+    | { ok: true; productId: string; code?: string | null }
+    | { ok: false; message?: string };
+  if (!res.ok || !body.ok) {
+    return {
+      ok: false,
+      message:
+        (body as { message?: string }).message ?? "Could not create product",
+    };
+  }
+  return body;
+}
+
 export async function createProductQuickApi(params: {
   name: string;
   outletId: string;

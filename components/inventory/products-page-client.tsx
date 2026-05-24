@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -23,8 +23,11 @@ import { ProductsDuplicatesDialog } from "@/components/inventory/products-duplic
 import { CatalogCategoryFilter } from "@/components/inventory/catalog-category-filter";
 import { ProductEditDialog } from "@/components/inventory/product-edit-dialog";
 import { ProductsPriceListClient } from "@/components/inventory/products-price-list-client";
-import { createProduct, listCategoriesForOrg } from "@/lib/actions/inventory";
-import { fetchProductPriceCatalog } from "@/lib/api/inventory-catalog-fetch";
+import {
+  createProductApi,
+  fetchInventoryCategories,
+  fetchProductPriceCatalog,
+} from "@/lib/api/inventory-catalog-fetch";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { canManageSettings, isUserRole } from "@/lib/auth/roles";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
@@ -82,7 +85,7 @@ export function ProductsPageClient() {
 
   const { data: categories = [] } = useQuery({
     queryKey: ["categories", "org"],
-    queryFn: listCategoriesForOrg,
+    queryFn: fetchInventoryCategories,
   });
 
   const [addOpen, setAddOpen] = useState(false);
@@ -120,7 +123,7 @@ export function ProductsPageClient() {
         values.categoryId === "__new__"
           ? values.newCategoryName?.trim()
           : undefined;
-      return createProduct({
+      return createProductApi({
         name: values.name,
         categoryId,
         categoryName,
@@ -152,6 +155,7 @@ export function ProductsPageClient() {
         });
         void queryClient.invalidateQueries({ queryKey: ["categories"] });
         void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+        void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
       } else {
         toast.error(res.message);
       }
@@ -175,6 +179,17 @@ export function ProductsPageClient() {
     });
     setAddOpen(true);
   }, [categories, defaultOutletId, form]);
+
+  useEffect(() => {
+    if (!addOpen) return;
+    if (defaultOutletId && !form.getValues("outletId")) {
+      form.setValue("outletId", defaultOutletId);
+    }
+    const currentCategory = form.getValues("categoryId");
+    if (categories.length && !currentCategory) {
+      form.setValue("categoryId", categories[0].id);
+    }
+  }, [addOpen, categories, defaultOutletId, form]);
 
   const categoryOptions = useMemo(
     () => Array.from(new Set(catalog.map((r) => r.categoryName))).sort(),
