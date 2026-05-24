@@ -98,7 +98,8 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const setActiveOutletId = useAuthStore((s) => s.setActiveOutletId);
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [cartDiscount, setCartDiscount] = useState(0);
+  const [chargeTotal, setChargeTotal] = useState("");
+  const [chargeLocked, setChargeLocked] = useState(false);
   const taxRate = useTaxRate();
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
@@ -143,10 +144,26 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     clear,
     syncLinePrices,
     subtotal,
-    discountAmount,
     taxAmount,
-    total,
-  } = useCart(taxRate, cartDiscount);
+    total: calculatedTotal,
+  } = useCart(taxRate, 0);
+
+  const chargeAmount = Number(chargeTotal);
+  const effectiveTotal =
+    chargeTotal.trim() && Number.isFinite(chargeAmount) && chargeAmount >= 0
+      ? Math.round(chargeAmount)
+      : Math.round(calculatedTotal);
+
+  useEffect(() => {
+    if (lines.length === 0) {
+      setChargeTotal("");
+      setChargeLocked(false);
+      return;
+    }
+    if (!chargeLocked) {
+      setChargeTotal(String(Math.round(calculatedTotal)));
+    }
+  }, [calculatedTotal, chargeLocked, lines.length]);
 
   const {
     data: products = [],
@@ -233,10 +250,10 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
 
   const paidAmount = Number(amountPaid) || 0;
   const cashChange =
-    paymentMethod === "cash" && paidAmount > total
-      ? Math.round(paidAmount - total)
+    paymentMethod === "cash" && paidAmount > effectiveTotal
+      ? Math.round(paidAmount - effectiveTotal)
       : 0;
-  const balanceDuePreview = Math.max(0, Math.round(total - paidAmount));
+  const balanceDuePreview = Math.max(0, Math.round(effectiveTotal - paidAmount));
   const needsCustomer =
     !customerId &&
     (paymentMethod === "credit_account" || balanceDuePreview > 0);
@@ -253,11 +270,11 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     if (lines.length > 0 && paymentMethod === "cash") {
       setAmountPaid((prev) => {
         const n = Number(prev);
-        if (!prev || n === 0) return String(Math.round(total));
+        if (!prev || n === 0) return String(Math.round(effectiveTotal));
         return prev;
       });
     }
-  }, [total, lines.length, paymentMethod]);
+  }, [effectiveTotal, lines.length, paymentMethod]);
 
   const addFromProductWithUnit = useCallback(
     (p: PosProductRow, payload: PosAddToCartPayload) => {
@@ -344,7 +361,8 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
           unitPrice: l.unitPrice,
           discountPct: l.discountPct,
         })),
-        cartDiscountAmount: cartDiscount,
+        cartDiscountAmount: 0,
+        totalOverride: effectiveTotal,
         taxRate,
         saleType: pricingMode,
         paymentMethod,
@@ -376,7 +394,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
         customerName: customerLabel,
         lines: receiptLines,
         subtotal,
-        discountAmount,
+        discountAmount: Math.max(0, Math.round(calculatedTotal - effectiveTotal)),
         taxAmount,
         taxRate,
       };
@@ -393,10 +411,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
           lines: saleReceipt.lines,
           soldAt: new Date(),
           customerName: saleReceipt.customerName,
-          subtotal: saleReceipt.subtotal,
-          discountAmount: saleReceipt.discountAmount,
-          taxAmount: saleReceipt.taxAmount,
-          taxRate: saleReceipt.taxRate,
+          compactTotal: true,
         };
         if (!printPosReceipt(printData)) {
           toast.error(
@@ -408,7 +423,8 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       setCheckoutOpen(false);
       setCartSheetOpen(false);
       clear();
-      setCartDiscount(0);
+      setChargeTotal("");
+      setChargeLocked(false);
       setAmountPaid("");
       setCustomerId("");
       setCustomerName(null);
@@ -433,10 +449,10 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       toast.error("Cart is empty");
       return;
     }
-    setAmountPaid(String(Math.round(total)));
+    setAmountPaid(String(Math.round(effectiveTotal)));
     setCartSheetOpen(false);
     setCheckoutOpen(true);
-  }, [lines.length, total]);
+  }, [lines.length, effectiveTotal]);
 
   const openMobileCart = useCallback(() => {
     if (lines.length === 0) {
@@ -491,10 +507,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
         lines: receipt.lines,
         soldAt: new Date(),
         customerName: receipt.customerName,
-        subtotal: receipt.subtotal,
-        discountAmount: receipt.discountAmount,
-        taxAmount: receipt.taxAmount,
-        taxRate: receipt.taxRate,
+        compactTotal: true,
       })
     ) {
       toast.error("Allow pop-ups to print the receipt");
@@ -513,20 +526,20 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     paymentMethod === "credit_account" ||
     (paymentMethod === "cash" &&
       paidAmount > 0 &&
-      Math.round(paidAmount) !== Math.round(total));
+      Math.round(paidAmount) !== Math.round(effectiveTotal));
 
   const cartSummary =
-    lines.length > 0 ? `${itemCount} items · ${formatTzs(total)}` : null;
+    lines.length > 0 ? `${itemCount} items · ${formatTzs(effectiveTotal)}` : null;
 
   const cartPanelProps = {
     lines,
     subtotal,
-    discountAmount,
     taxAmount,
-    total,
+    calculatedTotal,
+    chargeTotal,
+    onChargeTotalChange: setChargeTotal,
+    onChargeTotalLock: () => setChargeLocked(true),
     taxRate,
-    cartDiscount,
-    onCartDiscountChange: setCartDiscount,
     onUpdateQuantity: updateQuantity,
     onRemoveLine: removeLine,
     onCheckout: openCheckout,
@@ -719,7 +732,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                     ) : (
                       <>
                         Pay ({itemCount}) ·{" "}
-                        <span className="font-money">{formatTzs(total)}</span>
+                        <span className="font-money">{formatTzs(effectiveTotal)}</span>
                       </>
                     )}
                   </Button>
@@ -783,7 +796,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
               <PosCheckoutDialog
                 open={checkoutOpen}
                 onOpenChange={setCheckoutOpen}
-                total={total}
+                total={effectiveTotal}
                 paymentMethod={paymentMethod}
                 onPaymentMethodChange={setPaymentMethod}
                 amountPaid={amountPaid}
@@ -795,7 +808,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                 cashChange={cashChange}
                 onBumpAmountPaid={bumpAmountPaid}
                 onSetExactAmount={() =>
-                  setAmountPaid(String(Math.round(total)))
+                  setAmountPaid(String(Math.round(effectiveTotal)))
                 }
                 onComplete={() => checkout.mutate()}
                 isPending={checkout.isPending}

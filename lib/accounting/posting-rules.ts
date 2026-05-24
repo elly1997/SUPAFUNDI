@@ -19,6 +19,7 @@ export type JournalLineInput = {
 export type SalePostingInput = {
   subtotal: number;
   discountAmount: number;
+  surchargeAmount?: number;
   taxAmount: number;
   totalAmount: number;
   /** Cash/M-Pesa/bank collected at checkout (excludes deposit applied). */
@@ -42,11 +43,11 @@ function paymentAssetAccount(
 
 /** Retail sale: deposit liability, cash/M-Pesa/bank, AR, revenue, VAT, COGS. */
 export function buildSaleJournalLines(input: SalePostingInput): JournalLineInput[] {
-  const netRevenue = input.subtotal - input.discountAmount;
   const lines: JournalLineInput[] = [];
 
   const cashAccount = paymentAssetAccount(input.paymentMethod);
   const onCredit = input.balanceDue;
+  const surchargeAmount = input.surchargeAmount ?? 0;
 
   if (input.depositApplied > 0) {
     lines.push({
@@ -73,11 +74,11 @@ export function buildSaleJournalLines(input: SalePostingInput): JournalLineInput
     });
   }
 
-  if (netRevenue > 0) {
+  if (input.subtotal > 0) {
     lines.push({
       accountCode: SYSTEM_ACCOUNT_CODES.salesRevenue,
       debit: 0,
-      credit: netRevenue,
+      credit: input.subtotal,
       memo: "Sales revenue",
     });
   }
@@ -87,6 +88,14 @@ export function buildSaleJournalLines(input: SalePostingInput): JournalLineInput
       debit: input.discountAmount,
       credit: 0,
       memo: "Sales discount",
+    });
+  }
+  if (surchargeAmount > 0) {
+    lines.push({
+      accountCode: SYSTEM_ACCOUNT_CODES.salesRevenue,
+      debit: 0,
+      credit: surchargeAmount,
+      memo: "Overcharge / rounding",
     });
   }
   if (input.taxAmount > 0) {

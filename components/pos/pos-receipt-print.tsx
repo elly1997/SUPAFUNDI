@@ -17,6 +17,8 @@ export type ReceiptPrintData = {
   discountAmount?: number;
   taxAmount?: number;
   taxRate?: number;
+  /** When true, receipt shows line items and total only (no subtotal/discount/VAT). */
+  compactTotal?: boolean;
   isPreview?: boolean;
 };
 
@@ -89,8 +91,9 @@ ${data.lines
   .join("")}
 </table>
 ${
-  data.subtotal != null
-    ? `<table>
+  data.compactTotal || data.subtotal == null
+    ? "<hr/>"
+    : `<table>
 <tr><td>Subtotal</td><td class="right">${formatTzs(data.subtotal)}</td></tr>
 ${
   data.discountAmount && data.discountAmount > 0
@@ -103,7 +106,6 @@ ${
     : ""
 }
 </table><hr/>`
-    : ""
 }
 <table>
 <tr><td class="total">TOTAL</td><td class="right total">${formatTzs(data.totalAmount)}</td></tr>

@@ -16,8 +16,8 @@ import {
   computeLineTotal,
   roundMoney,
 } from "@/lib/utils/calculations";
+import { resolveSaleTotals } from "@/lib/utils/sale-totals";
 import {
-  computeTaxAmount,
   effectiveTaxRate,
   getOrgVatConfig,
 } from "@/lib/vat/org-vat";
@@ -67,6 +67,8 @@ const completeSaleInput = z.object({
   saleType: z.enum(["retail", "wholesale"]).default("retail"),
   lines: z.array(saleLineInput).min(1, "Cart is empty"),
   cartDiscountAmount: z.number().nonnegative().default(0),
+  /** When set, sale total matches this charge amount (discount or overcharge applied). */
+  totalOverride: z.number().positive().optional(),
   taxRate: z.number().min(0).max(100).default(18),
   paymentMethod: z.enum([
     "cash",
@@ -238,15 +240,20 @@ export async function completeSale(
     const lineTotals = input.lines.map((l) =>
       computeLineTotal(l.quantity, l.unitPrice, l.discountPct)
     );
-    const subtotal = roundMoney(
-      lineTotals.reduce((s, t) => s + t, 0)
-    );
-    const discountAmount = roundMoney(
-      Math.min(input.cartDiscountAmount, subtotal)
-    );
-    const taxableBase = roundMoney(subtotal - discountAmount);
-    const taxAmount = computeTaxAmount(taxableBase, vatConfig, taxRate);
-    const totalAmount = roundMoney(taxableBase + taxAmount);
+    const lineSubtotal = roundMoney(lineTotals.reduce((s, t) => s + t, 0));
+    const {
+      subtotal,
+      discountAmount,
+      surchargeAmount,
+      taxAmount,
+      totalAmount,
+    } = resolveSaleTotals({
+      subtotal: lineSubtotal,
+      cartDiscountAmount: input.cartDiscountAmount,
+      taxRate,
+      vatConfig,
+      totalOverride: input.totalOverride,
+    });
 
     let depositApplied = 0;
     if (input.customerId && (input.depositApplied ?? 0) > 0) {
@@ -527,6 +534,7 @@ export async function completeSale(
     const journalLines = buildSaleJournalLines({
       subtotal,
       discountAmount,
+      surchargeAmount,
       taxAmount,
       totalAmount,
       cashAmountPaid,

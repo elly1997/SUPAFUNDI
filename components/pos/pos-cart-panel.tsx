@@ -16,12 +16,12 @@ import type { AddProductResult, CartLine } from "@/stores/cartStore";
 type Props = {
   lines: CartLine[];
   subtotal: number;
-  discountAmount: number;
   taxAmount: number;
-  total: number;
+  calculatedTotal: number;
+  chargeTotal: string;
+  onChargeTotalChange: (v: string) => void;
+  onChargeTotalLock?: () => void;
   taxRate: number;
-  cartDiscount: number;
-  onCartDiscountChange: (n: number) => void;
   onUpdateQuantity: (lineKey: string, qty: number) => AddProductResult;
   onRemoveLine: (lineKey: string) => void;
   onCheckout: () => void;
@@ -48,12 +48,12 @@ type Props = {
 export function PosCartPanel({
   lines,
   subtotal,
-  discountAmount,
   taxAmount,
-  total,
+  calculatedTotal,
+  chargeTotal,
+  onChargeTotalChange,
+  onChargeTotalLock,
   taxRate,
-  cartDiscount,
-  onCartDiscountChange,
   onUpdateQuantity,
   onRemoveLine,
   onCheckout,
@@ -77,6 +77,12 @@ export function PosCartPanel({
   onPaymentAccountIdChange,
 }: Props) {
   const itemCount = lines.reduce((s, l) => s + l.quantity, 0);
+  const chargeAmount = Number(chargeTotal);
+  const effectiveTotal =
+    chargeTotal.trim() && Number.isFinite(chargeAmount) && chargeAmount >= 0
+      ? Math.round(chargeAmount)
+      : Math.round(calculatedTotal);
+  const adjustment = Math.round(calculatedTotal - effectiveTotal);
 
   return (
     <div
@@ -204,39 +210,41 @@ export function PosCartPanel({
             {formatTzs(subtotal)}
           </span>
         </div>
-        <div className="flex items-center justify-between gap-2 text-sm">
-          <Label htmlFor="pos-cart-discount" className="text-muted-foreground">
-            Discount (TZS)
-          </Label>
-          <Input
-            id="pos-cart-discount"
-            type="number"
-            min={0}
-            className="h-9 w-28 text-right tabular-nums text-foreground"
-            value={cartDiscount || ""}
-            onChange={(e) =>
-              onCartDiscountChange(Math.max(0, Number(e.target.value) || 0))
-            }
-          />
-        </div>
-        {discountAmount > 0 && (
-          <div className="flex justify-between text-sm text-outflow">
-            <span>Discount</span>
-            <span className="tabular-nums">-{formatTzs(discountAmount)}</span>
-          </div>
-        )}
         {taxRate > 0 && taxAmount > 0 ? (
           <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">VAT ({taxRate}%)</span>
-            <span className="tabular-nums text-foreground">
-              {formatTzs(taxAmount)}
+            <span className="text-muted-foreground">Calculated total</span>
+            <span className="tabular-nums text-muted-foreground">
+              {formatTzs(calculatedTotal)}
             </span>
           </div>
         ) : null}
+        <div className="flex items-center justify-between gap-2 text-sm">
+          <Label htmlFor="pos-charge-total" className="text-muted-foreground">
+            Amount to charge (TZS)
+          </Label>
+          <Input
+            id="pos-charge-total"
+            type="number"
+            min={0}
+            className="h-9 w-32 text-right tabular-nums text-foreground"
+            value={chargeTotal}
+            onChange={(e) => {
+              onChargeTotalLock?.();
+              onChargeTotalChange(e.target.value);
+            }}
+          />
+        </div>
+        {adjustment !== 0 && (
+          <p className="form-hint text-right">
+            {adjustment > 0
+              ? `Discount ${formatTzs(adjustment)} vs calculated`
+              : `Overcharge ${formatTzs(-adjustment)} vs calculated`}
+          </p>
+        )}
         <div className="flex items-baseline justify-between pt-1">
-          <span className="text-sm text-muted-foreground">Total</span>
+          <span className="text-sm text-muted-foreground">Charge</span>
           <span className="font-money text-xl font-bold tabular-nums text-primary">
-            {formatTzs(total)}
+            {formatTzs(effectiveTotal)}
           </span>
         </div>
 
@@ -245,7 +253,7 @@ export function PosCartPanel({
         onAmountPaidChange &&
         onCompleteSale ? (
           <PosInlineCheckout
-            total={total}
+            total={effectiveTotal}
             paymentMethod={paymentMethod}
             onPaymentMethodChange={onPaymentMethodChange}
             amountPaid={amountPaid}
@@ -264,7 +272,7 @@ export function PosCartPanel({
             disabled={lines.length === 0 || checkoutDisabled}
             onClick={onCheckout}
           >
-            Pay {lines.length > 0 ? formatTzs(total) : ""}
+            Pay {lines.length > 0 ? formatTzs(effectiveTotal) : ""}
           </Button>
         ) : null}
       </div>
