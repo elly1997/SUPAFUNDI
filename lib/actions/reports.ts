@@ -5,6 +5,44 @@ import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { fetchByInChunks } from "@/lib/supabase/query-chunks";
 import { roundMoney } from "@/lib/utils/calculations";
+import { businessDateFromTimestamptz } from "@/lib/utils/iso-date";
+
+function reportPeriodBounds(fromDate: string, toDate: string) {
+  return {
+    from: `${fromDate}T00:00:00.000Z`,
+    to: `${toDate}T23:59:59.999Z`,
+  };
+}
+
+async function sumCogsFromSaleIds(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  organizationId: string,
+  saleIds: string[],
+  outletId?: string | null
+): Promise<number> {
+  if (saleIds.length === 0) return 0;
+
+  const movements = await fetchByInChunks(saleIds, async (chunk) => {
+    let q = supabase
+      .from("stock_movements")
+      .select("quantity, unit_cost")
+      .eq("organization_id", organizationId)
+      .eq("movement_type", "sale")
+      .eq("reference_type", "sale")
+      .in("reference_id", chunk);
+    if (outletId) q = q.eq("outlet_id", outletId);
+    const { data, error } = await q;
+    return { data, error };
+  });
+
+  return roundMoney(
+    movements.reduce(
+      (sum, row) =>
+        sum + Math.abs(Number(row.quantity)) * Number(row.unit_cost),
+      0
+    )
+  );
+}
 
 export type TrialBalanceRow = {
   code: string;
@@ -243,14 +281,15 @@ export async function getOperationalReports(
   const supabase = await createServerSupabaseClient();
   const from = daysAgoIso(days - 1);
   const to = todayIso();
+  const { from: fromBound, to: toBound } = reportPeriodBounds(from, to);
 
   let salesQuery = supabase
     .from("sales")
     .select("id, total_amount, sale_date, outlet_id")
     .eq("organization_id", ctx.organizationId)
     .eq("status", "completed")
-    .gte("sale_date", from)
-    .lte("sale_date", to);
+    .gte("sale_date", fromBound)
+    .lte("sale_date", toBound);
   if (outletId) salesQuery = salesQuery.eq("outlet_id", outletId);
 
   let expensesQuery = supabase
@@ -306,7 +345,7 @@ export type ProfitLossStatement = {
   netProfit: number;
 };
 
-/** POS-style P&L for the reports screen (sales + GL where posted). */
+/** POS-style P&L from completed sales and recorded expenses in the selected period. */
 export async function getProfitLossStatement(
   fromDate: string,
   toDate: string,
@@ -315,31 +354,33 @@ export async function getProfitLossStatement(
 ): Promise<ProfitLossStatement> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const { from, to } = reportPeriodBounds(fromDate, toDate);
 
   let salesQuery = supabase
     .from("sales")
-    .select("subtotal, discount_amount, sale_date")
+    .select("id, subtotal, discount_amount, sale_date")
     .eq("organization_id", ctx.organizationId)
     .eq("status", "completed")
-    .gte("sale_date", fromDate)
-    .lte("sale_date", `${toDate}T23:59:59.999Z`);
+    .gte("sale_date", from)
+    .lte("sale_date", to);
   if (outletId) salesQuery = salesQuery.eq("outlet_id", outletId);
 
   const { data: salesRaw, error: salesErr } = await salesQuery;
+  if (salesErr) throw new Error(salesErr.message);
+
   let sales = salesRaw ?? [];
   if (reconciledDaysOnly) {
     const reconciled = new Set(
       await getReconciledDatesInRange(fromDate, toDate, outletId)
     );
     sales = sales.filter((s) =>
-      reconciled.has(String(s.sale_date).slice(0, 10))
+      reconciled.has(businessDateFromTimestamptz(String(s.sale_date)))
     );
   }
-  if (salesErr) throw new Error(salesErr.message);
 
   let grossSales = 0;
   let discounts = 0;
-  for (const s of sales ?? []) {
+  for (const s of sales) {
     const sub = Number(s.subtotal);
     const disc = Number(s.discount_amount);
     grossSales += sub + disc;
@@ -366,22 +407,19 @@ export async function getProfitLossStatement(
     );
     expenseRows = expenseRows.filter((e) => reconciled.has(e.expense_date));
   }
-  const cashExpensesTotal = roundMoney(
+  const operatingExpenses = roundMoney(
     expenseRows.reduce((s, e) => s + Number(e.amount), 0)
   );
 
-  const financial = await getFinancialReports(fromDate, toDate);
-  const hasGl = financial.trialBalance.length > 0;
-  const costOfGoodsSold = hasGl
-    ? financial.profitAndLoss.totalCogs
-    : 0;
-  const operatingExpenses = hasGl
-    ? financial.profitAndLoss.totalExpenses
-    : cashExpensesTotal;
+  const saleIds = sales.map((s) => s.id);
+  const costOfGoodsSold = await sumCogsFromSaleIds(
+    supabase,
+    ctx.organizationId,
+    saleIds,
+    outletId
+  );
   const grossProfit = roundMoney(netSales - costOfGoodsSold);
-  const netProfit = hasGl
-    ? financial.profitAndLoss.netIncome
-    : roundMoney(grossProfit - operatingExpenses);
+  const netProfit = roundMoney(grossProfit - operatingExpenses);
 
   return {
     grossSales,
@@ -402,14 +440,15 @@ export async function getOperationalReportsByRange(
 ): Promise<OperationalReports> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const { from, to } = reportPeriodBounds(fromDate, toDate);
 
   let salesQuery = supabase
     .from("sales")
     .select("id, total_amount, sale_date, outlet_id")
     .eq("organization_id", ctx.organizationId)
     .eq("status", "completed")
-    .gte("sale_date", fromDate)
-    .lte("sale_date", `${toDate}T23:59:59.999Z`);
+    .gte("sale_date", from)
+    .lte("sale_date", to);
   if (outletId) salesQuery = salesQuery.eq("outlet_id", outletId);
 
   let expensesQuery = supabase
@@ -448,7 +487,7 @@ export async function getOperationalReportsByRange(
       await getReconciledDatesInRange(fromDate, toDate, outletId)
     );
     sales = sales.filter((s) =>
-      reconciled.has(String(s.sale_date).slice(0, 10))
+      reconciled.has(businessDateFromTimestamptz(String(s.sale_date)))
     );
     expenses = expenses.filter((e) => reconciled.has(e.expense_date));
   }
@@ -488,7 +527,9 @@ async function buildOperationalResult(
 
   const byDay = new Map<string, { total: number; count: number }>();
   for (const s of sales) {
-    const d = s.sale_date?.slice(0, 10) ?? to;
+    const d = s.sale_date
+      ? businessDateFromTimestamptz(s.sale_date)
+      : to;
     const prev = byDay.get(d) ?? { total: 0, count: 0 };
     byDay.set(d, {
       total: prev.total + Number(s.total_amount),

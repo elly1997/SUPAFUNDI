@@ -182,7 +182,7 @@ export function ReportsAnalyticsClient() {
   const [tab, setTab] = useState<ReportTabId>("overview");
   const [fromDate, setFromDate] = useState(defaultFromDate());
   const [toDate, setToDate] = useState(defaultToDate());
-  const [reconciledOnly, setReconciledOnly] = useState(true);
+  const [reconciledOnly, setReconciledOnly] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const rangeKey = [fromDate, toDate, outletId, reconciledOnly];
@@ -312,7 +312,14 @@ export function ReportsAnalyticsClient() {
           <CardContent>
             {operational.salesByDay.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">
-                No sales in this period
+                No sales in this period.
+                {reconciledOnly ? (
+                  <>
+                    {" "}
+                    Try unchecking &ldquo;Reconciled days only&rdquo; or reconcile
+                    days in Daily closing.
+                  </>
+                ) : null}
               </p>
             ) : (
               <div className="flex h-44 items-end gap-2">
@@ -533,14 +540,19 @@ export function ReportsAnalyticsClient() {
             onToChange={setToDate}
             align="end"
           />
-          <label className="flex items-center gap-2 self-end pb-2 text-xs">
-            <input
-              type="checkbox"
-              checked={reconciledOnly}
-              onChange={(e) => setReconciledOnly(e.target.checked)}
-              className="size-4 rounded border-border"
-            />
-            Reconciled days only
+          <label className="flex max-w-[11rem] flex-col gap-1 self-end pb-2 text-xs">
+            <span className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={reconciledOnly}
+                onChange={(e) => setReconciledOnly(e.target.checked)}
+                className="size-4 rounded border-border"
+              />
+              Reconciled days only
+            </span>
+            <span className="text-[10px] leading-snug text-muted-foreground">
+              When checked, only days marked reconciled in Daily closing appear.
+            </span>
           </label>
         </div>
       </div>
