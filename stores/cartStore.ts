@@ -141,19 +141,21 @@ export const useCartStore = create<CartState>((set, get) => ({
       ),
     })),
   syncLinePrices: (prices) => {
+    const s = get();
     let updated = 0;
-    set((s) => ({
-      lines: s.lines.map((l) => {
-        const next = prices.get(l.lineKey);
-        if (!next || next.unitPrice === l.unitPrice) return l;
-        updated += 1;
-        return {
-          ...l,
-          unitPrice: next.unitPrice,
-          pricingMode: next.pricingMode,
-        };
-      }),
-    }));
+    const nextLines = s.lines.map((l) => {
+      const next = prices.get(l.lineKey);
+      if (!next || next.unitPrice === l.unitPrice) return l;
+      updated += 1;
+      return {
+        ...l,
+        unitPrice: next.unitPrice,
+        pricingMode: next.pricingMode,
+      };
+    });
+    if (updated > 0) {
+      set({ lines: nextLines });
+    }
     return updated;
   },
   clear: () => set({ lines: [] }),

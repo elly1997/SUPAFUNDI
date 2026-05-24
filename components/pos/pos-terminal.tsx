@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Banknote,
   CheckCircle2,
@@ -91,6 +91,7 @@ type PosTerminalProps = {
 };
 
 export function PosTerminal({ outlets }: PosTerminalProps) {
+  const queryClient = useQueryClient();
   const activeOutletId = useAuthStore((s) => s.activeOutletId);
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const session = useAuthStore((s) => s.session);
@@ -154,36 +155,49 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     refetch: refetchProducts,
   } = usePosProducts(effectiveOutletId, pricingMode);
 
-  useEffect(() => {
-    const modeChanged = prevPricingModeRef.current !== pricingMode;
-    prevPricingModeRef.current = pricingMode;
-    if (!lines.length || !products.length) return;
-
-    const map = new Map<
-      string,
-      { unitPrice: number; pricingMode: PosPricingMode }
-    >();
+  const cartCatalogPriceKey = useMemo(() => {
+    if (!lines.length || !products.length) return "";
+    const parts: string[] = [];
     for (const line of lines) {
       const p = products.find((x) => x.id === line.productId);
       if (!p) continue;
       const unit =
         p.units.find((u) => u.unitLabel === line.unit) ?? p.units[0];
       if (!unit) continue;
-      map.set(line.lineKey, {
-        unitPrice: resolveUnitPrice(
+      parts.push(
+        `${line.lineKey}:${resolveUnitPrice(
           unit,
           p.retailPrice,
           p.wholesalePrice,
           pricingMode
-        ),
-        pricingMode,
-      });
+        )}`
+      );
+    }
+    return parts.sort().join("|");
+  }, [lines, products, pricingMode]);
+
+  useEffect(() => {
+    const modeChanged = prevPricingModeRef.current !== pricingMode;
+    prevPricingModeRef.current = pricingMode;
+    if (!cartCatalogPriceKey) return;
+
+    const map = new Map<
+      string,
+      { unitPrice: number; pricingMode: PosPricingMode }
+    >();
+    for (const part of cartCatalogPriceKey.split("|")) {
+      const sep = part.lastIndexOf(":");
+      if (sep <= 0) continue;
+      const lineKey = part.slice(0, sep);
+      const unitPrice = Number(part.slice(sep + 1));
+      if (!lineKey || !Number.isFinite(unitPrice)) continue;
+      map.set(lineKey, { unitPrice, pricingMode });
     }
     const updated = syncLinePrices(map);
     if (updated > 0 && modeChanged) {
       toast.message(`Updated ${updated} cart line price(s)`);
     }
-  }, [pricingMode, products, syncLinePrices, lines]);
+  }, [pricingMode, cartCatalogPriceKey, syncLinePrices]);
 
   const cartQtyByProduct = useMemo(() => {
     const map = new Map<string, number>();
@@ -345,6 +359,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       return result;
     },
     onSuccess: (result) => {
+      clearPersisted();
       const receiptLines = lines.map((l) => ({
         name: l.name,
         quantity: l.quantity,
@@ -369,7 +384,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
 
       if (session) {
         const printData: ReceiptPrintData = {
-          organizationName: session.organizationName,
+          organizationName: session.organizationName ?? "SUPAFUNDI TRADERS",
           invoiceNo: saleReceipt.invoiceNo,
           totalAmount: saleReceipt.totalAmount,
           changeGiven: saleReceipt.changeGiven,
@@ -397,8 +412,11 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       setAmountPaid("");
       setCustomerId("");
       setCustomerName(null);
-        setPaymentMethod("cash");
-      clearPersisted();
+      setPaymentMethod("cash");
+      void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["pos-top-products", effectiveOutletId],
+      });
       toast.success(
         businessDate !== new Date().toISOString().slice(0, 10)
           ? `Sale ${result.invoiceNo} recorded for ${businessDate}`
@@ -464,7 +482,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     if (!receipt || !session) return;
     if (
       !printPosReceipt({
-        organizationName: session.organizationName,
+        organizationName: session.organizationName ?? "SUPAFUNDI TRADERS",
         invoiceNo: receipt.invoiceNo,
         totalAmount: receipt.totalAmount,
         changeGiven: receipt.changeGiven,

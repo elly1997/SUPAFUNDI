@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -103,11 +102,11 @@ export async function signUp(
   }
 }
 
-export async function signOut(): Promise<void> {
+export async function signOut(): Promise<{ ok: true }> {
   const supabase = await createServerSupabaseClient();
   await supabase.auth.signOut();
   revalidatePath("/", "layout");
-  redirect("/login");
+  return { ok: true };
 }
 
 export async function completeOrganizationSetup(

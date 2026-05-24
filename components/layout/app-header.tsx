@@ -5,7 +5,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { LogOut, Menu, Search, User } from "lucide-react";
 import { toast } from "sonner";
-import { updateActiveOutlet, signOut } from "@/lib/actions/auth";
+import { performSignOut } from "@/lib/auth/sign-out-client";
+import { updateActiveOutlet } from "@/lib/actions/auth";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui/button";
@@ -65,6 +66,18 @@ export function AppHeader({ outlets }: AppHeaderProps) {
     });
   };
 
+  const onSignOut = () => {
+    startTransition(async () => {
+      try {
+        await performSignOut();
+        router.replace("/login");
+        router.refresh();
+      } catch {
+        toast.error("Sign out failed");
+      }
+    });
+  };
+
   return (
     <div className="flex shrink-0 flex-col">
       <header className="flex h-14 items-center justify-between gap-3 border-b bg-background px-4">
@@ -109,7 +122,7 @@ export function AppHeader({ outlets }: AppHeaderProps) {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => startTransition(() => void signOut())}
+            onClick={onSignOut}
             disabled={pending}
           >
             <LogOut className="mr-1.5 size-4" />

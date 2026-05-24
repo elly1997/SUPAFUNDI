@@ -25,7 +25,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { updateActiveOutlet, signOut } from "@/lib/actions/auth";
+import { performSignOut } from "@/lib/auth/sign-out-client";
+import { updateActiveOutlet } from "@/lib/actions/auth";
 import { cn } from "@/lib/utils";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
@@ -74,6 +75,18 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
         router.refresh();
       } else {
         toast.error(res.message);
+      }
+    });
+  };
+
+  const onSignOut = () => {
+    startTransition(async () => {
+      try {
+        await performSignOut();
+        router.replace("/login");
+        router.refresh();
+      } catch {
+        toast.error("Sign out failed");
       }
     });
   };
@@ -159,7 +172,7 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
             variant="outline"
             size="sm"
             className="h-8 border-border bg-surface-1"
-            onClick={() => startTransition(() => void signOut())}
+            onClick={onSignOut}
             disabled={pending}
           >
             <LogOut className="size-4 sm:mr-1" />
