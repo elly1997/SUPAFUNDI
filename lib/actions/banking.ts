@@ -6,9 +6,13 @@ import {
   defaultPosMethodForAccountType,
   type PaymentAccountType,
 } from "@/lib/constants/payment-accounts";
+import { buildCashToBankJournalLines } from "@/lib/accounting/posting-rules";
+import { postJournalEntry } from "@/lib/actions/accounting";
+import { CASH_DRAWER_DEPOSIT_PREFIX } from "@/lib/constants/cash-deposit";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
+import { resolveBusinessDate } from "@/lib/utils/iso-date";
 
 type SupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
@@ -45,6 +49,7 @@ export type BankTransactionRow = {
   description: string | null;
   is_reconciled: boolean;
   transaction_date: string | null;
+  outlet_id: string | null;
   created_at: string;
 };
 
@@ -157,7 +162,8 @@ export async function listPosPaymentAccounts(
 
 export async function listBankTransactions(
   accountId?: string | null,
-  limit = 80
+  limit = 80,
+  outletId?: string | null
 ): Promise<BankTransactionRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
@@ -170,18 +176,20 @@ export async function listBankTransactions(
   let q = bankDb(supabase)
     .from("bank_transactions")
     .select(
-      "id, bank_account_id, transaction_type, amount, reference_no, description, is_reconciled, transaction_date, created_at"
+      "id, bank_account_id, outlet_id, transaction_type, amount, reference_no, description, is_reconciled, transaction_date, created_at"
     )
     .eq("organization_id", ctx.organizationId)
     .order("created_at", { ascending: false })
     .limit(limit);
   if (accountId) q = q.eq("bank_account_id", accountId);
+  if (outletId) q = q.eq("outlet_id", outletId);
   const { data, error } = await q;
   if (error) throw new Error(error.message);
 
   return (data ?? []).map((r: {
     id: string;
     bank_account_id: string | null;
+    outlet_id?: string | null;
     transaction_type: string;
     amount: number;
     reference_no: string | null;
@@ -203,6 +211,7 @@ export async function listBankTransactions(
       is_reconciled: Boolean(r.is_reconciled),
       transaction_date:
         r.transaction_date != null ? String(r.transaction_date) : null,
+      outlet_id: r.outlet_id != null ? String(r.outlet_id) : null,
       created_at: String(r.created_at ?? ""),
     };
   });
@@ -370,6 +379,112 @@ export async function recordBankTransaction(
     return {
       ok: false,
       message: e instanceof Error ? e.message : "Transaction failed",
+    };
+  }
+}
+
+const cashDepositInput = z.object({
+  bankAccountId: z.string().uuid(),
+  amount: z.coerce.number().positive(),
+  outletId: z.string().uuid(),
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  description: z.string().max(500).optional(),
+  referenceNo: z.string().max(100).optional(),
+});
+
+/** Record cash moved from drawer to a bank/collection account (Dr Bank · Cr Cash). */
+export async function recordCashToBankDeposit(
+  raw: z.infer<typeof cashDepositInput>
+): Promise<
+  { ok: true; transactionId: string } | { ok: false; message: string }
+> {
+  try {
+    const input = cashDepositInput.parse(raw);
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const businessDate = resolveBusinessDate(input.businessDate);
+    const amount = roundMoney(input.amount);
+
+    const { data: outlet } = await supabase
+      .from("outlets")
+      .select("id")
+      .eq("id", input.outletId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!outlet) {
+      return { ok: false, message: "Invalid outlet for your organization." };
+    }
+
+    const { data: account } = await bankDb(supabase)
+      .from("bank_accounts")
+      .select("id, current_balance, name")
+      .eq("id", input.bankAccountId)
+      .eq("organization_id", ctx.organizationId)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (!account) {
+      return { ok: false, message: "Bank account not found." };
+    }
+
+    const note = input.description?.trim();
+    const description = note
+      ? `${CASH_DRAWER_DEPOSIT_PREFIX} · ${note}`
+      : CASH_DRAWER_DEPOSIT_PREFIX;
+
+    const { data: txn, error: txErr } = await bankDb(supabase)
+      .from("bank_transactions")
+      .insert({
+        organization_id: ctx.organizationId,
+        bank_account_id: input.bankAccountId,
+        outlet_id: input.outletId,
+        transaction_type: "deposit",
+        amount,
+        reference_no: input.referenceNo?.trim() || null,
+        description,
+        transaction_date: businessDate,
+        created_by: ctx.userId,
+      })
+      .select("id")
+      .single();
+    if (txErr || !txn) {
+      return { ok: false, message: txErr?.message ?? "Could not record deposit." };
+    }
+
+    const newBalance = roundMoney(Number(account.current_balance) + amount);
+    const { error: balErr } = await bankDb(supabase)
+      .from("bank_accounts")
+      .update({ current_balance: newBalance })
+      .eq("id", input.bankAccountId);
+    if (balErr) {
+      await bankDb(supabase).from("bank_transactions").delete().eq("id", txn.id);
+      return { ok: false, message: balErr.message };
+    }
+
+    const journal = await postJournalEntry({
+      description: `${description} → ${account.name}`,
+      sourceType: "transfer",
+      sourceId: txn.id,
+      outletId: input.outletId,
+      entryDate: businessDate,
+      lines: buildCashToBankJournalLines(amount),
+    });
+    if (!journal.ok) {
+      await bankDb(supabase)
+        .from("bank_accounts")
+        .update({ current_balance: Number(account.current_balance) })
+        .eq("id", input.bankAccountId);
+      await bankDb(supabase).from("bank_transactions").delete().eq("id", txn.id);
+      return { ok: false, message: journal.message };
+    }
+
+    revalidatePath("/finance/banking");
+    revalidatePath("/pos");
+    revalidatePath("/daily-closing");
+    return { ok: true, transactionId: txn.id };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Cash deposit failed",
     };
   }
 }

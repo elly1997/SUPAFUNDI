@@ -6,8 +6,11 @@ export async function GET(request: Request) {
   try {
     await requireOrgContext();
     const accountId = new URL(request.url).searchParams.get("accountId");
+    const outletId = new URL(request.url).searchParams.get("outletId");
     const transactions = await listBankTransactions(
-      accountId && accountId !== "all" ? accountId : null
+      accountId && accountId !== "all" ? accountId : null,
+      80,
+      outletId || null
     );
     return NextResponse.json({ transactions });
   } catch (e) {

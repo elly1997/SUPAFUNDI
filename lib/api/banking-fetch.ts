@@ -18,10 +18,12 @@ export async function fetchPaymentAccounts(): Promise<PaymentAccountRow[]> {
 }
 
 export async function fetchBankTransactions(
-  accountId: string | null
+  accountId: string | null,
+  outletId?: string | null
 ): Promise<BankTransactionRow[]> {
   const params = new URLSearchParams();
   if (accountId) params.set("accountId", accountId);
+  if (outletId) params.set("outletId", outletId);
   const qs = params.toString();
   const res = await fetch(
     `/api/finance/banking/transactions${qs ? `?${qs}` : ""}`,
@@ -35,6 +37,35 @@ export async function fetchBankTransactions(
     throw new Error(body.error ?? "Failed to load transactions");
   }
   return body.transactions ?? [];
+}
+
+export async function recordCashDepositApi(params: {
+  bankAccountId: string;
+  amount: number;
+  outletId: string;
+  businessDate: string;
+  description?: string;
+  referenceNo?: string;
+}): Promise<
+  { ok: true; transactionId: string } | { ok: false; message: string }
+> {
+  const res = await fetch("/api/finance/banking/cash-deposit", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    return {
+      ok: false,
+      message:
+        (body as { message?: string }).message ??
+        (body as { error?: string }).error ??
+        "Deposit failed",
+    };
+  }
+  return body as { ok: true; transactionId: string } | { ok: false; message: string };
 }
 
 export async function fetchPosPaymentAccounts(

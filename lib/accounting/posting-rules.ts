@@ -294,6 +294,24 @@ export type ExpensePostingInput = {
   categoryAccountCode?: string;
 };
 
+/** Move cash from drawer to bank — asset transfer, no P&L impact. */
+export function buildCashToBankJournalLines(amount: number): JournalLineInput[] {
+  return [
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.bank,
+      debit: amount,
+      credit: 0,
+      memo: "Cash deposited to bank",
+    },
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.cash,
+      debit: 0,
+      credit: amount,
+      memo: "Cash out of drawer",
+    },
+  ];
+}
+
 export function buildExpenseJournalLines(input: ExpensePostingInput): JournalLineInput[] {
   const expenseCode = input.categoryAccountCode ?? "6040";
   return [

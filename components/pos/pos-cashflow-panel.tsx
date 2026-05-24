@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { ExternalLink, Loader2, TrendingDown } from "lucide-react";
+import { ExternalLink, Landmark, Loader2, TrendingDown } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,11 @@ import {
   receiveGoodsApi,
   recordExpenseApi,
 } from "@/lib/api/daily-ops-fetch";
+import {
+  fetchBankTransactions,
+  fetchPaymentAccounts,
+  recordCashDepositApi,
+} from "@/lib/api/banking-fetch";
 import {
   createSupplierApi,
   fetchSupplierOptions,
@@ -34,7 +39,7 @@ const EXPENSE_PRESETS = [
   { label: "Fuel", category: "misc", amount: 20000 },
 ] as const;
 
-type Tab = "expense" | "stock";
+type Tab = "expense" | "deposit" | "stock";
 
 type Props = {
   outletId: string;
@@ -49,6 +54,7 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
   const [category, setCategory] = useState<string>("misc");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
+  const [bankAccountId, setBankAccountId] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [productId, setProductId] = useState("");
   const [stockQty, setStockQty] = useState("1");
@@ -67,6 +73,30 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
         toDate: businessDate,
       }),
   });
+
+  const { data: bankAccounts = [] } = useQuery({
+    queryKey: ["payment-accounts"],
+    queryFn: fetchPaymentAccounts,
+    staleTime: 60_000,
+  });
+
+  const depositAccounts = bankAccounts.filter(
+    (a) => a.is_active && (a.account_type === "bank" || a.account_type === "mpesa")
+  );
+
+  const { data: bankTransactions = [], isLoading: depositsLoading } = useQuery({
+    queryKey: ["pos-bank-deposits", outletId, businessDate],
+    queryFn: () => fetchBankTransactions(null, outletId),
+    staleTime: 30_000,
+  });
+
+  const dayDeposits = bankTransactions.filter(
+    (t) =>
+      t.transaction_type === "deposit" &&
+      t.transaction_date === businessDate &&
+      (t.outlet_id === outletId || t.outlet_id == null) &&
+      (t.description?.startsWith("Cash drawer deposit") ?? false)
+  );
 
   const {
     data: suppliers = [],
@@ -96,7 +126,11 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
       toast.error(e instanceof Error ? e.message : "Could not add supplier"),
   });
 
-  const dayExpenses = expenses.filter((e) => e.expense_date === businessDate);
+  const dayExpenses = expenses.filter(
+    (e) =>
+      e.expense_date === businessDate &&
+      (e.category ?? "").toLowerCase() !== "bank"
+  );
   const dayTotal = dayExpenses.reduce((s, e) => s + e.amount, 0);
 
   const recordMut = useMutation({
@@ -112,6 +146,23 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
     },
     onError: (e) =>
       toast.error(e instanceof Error ? e.message : "Expense failed"),
+  });
+
+  const depositMut = useMutation({
+    mutationFn: recordCashDepositApi,
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Cash deposited to bank");
+        setAmount("");
+        setDescription("");
+        queryClient.invalidateQueries({ queryKey: ["pos-bank-deposits"] });
+        queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
+        queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
+        queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
+      } else toast.error(r.message);
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Deposit failed"),
   });
 
   const stockMut = useMutation({
@@ -146,7 +197,7 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
           <div className="min-w-0 flex-1">
             <h2 className="text-sm font-semibold text-foreground">Cash out</h2>
             <p className="truncate font-money text-xs text-muted-foreground">
-              {businessDate} · {formatTzs(dayTotal)}
+              {businessDate} · {formatTzs(dayTotal)} expenses
             </p>
           </div>
         </div>
@@ -156,12 +207,12 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
         <PosRecordDate />
       </div>
 
-      <div className="grid shrink-0 grid-cols-2 gap-1 border-b border-border p-2">
+      <div className="grid shrink-0 grid-cols-3 gap-1 border-b border-border p-2">
         <button
           type="button"
           onClick={() => setTab("expense")}
           className={cn(
-            "rounded-lg py-2 text-xs font-semibold touch-manipulation",
+            "rounded-lg py-2 text-[11px] font-semibold touch-manipulation",
             tab === "expense"
               ? "bg-outflow/15 text-outflow"
               : "text-muted-foreground hover:bg-muted/50"
@@ -171,11 +222,23 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
         </button>
         <button
           type="button"
+          onClick={() => setTab("deposit")}
+          className={cn(
+            "rounded-lg py-2 text-[11px] font-semibold touch-manipulation",
+            tab === "deposit"
+              ? "bg-info/15 text-info"
+              : "text-muted-foreground hover:bg-muted/50"
+          )}
+        >
+          To bank
+        </button>
+        <button
+          type="button"
           onClick={() => setTab("stock")}
           className={cn(
-            "rounded-lg py-2 text-xs font-semibold touch-manipulation",
+            "rounded-lg py-2 text-[11px] font-semibold touch-manipulation",
             tab === "stock"
-              ? "bg-info/15 text-info"
+              ? "bg-primary/15 text-primary"
               : "text-muted-foreground hover:bg-muted/50"
           )}
         >
@@ -220,16 +283,6 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
                     {p.label}
                   </button>
                 ))}
-                <button
-                  type="button"
-                  className="rounded-full border border-info/40 bg-info/10 px-2.5 py-1 text-[11px] font-medium text-info touch-manipulation"
-                  onClick={() => {
-                    setCategory("bank");
-                    setDescription("Bank deposit");
-                  }}
-                >
-                  Bank deposit
-                </button>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Category</Label>
@@ -299,6 +352,130 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
                       <p className="mt-0.5 text-[10px] text-muted-foreground">
                         {e.expense_date}
                         {e.description ? ` · ${e.description}` : ""}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        ) : tab === "deposit" ? (
+          <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Move cash from the drawer to a bank account. This is an asset
+              transfer — not an operating expense.
+            </p>
+            <form
+              className="space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const amt = Number(amount);
+                if (!bankAccountId) {
+                  toast.error("Select a bank account");
+                  return;
+                }
+                if (!amt || amt <= 0) {
+                  toast.error("Enter a valid amount");
+                  return;
+                }
+                depositMut.mutate({
+                  bankAccountId,
+                  amount: amt,
+                  outletId,
+                  businessDate,
+                  description: description || undefined,
+                });
+              }}
+            >
+              <div className="space-y-1">
+                <Label className="text-xs">Deposit to</Label>
+                <select
+                  aria-label="Bank account"
+                  className="flex h-10 w-full rounded-lg border border-input bg-surface-1 px-2.5 text-sm text-foreground"
+                  value={bankAccountId}
+                  onChange={(e) => setBankAccountId(e.target.value)}
+                >
+                  <option value="">Select account…</option>
+                  {depositAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                      {a.bank_name ? ` · ${a.bank_name}` : ""}
+                    </option>
+                  ))}
+                </select>
+                {depositAccounts.length === 0 ? (
+                  <p className="form-hint">
+                    Add a bank account under{" "}
+                    <Link href="/finance/banking" className="text-primary">
+                      Banking
+                    </Link>
+                    .
+                  </p>
+                ) : null}
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Amount (TZS)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  className="h-10 rounded-lg font-money text-foreground"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  placeholder="0"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Note</Label>
+                <Input
+                  className="h-9 rounded-lg text-foreground"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
+              <Button
+                type="submit"
+                className="h-10 w-full rounded-xl btn-primary-gradient"
+                disabled={depositMut.isPending || depositAccounts.length === 0}
+              >
+                {depositMut.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <>
+                    <Landmark className="mr-2 size-4" />
+                    Record bank deposit
+                  </>
+                )}
+              </Button>
+            </form>
+
+            <div>
+              <p className="mb-2 text-xs font-medium text-muted-foreground">
+                Deposits on {businessDate}
+              </p>
+              {depositsLoading ? (
+                <p className="text-xs text-muted-foreground">Loading…</p>
+              ) : dayDeposits.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  No drawer deposits on this date
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {dayDeposits.map((t) => (
+                    <li
+                      key={t.id}
+                      className="rounded-lg border border-border bg-card px-2.5 py-2 text-xs"
+                    >
+                      <div className="flex justify-between gap-2">
+                        <span className="font-medium text-foreground">
+                          {t.account_name}
+                        </span>
+                        <span className="shrink-0 font-money font-bold text-inflow">
+                          {formatTzs(t.amount)}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        {t.description ?? "Cash drawer deposit"}
                       </p>
                     </li>
                   ))}

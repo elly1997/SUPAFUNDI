@@ -148,6 +148,7 @@ export async function computeDayCashSummary(
     const amt = Number(e.amount);
     const cat = (e.category ?? "").toLowerCase();
     if (cat === "bank") {
+      // Legacy misclassified drawer deposits (pre cash-to-bank fix)
       bankDeposits += amt;
     } else if (
       e.payment_method === "cash" ||
@@ -156,6 +157,18 @@ export async function computeDayCashSummary(
     ) {
       cashExpenses += amt;
     }
+  }
+
+  const { data: drawerDeposits } = await apDb(supabase)
+    .from("bank_transactions")
+    .select("amount")
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", outletId)
+    .eq("transaction_type", "deposit")
+    .eq("transaction_date", businessDate)
+    .ilike("description", "Cash drawer deposit%");
+  for (const d of drawerDeposits ?? []) {
+    bankDeposits += Number(d.amount);
   }
 
   const { data: cashGrns } = await supabase

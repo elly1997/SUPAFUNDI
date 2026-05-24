@@ -74,6 +74,19 @@ export async function recordExpense(
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
 
+    const categoryKey = input.category.trim().toLowerCase();
+    if (
+      categoryKey === "bank" ||
+      categoryKey === "bank_deposit" ||
+      categoryKey === "bank deposit"
+    ) {
+      return {
+        ok: false,
+        message:
+          "Moving cash to the bank is not an expense. Use POS → Cash out → To bank, or Finance → Banking.",
+      };
+    }
+
     const accountCode = await resolveExpenseAccountCode(input.category);
 
     const { data: expense, error: expErr } = await supabase
