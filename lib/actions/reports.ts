@@ -3,6 +3,7 @@
 import { getReconciledDatesInRange } from "@/lib/actions/daily-closing";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { fetchByInChunks } from "@/lib/supabase/query-chunks";
 import { roundMoney } from "@/lib/utils/calculations";
 
 export type TrialBalanceRow = {
@@ -90,19 +91,20 @@ export async function getFinancialReports(
   };
   if (entryIds.length === 0) return empty;
 
-  const [{ data: lines, error: lineErr }, { data: accounts, error: accErr }] =
-    await Promise.all([
-      supabase
+  const [{ data: accounts, error: accErr }, lines] = await Promise.all([
+    supabase
+      .from("chart_of_accounts")
+      .select("id, code, name, account_type, normal_balance")
+      .eq("organization_id", ctx.organizationId)
+      .eq("is_active", true),
+    fetchByInChunks(entryIds, async (chunk) => {
+      const { data, error } = await supabase
         .from("journal_entry_lines")
         .select("account_id, debit, credit")
-        .in("journal_entry_id", entryIds),
-      supabase
-        .from("chart_of_accounts")
-        .select("id, code, name, account_type, normal_balance")
-        .eq("organization_id", ctx.organizationId)
-        .eq("is_active", true),
-    ]);
-  if (lineErr) throw new Error(lineErr.message);
+        .in("journal_entry_id", chunk);
+      return { data, error };
+    }),
+  ]);
   if (accErr) throw new Error(accErr.message);
 
   const accountMap = new Map(
@@ -111,7 +113,7 @@ export async function getFinancialReports(
 
   const byCode = new Map<string, TrialBalanceRow>();
 
-  for (const line of lines ?? []) {
+  for (const line of lines) {
     const coa = accountMap.get(line.account_id);
     if (!coa) continue;
     const existing = byCode.get(coa.code) ?? {

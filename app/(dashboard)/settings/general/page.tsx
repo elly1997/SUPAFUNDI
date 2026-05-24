@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import { CatalogBackupPanel } from "@/components/settings/catalog-backup-panel";
 import { ExpenseCategoriesSettings } from "@/components/settings/expense-categories-settings";
 import { GeneralSettingsClient } from "@/components/settings/general-settings-client";
 import { OrganizationAdminPanel } from "@/components/settings/organization-admin-panel";
@@ -33,6 +34,7 @@ export default async function GeneralSettingsPage() {
       {settings ? (
         <>
           <GeneralSettingsClient initial={settings} />
+          <CatalogBackupPanel />
           <ExpenseCategoriesSettings />
           <OrganizationAdminPanel />
         </>

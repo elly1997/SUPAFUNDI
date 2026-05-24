@@ -51,35 +51,29 @@ export async function listStockLevels(
 
   const productIds = catalog.map((p) => p.id);
 
-  const since = new Date();
-  since.setDate(since.getDate() - 30);
-  const sinceIso = since.toISOString();
-
   const velocity = new Map<string, number>();
-  const { data: recentSales } = await supabase
-    .from("sales")
-    .select("id")
-    .eq("organization_id", ctx.organizationId)
-    .eq("outlet_id", filterOutlet)
-    .eq("status", "completed")
-    .gte("sale_date", sinceIso);
-  const saleIds = (recentSales ?? []).map((s) => s.id);
-  const productIdSet = new Set(productIds);
-  if (saleIds.length > 0) {
-    const saleItems = await fetchByInChunks(saleIds, async (saleChunk) => {
-      const { data, error } = await supabase
-        .from("sale_items")
-        .select("product_id, quantity")
-        .in("sale_id", saleChunk);
-      return { data, error };
-    });
-    for (const item of saleItems) {
-      if (!item.product_id || !productIdSet.has(item.product_id)) continue;
-      velocity.set(
-        item.product_id,
-        (velocity.get(item.product_id) ?? 0) + Number(item.quantity)
-      );
+  const { data: velocityRows, error: velErr } = await (
+    supabase as unknown as {
+      rpc: (
+        fn: "get_product_sales_velocity",
+        args: { p_outlet_id: string; p_days: number }
+      ) => Promise<{
+        data: { product_id: string; qty: number }[] | null;
+        error: { message: string } | null;
+      }>;
     }
+  ).rpc("get_product_sales_velocity", {
+    p_outlet_id: filterOutlet,
+    p_days: 30,
+  });
+  if (velErr) {
+    throw new Error(velErr.message);
+  }
+  const productIdSet = new Set(productIds);
+  for (const row of velocityRows ?? []) {
+    const pid = row.product_id as string;
+    if (!productIdSet.has(pid)) continue;
+    velocity.set(pid, Number(row.qty) || 0);
   }
 
   const [stockRows, reorderRows, outletRow] = await Promise.all([

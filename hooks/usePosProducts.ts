@@ -36,9 +36,9 @@ export function usePosProducts(
   return useQuery({
     queryKey: ["pos-products", outletId, pricingMode],
     enabled: envOk && !!outletId,
-    staleTime: 30_000,
-    refetchOnMount: true,
-    refetchOnWindowFocus: true,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
     queryFn: async (): Promise<PosProductRow[]> => {
       if (!outletId) {
         return [];
