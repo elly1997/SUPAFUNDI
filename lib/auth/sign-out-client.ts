@@ -13,9 +13,5 @@ export async function performSignOut(): Promise<void> {
     await supabase.auth.signOut();
   }
 
-  try {
-    await signOutServer();
-  } catch {
-    // Server action may throw on revalidate; cookies are already cleared client-side.
-  }
+  await signOutServer();
 }
