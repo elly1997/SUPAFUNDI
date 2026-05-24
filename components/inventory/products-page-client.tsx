@@ -34,30 +34,36 @@ import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { generateProductCode } from "@/lib/products/sku";
 import { useAuthStore } from "@/stores/authStore";
 
+const nonNegNumber = z.preprocess((v) => {
+  if (v === "" || v == null) return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}, z.number().nonnegative());
+
 const addProductSchema = z
   .object({
-    name: z.string().min(1, "Name is required"),
+    productName: z.string().trim().min(1, "Name is required"),
     categoryId: z.string(),
     newCategoryName: z.string().optional(),
-    unit: z.string().min(1, "Unit is required"),
+    unit: z.string().trim().min(1, "Unit is required"),
     code: z.string().optional(),
-    retailPrice: z.coerce.number().nonnegative(),
-    costPrice: z.coerce.number().nonnegative(),
-    quantity: z.coerce.number().nonnegative(),
+    retailPrice: nonNegNumber,
+    costPrice: nonNegNumber,
+    quantity: nonNegNumber,
     outletId: z.string().min(1, "Outlet is required"),
   })
   .superRefine((data, ctx) => {
     if (data.categoryId === "__new__") {
       if (!data.newCategoryName?.trim()) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: "custom",
           message: "Enter a name for the new category.",
           path: ["newCategoryName"],
         });
       }
     } else if (!data.categoryId) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "Choose a category.",
         path: ["categoryId"],
       });
@@ -101,7 +107,7 @@ export function ProductsPageClient() {
   const form = useForm<AddProductForm>({
     resolver: zodResolver(addProductSchema) as Resolver<AddProductForm>,
     defaultValues: {
-      name: "",
+      productName: "",
       categoryId: "",
       newCategoryName: "",
       unit: "pcs",
@@ -124,7 +130,7 @@ export function ProductsPageClient() {
           ? values.newCategoryName?.trim()
           : undefined;
       return createProductApi({
-        name: values.name,
+        name: values.productName.trim(),
         categoryId,
         categoryName,
         unit: values.unit,
@@ -135,12 +141,12 @@ export function ProductsPageClient() {
         outletId: values.outletId,
       });
     },
-    onSuccess: (res) => {
+    onSuccess: (res, variables) => {
       if (res.ok) {
         toast.success("Product saved");
         setAddOpen(false);
         form.reset({
-          name: "",
+          productName: "",
           categoryId: "",
           newCategoryName: "",
           unit: "pcs",
@@ -152,6 +158,9 @@ export function ProductsPageClient() {
         });
         void queryClient.invalidateQueries({
           queryKey: ["product-price-catalog"],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: ["product-price-catalog", variables.outletId],
         });
         void queryClient.invalidateQueries({ queryKey: ["categories"] });
         void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
@@ -167,7 +176,7 @@ export function ProductsPageClient() {
 
   const onOpenAdd = useCallback(() => {
     form.reset({
-      name: "",
+      productName: "",
       categoryId: categories[0]?.id ?? "",
       newCategoryName: "",
       unit: "pcs",
@@ -309,7 +318,13 @@ export function ProductsPageClient() {
           </DialogHeader>
           <form
             className="space-y-4"
-            onSubmit={form.handleSubmit((v) => createMutation.mutate(v))}
+            onSubmit={form.handleSubmit(
+              (v) => createMutation.mutate(v),
+              (errors) => {
+                const first = Object.values(errors).find((e) => e?.message);
+                if (first?.message) toast.error(String(first.message));
+              }
+            )}
           >
             <div className="space-y-2">
               <Label htmlFor="outlet">Outlet (stock)</Label>
@@ -333,11 +348,11 @@ export function ProductsPageClient() {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="name">Name</Label>
-              <Input id="name" {...form.register("name")} />
-              {form.formState.errors.name && (
+              <Label htmlFor="productName">Name</Label>
+              <Input id="productName" {...form.register("productName")} />
+              {form.formState.errors.productName && (
                 <p className="text-xs text-destructive">
-                  {form.formState.errors.name.message}
+                  {form.formState.errors.productName.message}
                 </p>
               )}
             </div>
@@ -414,7 +429,7 @@ export function ProductsPageClient() {
                   type="number"
                   step="0.01"
                   min={0}
-                  {...form.register("retailPrice", { valueAsNumber: true })}
+                  {...form.register("retailPrice")}
                 />
               </div>
               <div className="space-y-2">
@@ -423,7 +438,7 @@ export function ProductsPageClient() {
                   type="number"
                   step="0.01"
                   min={0}
-                  {...form.register("costPrice", { valueAsNumber: true })}
+                  {...form.register("costPrice")}
                 />
               </div>
             </div>
@@ -433,8 +448,13 @@ export function ProductsPageClient() {
                 type="number"
                 step="0.001"
                 min={0}
-                {...form.register("quantity", { valueAsNumber: true })}
+                {...form.register("quantity")}
               />
+              {form.formState.errors.quantity && (
+                <p className="text-xs text-destructive">
+                  {form.formState.errors.quantity.message}
+                </p>
+              )}
             </div>
             <DialogFooter className="gap-2 sm:gap-0">
               <Button
