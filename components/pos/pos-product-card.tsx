@@ -1,6 +1,6 @@
 "use client";
 
-import { Package, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
@@ -26,14 +26,14 @@ export function PosProductCard({
   return (
     <div
       className={cn(
-        "group relative rounded-xl border bg-card p-2.5 shadow-sm transition-all",
+        "group relative flex min-h-[6.25rem] flex-col rounded-xl border bg-card p-2 shadow-sm transition-all",
         "hover:border-primary/40 hover:shadow-md",
         cartQty > 0 && "border-primary/50 ring-2 ring-primary/20",
         outOfStock && "opacity-45 grayscale"
       )}
     >
       {cartQty > 0 && (
-        <span className="absolute -right-1.5 -top-1.5 z-10 flex h-7 min-w-7 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-bold text-primary-foreground shadow-md">
+        <span className="absolute -right-1 -top-1 z-10 flex h-6 min-w-6 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground shadow-md">
           {cartQty}
         </span>
       )}
@@ -42,19 +42,16 @@ export function PosProductCard({
         disabled={outOfStock}
         onClick={onAdd}
         className={cn(
-          "flex min-h-[4.5rem] w-full items-center gap-3 text-left touch-manipulation active:scale-[0.98]",
+          "flex min-h-0 flex-1 flex-col text-left touch-manipulation active:scale-[0.98]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-xl",
           outOfStock && "cursor-not-allowed"
         )}
       >
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-          <Package className="size-4" aria-hidden />
-        </span>
         <span className="min-w-0 flex-1">
-          <span className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
+          <span className="line-clamp-2 text-xs font-semibold leading-snug text-foreground">
             {product.name}
           </span>
-          <span className="mt-1 block text-[11px] font-medium text-muted-foreground">
+          <span className="mt-1 block truncate text-[10px] font-medium text-muted-foreground">
             {product.code ?? "No SKU"} ·{" "}
             <span
               className={cn(
@@ -68,7 +65,7 @@ export function PosProductCard({
         </span>
         <span
           className={cn(
-            "shrink-0 text-right font-money text-sm font-bold tabular-nums tracking-tight",
+            "mt-1 block font-money text-sm font-bold tabular-nums tracking-tight",
             pricingMode === "wholesale" ? "text-info" : "text-primary"
           )}
         >
@@ -80,7 +77,7 @@ export function PosProductCard({
           type="button"
           variant="outline"
           size="sm"
-          className="pos-touch mt-2 min-h-10 w-full rounded-lg text-xs font-semibold"
+          className="mt-1.5 min-h-8 w-full rounded-lg text-[11px] font-semibold lg:min-h-8"
           onClick={(e) => {
             e.stopPropagation();
             onQtyClick();

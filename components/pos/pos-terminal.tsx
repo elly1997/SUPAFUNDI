@@ -17,7 +17,6 @@ import { toast } from "sonner";
 import { PosCartPanel } from "@/components/pos/pos-cart-panel";
 import { PosCategoryChips } from "@/components/pos/pos-category-chips";
 import { PosCheckoutDialog } from "@/components/pos/pos-checkout-dialog";
-import { PosFavoritesRow } from "@/components/pos/pos-favorites-row";
 import { PosCashflowPanel } from "@/components/pos/pos-cashflow-panel";
 import { PosHeader, type PosOutletOption } from "@/components/pos/pos-header";
 import { PosProductCard } from "@/components/pos/pos-product-card";
@@ -602,15 +601,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                   className="hidden h-full min-h-0 min-w-0 lg:flex lg:flex-col"
                 />
                 <section className="flex min-h-0 min-w-0 flex-col overflow-hidden border-x border-border pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
-                  {effectiveOutletId && (
-                    <PosFavoritesRow
-                      outletId={effectiveOutletId}
-                      products={products}
-                      onPick={openAddDialogFor}
-                    />
-                  )}
-
-                  <div className="space-y-2 border-b p-3">
+                  <div className="space-y-2 border-b p-2.5">
                     <div className="flex gap-2">
                       <div className="relative min-w-0 flex-1">
                       <Search className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
@@ -665,7 +656,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                         </p>
                       </div>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                         {filtered.map((p) => (
                           <PosProductCard
                             key={p.id}
