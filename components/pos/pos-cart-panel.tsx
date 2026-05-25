@@ -134,7 +134,7 @@ export function PosCartPanel({
                     <button
                       type="button"
                       onClick={() => onRemoveLine(line.lineKey)}
-                      className="shrink-0 rounded-lg p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive touch-manipulation"
+                      className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive touch-manipulation"
                       aria-label={`Remove ${line.name}`}
                     >
                       <Trash2 className="size-4" />
@@ -146,7 +146,7 @@ export function PosCartPanel({
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="size-9"
+                        className="size-11"
                         onClick={() => {
                           const r = onUpdateQuantity(
                             line.lineKey,
@@ -164,7 +164,7 @@ export function PosCartPanel({
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="size-9"
+                        className="size-11"
                         disabled={
                           line.quantity >=
                           maxSellFromCartFields(
@@ -226,7 +226,7 @@ export function PosCartPanel({
             id="pos-charge-total"
             type="number"
             min={0}
-            className="h-9 w-32 text-right tabular-nums text-foreground"
+            className="min-h-11 w-36 text-right tabular-nums text-foreground"
             value={chargeTotal}
             onChange={(e) => {
               onChargeTotalLock?.();

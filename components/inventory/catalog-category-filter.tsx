@@ -25,7 +25,7 @@ export function CatalogCategoryFilter({
 
   return (
     <Select value={value} onValueChange={(v) => onChange(v ?? "all")}>
-      <SelectTrigger className={className ?? "w-48"}>
+      <SelectTrigger className={className ?? "w-full sm:w-48"}>
         <SelectValue placeholder="All categories" />
       </SelectTrigger>
       <SelectContent>

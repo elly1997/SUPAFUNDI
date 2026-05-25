@@ -97,7 +97,7 @@ export function SalesListClient() {
             header when backdating.
           </CardDescription>
         </div>
-        <Link href="/pos" className={cn(buttonVariants())}>
+        <Link href="/pos" className={cn(buttonVariants(), "w-full sm:w-auto")}>
           Open POS
         </Link>
       </CardHeader>
@@ -159,7 +159,59 @@ export function SalesListClient() {
               : "No sales in this date range."}
           </p>
         ) : (
-          <div className="-mx-1 overflow-x-auto overscroll-x-contain pb-1">
+          <>
+          <div className="space-y-3 md:hidden">
+            {filteredSales.map((sale) => (
+              <div key={sale.id} className="rounded-xl border border-border bg-card p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <Link
+                      href={`/sales/${sale.id}`}
+                      className="font-mono font-semibold text-primary hover:underline"
+                    >
+                      {sale.invoice_no}
+                    </Link>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {saleTypeLabel(sale.sale_type)} · {formatDateTimeEAT(sale.sale_date)}
+                    </p>
+                    <p className="mt-1 truncate text-sm">{sale.customer_name ?? "Walk-in customer"}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs capitalize text-muted-foreground">
+                    {sale.status}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
+                  <div>
+                    <span className="text-xs text-muted-foreground">Total</span>
+                    <p className="font-money font-semibold">{formatTzs(sale.total_amount)}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground">Paid</span>
+                    <p className="font-money">{formatTzs(sale.amount_paid)}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground">Due</span>
+                    <p className="font-money">{formatTzs(sale.balance_due)}</p>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap justify-end gap-2">
+                  <Link
+                    href={`/sales/${sale.id}`}
+                    className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                  >
+                    View
+                  </Link>
+                  <SaleVoidActions
+                    saleId={sale.id}
+                    invoiceNo={sale.invoice_no}
+                    status={sale.status}
+                    compact
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="-mx-1 hidden overflow-x-auto overscroll-x-contain pb-1 md:block">
             <Table>
             <TableHeader>
               <TableRow>
@@ -208,7 +260,7 @@ export function SalesListClient() {
                         href={`/sales/${sale.id}`}
                         className={cn(
                           buttonVariants({ variant: "outline", size: "sm" }),
-                          "h-7 rounded-md px-2 text-xs"
+                          "rounded-md px-3 text-xs"
                         )}
                       >
                         View
@@ -226,6 +278,7 @@ export function SalesListClient() {
             </TableBody>
           </Table>
           </div>
+          </>
         )}
       </CardContent>
     </Card>

@@ -58,7 +58,7 @@ export function DatePicker({
   ];
 
   return (
-    <div ref={rootRef} className={cn("relative inline-block", className)}>
+    <div ref={rootRef} className={cn("relative inline-block w-full sm:w-auto", className)}>
       {label ? (
         <span className="mb-1 block text-xs text-muted-foreground">{label}</span>
       ) : null}
@@ -69,7 +69,7 @@ export function DatePicker({
         aria-haspopup="dialog"
         aria-controls={open ? listId : undefined}
         className={cn(
-          "h-9 min-w-[10.5rem] justify-between gap-2 rounded-lg border-border bg-background px-3 font-normal",
+          "min-h-11 w-full min-w-[10.5rem] justify-between gap-2 rounded-lg border-border bg-background px-3 font-normal sm:w-auto",
           buttonClassName
         )}
         onClick={() => setOpen((o) => !o)}
@@ -88,7 +88,7 @@ export function DatePicker({
           role="dialog"
           aria-label={label ?? "Choose date"}
           className={cn(
-            "absolute top-full z-50 mt-1 rounded-xl border border-border bg-card p-1 shadow-lg",
+            "absolute top-full z-[200] mt-1 max-h-[min(78dvh,32rem)] max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-xl border border-border bg-card p-1 shadow-lg touch-pan-y",
             align === "end" ? "right-0" : "left-0"
           )}
         >

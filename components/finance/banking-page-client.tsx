@@ -190,7 +190,7 @@ export function BankingPageClient() {
             </p>
           </CardContent>
         </Card>
-        <div className="flex flex-wrap items-end gap-2 sm:col-span-2">
+        <div className="grid gap-2 sm:col-span-2 sm:flex sm:flex-wrap sm:items-end">
           <Button type="button" onClick={() => setAccountOpen(true)}>
             <Plus className="mr-2 size-4" />
             Add account
@@ -314,7 +314,7 @@ export function BankingPageClient() {
             value={selectedAccount}
             onValueChange={(v) => setSelectedAccount(v ?? "all")}
           >
-            <SelectTrigger className="w-56 max-w-full">
+            <SelectTrigger className="w-full sm:w-56 sm:max-w-full">
               <span className="truncate text-left">
                 {selectedAccount === "all"
                   ? "All accounts"
@@ -342,7 +342,53 @@ export function BankingPageClient() {
             </p>
           ) : txLoading ? (
             <Loader2 className="mx-auto size-8 animate-spin" />
+          ) : transactions.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No transactions yet
+            </p>
           ) : (
+            <>
+            <div className="space-y-3 md:hidden">
+              {transactions.map((t) => (
+                <div key={t.id} className="rounded-xl border border-border bg-card p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium">{t.account_name}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {t.transaction_date ?? t.created_at.slice(0, 10)} · {t.transaction_type}
+                      </p>
+                      <p className="mt-1 truncate text-sm text-muted-foreground">
+                        {t.description ?? t.reference_no ?? "No reference"}
+                      </p>
+                    </div>
+                    <p
+                      className={cn(
+                        "shrink-0 font-money font-semibold",
+                        t.transaction_type === "withdrawal" && "text-outflow"
+                      )}
+                    >
+                      {t.transaction_type === "withdrawal" ? "−" : "+"}
+                      {formatTzs(t.amount)}
+                    </p>
+                  </div>
+                  <label className="mt-3 flex min-h-11 items-center gap-3 rounded-lg bg-muted/40 px-3 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={t.is_reconciled}
+                      onChange={(e) =>
+                        reconcileMut.mutate({
+                          id: t.id,
+                          reconciled: e.target.checked,
+                        })
+                      }
+                      className="size-5"
+                    />
+                    Reconciled
+                  </label>
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -355,14 +401,7 @@ export function BankingPageClient() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {transactions.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground">
-                      No transactions yet
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  transactions.map((t) => (
+                {transactions.map((t) => (
                     <TableRow key={t.id}>
                       <TableCell className="text-xs">
                         {t.transaction_date ?? t.created_at.slice(0, 10)}
@@ -384,6 +423,7 @@ export function BankingPageClient() {
                       <TableCell>
                         <input
                           type="checkbox"
+                          aria-label={`Mark ${t.account_name} transaction as reconciled`}
                           checked={t.is_reconciled}
                           onChange={(e) =>
                             reconcileMut.mutate({
@@ -391,14 +431,15 @@ export function BankingPageClient() {
                               reconciled: e.target.checked,
                             })
                           }
-                          className="size-4"
+                          className="size-5"
                         />
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
+                  ))}
               </TableBody>
             </Table>
+            </div>
+            </>
           )}
         </CardContent>
       </Card>
@@ -491,12 +532,12 @@ export function BankingPageClient() {
                 onChange={(e) => setOpeningBal(e.target.value)}
               />
             </div>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex min-h-11 items-center gap-3 rounded-lg bg-muted/40 px-3 text-sm">
               <input
                 type="checkbox"
                 checked={showInPos}
                 onChange={(e) => setShowInPos(e.target.checked)}
-                className="size-4"
+                className="size-5"
               />
               Show on POS for matching payments (M-Pesa / bank / card)
             </label>

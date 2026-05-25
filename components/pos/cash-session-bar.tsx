@@ -104,7 +104,7 @@ export function CashSessionBar({
   const statusPill = (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold touch-manipulation",
+        "inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold touch-manipulation",
         session
           ? "bg-inflow-muted text-inflow"
           : "bg-warning-muted text-warning"
@@ -126,7 +126,7 @@ export function CashSessionBar({
       type="button"
       size="sm"
       variant="outline"
-      className="h-9 shrink-0 rounded-full px-4"
+      className="min-h-11 shrink-0 rounded-full px-4"
       onClick={() => setCloseDialog(true)}
     >
       Close
@@ -135,7 +135,7 @@ export function CashSessionBar({
     <Button
       type="button"
       size="sm"
-      className="h-9 shrink-0 rounded-full px-4"
+      className="min-h-11 shrink-0 rounded-full px-4"
       onClick={() => setOpenDialog(true)}
     >
       Open drawer

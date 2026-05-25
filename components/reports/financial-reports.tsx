@@ -50,19 +50,19 @@ export function FinancialReports({ fromDate, toDate }: FinancialReportsProps) {
           <CardTitle>Profit &amp; loss (all posted entries)</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
-          <div className="flex justify-between">
+          <div className="flex flex-wrap justify-between gap-2">
             <span>Total income</span>
             <span className="font-medium">{formatTzs(pl.totalIncome)}</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex flex-wrap justify-between gap-2">
             <span>Cost of goods sold</span>
             <span>{formatTzs(pl.totalCogs)}</span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex flex-wrap justify-between gap-2">
             <span>Operating expenses</span>
             <span>{formatTzs(pl.totalExpenses)}</span>
           </div>
-          <div className="flex justify-between border-t pt-2 text-base font-semibold">
+          <div className="flex flex-wrap justify-between gap-2 border-t pt-2 text-base font-semibold">
             <span>Net income</span>
             <span className={pl.netIncome >= 0 ? "text-inflow" : "text-destructive"}>
               {formatTzs(pl.netIncome)}
@@ -83,8 +83,8 @@ export function FinancialReports({ fromDate, toDate }: FinancialReportsProps) {
             ) : (
               <ul className="space-y-1">
                 {bs.assets.map((r) => (
-                  <li key={r.code} className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">
+                  <li key={r.code} className="flex flex-wrap justify-between gap-2">
+                    <span className="min-w-0 text-muted-foreground">
                       {r.code} {r.name}
                     </span>
                     <span className="font-money">{formatTzs(r.balance)}</span>
@@ -92,7 +92,7 @@ export function FinancialReports({ fromDate, toDate }: FinancialReportsProps) {
                 ))}
               </ul>
             )}
-            <p className="mt-2 flex justify-between border-t pt-2 font-semibold">
+            <p className="mt-2 flex flex-wrap justify-between gap-2 border-t pt-2 font-semibold">
               <span>Total assets</span>
               <span className="font-money">{formatTzs(bs.totalAssets)}</span>
             </p>
@@ -102,14 +102,14 @@ export function FinancialReports({ fromDate, toDate }: FinancialReportsProps) {
               Liabilities &amp; equity
             </p>
             {[...bs.liabilities, ...bs.equity].map((r) => (
-              <div key={r.code} className="flex justify-between gap-2 py-0.5">
-                <span className="text-muted-foreground">
+              <div key={r.code} className="flex flex-wrap justify-between gap-2 py-0.5">
+                <span className="min-w-0 text-muted-foreground">
                   {r.code} {r.name}
                 </span>
                 <span className="font-money">{formatTzs(r.balance)}</span>
               </div>
             ))}
-            <p className="mt-2 flex justify-between border-t pt-2 font-semibold">
+            <p className="mt-2 flex flex-wrap justify-between gap-2 border-t pt-2 font-semibold">
               <span>Total L + E</span>
               <span className="font-money">
                 {formatTzs(bs.totalLiabilities + bs.totalEquity)}

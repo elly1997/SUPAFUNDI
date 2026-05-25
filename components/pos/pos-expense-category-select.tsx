@@ -64,7 +64,7 @@ export function PosExpenseCategorySelect({
     <div className={cn("flex gap-2", className)}>
       <select
         aria-label="Expense category"
-        className="h-9 min-w-0 flex-1 rounded-lg border border-input bg-surface-1 px-2.5 text-sm text-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+        className="min-h-11 min-w-0 flex-1 rounded-lg border border-input bg-surface-1 px-3 text-sm text-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
         value={displayValue}
         disabled={isLoading && categories.length === 0}
         onChange={(e) => onValueChange(e.target.value)}
@@ -79,7 +79,7 @@ export function PosExpenseCategorySelect({
         type="button"
         variant="outline"
         size="icon"
-        className="h-9 w-9 shrink-0 rounded-lg"
+        className="size-11 shrink-0 rounded-lg"
         aria-label="Add expense category"
         onClick={() => setAddOpen(true)}
       >

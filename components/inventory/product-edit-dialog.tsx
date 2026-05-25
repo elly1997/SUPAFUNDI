@@ -159,7 +159,7 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
               <select
                 id="edit-category"
                 aria-label="Category"
-                className="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                className="flex min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
                 value={categoryId}
                 onChange={(e) => setCategoryId(e.target.value)}
               >
@@ -194,7 +194,7 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
                     className="rounded-xl border border-border bg-surface-1/30 p-3 space-y-2"
                   >
                     <div className="flex items-center gap-2">
-                      <label className="flex items-center gap-2 text-sm">
+                      <label className="flex min-h-11 items-center gap-2 text-sm">
                         <input
                           type="radio"
                           name="base-unit"
@@ -208,14 +208,14 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="ml-auto size-8 text-destructive"
+                          className="ml-auto size-11 text-destructive"
                           onClick={() => removeUnit(u.key)}
                         >
                           <Trash2 className="size-4" />
                         </Button>
                       )}
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid gap-2 sm:grid-cols-2">
                       <div>
                         <Label className="text-xs">Label</Label>
                         <Input

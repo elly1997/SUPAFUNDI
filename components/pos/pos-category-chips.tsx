@@ -24,7 +24,7 @@ export function PosCategoryChips({ value, onChange }: Props) {
         type="button"
         onClick={() => onChange(null)}
         className={cn(
-          "shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold touch-manipulation transition-colors",
+          "min-h-11 shrink-0 rounded-full px-4 py-2 text-xs font-semibold touch-manipulation transition-colors",
           value === null
             ? "bg-primary text-primary-foreground"
             : "bg-muted text-muted-foreground hover:text-foreground"
@@ -38,7 +38,7 @@ export function PosCategoryChips({ value, onChange }: Props) {
           type="button"
           onClick={() => onChange(c.id)}
           className={cn(
-            "shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold touch-manipulation transition-colors",
+            "min-h-11 shrink-0 rounded-full px-4 py-2 text-xs font-semibold touch-manipulation transition-colors",
             value === c.id
               ? "bg-primary text-primary-foreground"
               : "bg-muted text-muted-foreground hover:text-foreground"

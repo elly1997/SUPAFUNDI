@@ -595,13 +595,13 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
             <>
               <PosWholesaleBanner mode={pricingMode} customerName={customerName} />
 
-              <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(12rem,22%)_minmax(0,1fr)_minmax(16rem,30%)]">
+              <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden 2xl:grid-cols-[minmax(14rem,22%)_minmax(0,1fr)_minmax(18rem,30%)]">
                 <PosCashflowPanel
                   outletId={effectiveOutletId}
                   products={products}
-                  className="hidden h-full min-h-0 min-w-0 lg:flex lg:flex-col"
+                  className="hidden h-full min-h-0 min-w-0 2xl:flex 2xl:flex-col"
                 />
-                <section className="flex min-h-0 min-w-0 flex-col overflow-hidden border-x border-border pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
+                <section className="flex min-h-0 min-w-0 flex-col overflow-hidden border-x border-border pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] 2xl:pb-0">
                   {effectiveOutletId && (
                     <PosFavoritesRow
                       outletId={effectiveOutletId}
@@ -629,7 +629,6 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                         autoCorrect="off"
                         spellCheck={false}
                         inputMode="search"
-                        autoFocus
                       />
                       </div>
                       <Button
@@ -666,7 +665,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                         </p>
                       </div>
                     ) : (
-                      <div className="pos-product-grid grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4">
+                      <div className="pos-product-grid grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-4">
                         {filtered.map((p) => (
                           <PosProductCard
                             key={p.id}
@@ -682,7 +681,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                   </div>
                 </section>
 
-                <div className="hidden h-full min-h-0 min-w-0 bg-muted/20 lg:block">
+                <div className="hidden h-full min-h-0 min-w-0 bg-muted/20 2xl:block">
                   <PosCartPanel
                     {...cartPanelProps}
                     className="h-full"
@@ -695,7 +694,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
               <div
                 className={cn(
                   "fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 p-3 shadow-[0_-8px_30px_rgba(0,0,0,0.45)] backdrop-blur-md",
-                  "pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:hidden"
+                  "pb-[max(0.75rem,env(safe-area-inset-bottom))] 2xl:hidden"
                 )}
               >
                 <div className="flex gap-2">
@@ -737,7 +736,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                   showCloseButton
                   className={cn(
                     "flex max-h-[min(92vh,720px)] flex-col gap-0 overflow-hidden p-0",
-                    "fixed inset-x-0 bottom-0 top-auto max-w-full translate-x-0 translate-y-0 rounded-b-none rounded-t-3xl",
+                    "!fixed !inset-x-0 !bottom-0 !top-auto !max-w-full !translate-x-0 !translate-y-0 rounded-b-none rounded-t-3xl",
                     "data-open:slide-in-from-bottom data-closed:slide-out-to-bottom"
                   )}
                 >
@@ -757,7 +756,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                   showCloseButton
                   className={cn(
                     "flex max-h-[min(92vh,720px)] flex-col gap-0 overflow-hidden p-0",
-                    "fixed inset-x-0 bottom-0 top-auto max-w-full translate-x-0 translate-y-0 rounded-b-none rounded-t-3xl"
+                    "!fixed !inset-x-0 !bottom-0 !top-auto !max-w-full !translate-x-0 !translate-y-0 rounded-b-none rounded-t-3xl"
                   )}
                 >
                   <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-muted-foreground/30" />

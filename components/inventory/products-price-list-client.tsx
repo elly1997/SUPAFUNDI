@@ -160,7 +160,7 @@ export function ProductsPriceListClient({
             badge.
           </CardDescription>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
+        <div className="grid w-full shrink-0 gap-2 sm:flex sm:w-auto sm:flex-wrap">
           {canManage && (
             <Button
               type="button"
@@ -314,7 +314,7 @@ function PriceListRow({
           <button
             type="button"
             onClick={() => onEdit(row.id)}
-            className="text-left text-primary underline-offset-2 hover:underline"
+            className="min-h-11 rounded-md text-left text-primary underline-offset-2 hover:underline"
           >
             {row.name}
           </button>
@@ -327,7 +327,7 @@ function PriceListRow({
       </TableCell>
       <TableCell>
         <Input
-          className="h-8 font-mono text-xs"
+          className="min-h-11 font-mono text-xs"
           value={code}
           onChange={(e) => setCode(e.target.value)}
           onBlur={() => {
@@ -341,7 +341,7 @@ function PriceListRow({
         <Input
           type="number"
           min={0}
-          className="ml-auto h-8 w-28 text-right font-money"
+          className="ml-auto min-h-11 w-32 text-right font-money"
           value={cost}
           onChange={(e) => setCost(e.target.value)}
           onBlur={() => {
@@ -357,7 +357,7 @@ function PriceListRow({
           <Input
             type="number"
             min={0}
-            className="ml-auto h-8 w-28 text-right font-money"
+            className="ml-auto min-h-11 w-32 text-right font-money"
             placeholder={row.retailPrice == null ? "—" : undefined}
             value={retail}
             onChange={(e) => setRetail(e.target.value)}

@@ -52,7 +52,7 @@ export function DateRangePicker({
     const trigger = triggerRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
-    const panelWidth = Math.min(340, window.innerWidth - VIEWPORT_PAD * 2);
+    const panelWidth = Math.min(360, window.innerWidth - VIEWPORT_PAD * 2);
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
     const placement =
@@ -123,7 +123,7 @@ export function DateRangePicker({
         ref={panelRef}
         role="dialog"
         aria-label={label ?? "Choose date range"}
-        className="fixed z-[200] max-h-[min(70vh,28rem)] overflow-y-auto overscroll-contain rounded-xl border border-border bg-card p-1 shadow-lg touch-pan-y"
+        className="fixed z-[200] max-h-[min(78dvh,32rem)] overflow-y-auto overscroll-contain rounded-xl border border-border bg-card p-1 shadow-lg touch-pan-y"
         style={{
           left: panelPos.left,
           width: panelPos.width,
@@ -188,7 +188,7 @@ export function DateRangePicker({
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-controls={open ? listId : undefined}
-        className="h-11 min-h-[44px] w-full min-w-[11rem] justify-between gap-2 rounded-lg border-border bg-background px-3 font-normal sm:h-9 sm:min-h-0 sm:w-auto"
+        className="min-h-11 w-full min-w-[11rem] justify-between gap-2 rounded-lg border-border bg-background px-3 font-normal sm:w-auto"
         onClick={() => setOpen((o) => !o)}
       >
         <span className="flex items-center gap-2 truncate">

@@ -218,7 +218,7 @@ export function ProductsPageClient() {
             Quantities and valuation are managed there too.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap">
           <Button
             type="button"
             variant="outline"
@@ -327,7 +327,7 @@ export function ProductsPageClient() {
               <select
                 id="outlet"
                 aria-label="Outlet for stock"
-                className="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                className="flex min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
                 {...form.register("outletId")}
               >
                 <option value="">Select outlet…</option>
@@ -357,7 +357,7 @@ export function ProductsPageClient() {
               <select
                 id="categoryId"
                 aria-label="Product category"
-                className="flex h-9 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                className="flex min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
                 {...form.register("categoryId")}
               >
                 <option value="">Choose…</option>
@@ -396,7 +396,7 @@ export function ProductsPageClient() {
               <Input id="unit" {...form.register("unit")} />
             </div>
             <div className="space-y-2">
-              <div className="flex items-end gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                 <div className="flex-1 space-y-2">
                   <Label htmlFor="code">Code (optional)</Label>
                   <Input
@@ -418,7 +418,7 @@ export function ProductsPageClient() {
                 </Button>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Retail price (TZS)</Label>
                 <Input

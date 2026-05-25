@@ -31,7 +31,7 @@ type Props = {
 
 export function PosPaymentChips({ value, onChange }: Props) {
   return (
-    <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+    <div className="grid grid-cols-3 gap-2 xl:grid-cols-5">
       {METHODS.map(({ value: v, label, icon: Icon }) => {
         const selected = value === v;
         return (

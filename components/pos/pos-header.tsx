@@ -27,16 +27,18 @@ export function PosHeader({
   return (
     <div className="shrink-0 border-b border-border bg-surface-1/50 px-3 py-2 sm:px-4">
       <div className="flex flex-wrap items-center gap-2">
-        <PosOutletPicker outlets={outlets} className="min-w-[10rem] flex-1 sm:max-w-xs" />
+        <PosOutletPicker outlets={outlets} className="min-w-[9rem] flex-1 sm:max-w-xs" />
         {outletId ? (
-          <CashSessionBar outletId={outletId} variant="inline" />
+          <div className="order-3 w-full sm:order-none sm:w-auto">
+            <CashSessionBar outletId={outletId} variant="inline" />
+          </div>
         ) : null}
         {cartSummary ? (
           <span className="hidden rounded-full bg-primary/15 px-3 py-1 text-xs font-bold text-primary lg:inline-flex">
             {cartSummary}
           </span>
         ) : null}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <PosSyncStatus />
           <PosPricingToggle mode={pricingMode} onChange={onPricingModeChange} />
         </div>

@@ -66,9 +66,9 @@ export function ExpensesPageClient() {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle>Expenses</CardTitle>
-        <Button onClick={() => setOpen(true)}>
+        <Button className="w-full sm:w-auto" onClick={() => setOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
           Record expense
         </Button>
@@ -78,7 +78,33 @@ export function ExpensesPageClient() {
           <div className="flex justify-center py-8">
             <Loader2 className="h-6 w-6 animate-spin" />
           </div>
+        ) : expenses.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            No expenses recorded yet.
+          </p>
         ) : (
+          <>
+          <div className="space-y-3 md:hidden">
+            {expenses.map((e) => (
+              <div key={e.id} className="rounded-xl border border-border bg-card p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-medium">
+                      {formatExpenseCategoryLabel(e.category ?? "misc")}
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {e.description ?? "No description"}
+                    </p>
+                  </div>
+                  <p className="shrink-0 font-money font-semibold">
+                    {formatTzs(e.amount)}
+                  </p>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">{e.expense_date}</p>
+              </div>
+            ))}
+          </div>
+          <div className="hidden md:block">
           <Table>
             <TableHeader>
               <TableRow>
@@ -103,6 +129,8 @@ export function ExpensesPageClient() {
               ))}
             </TableBody>
           </Table>
+          </div>
+          </>
         )}
       </CardContent>
 

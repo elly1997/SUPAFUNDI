@@ -51,7 +51,7 @@ export function SaleVoidActions({
       type="button"
       variant="destructive"
       size={compact ? "sm" : "default"}
-      className={cn(compact ? "h-7 rounded-md px-2 text-xs" : "rounded-xl")}
+      className={cn(compact ? "rounded-md px-3 text-xs" : "rounded-xl")}
       disabled={voidMut.isPending}
       onClick={() => {
         if (

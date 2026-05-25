@@ -180,7 +180,7 @@ export function StockPageClient() {
             template as before to import or update products and stock.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap">
           <Button
             type="button"
             variant="outline"
@@ -285,7 +285,7 @@ export function StockPageClient() {
           value={statusFilter}
           onValueChange={(v) => setStatusFilter((v as StockStatus | "all") ?? "all")}
         >
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-full sm:w-48">
             <SelectValue placeholder="All statuses" />
           </SelectTrigger>
           <SelectContent>
@@ -298,7 +298,7 @@ export function StockPageClient() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle>Stock on hand</CardTitle>
           <Link
             href="/inventory/receive"
@@ -319,6 +319,38 @@ export function StockPageClient() {
                 : "No active products. Add products under Inventory → Products, or import Excel."}
             </p>
           ) : (
+            <>
+            <div className="space-y-3 md:hidden">
+              {stockSections.map((section) => (
+                <div key={section.categoryName} className="space-y-2">
+                  <div className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {section.categoryName} · {section.rows.length}
+                  </div>
+                  {section.rows.map((r) => (
+                    <StockCard
+                      key={`${r.outlet_id}-${r.product_id}`}
+                      row={r}
+                      outletId={outletId}
+                      saving={savingQtyId === r.product_id}
+                      onQtySave={(qty) => {
+                        if (!outletId) {
+                          toast.error("Select an active outlet");
+                          return;
+                        }
+                        setSavingQtyId(r.product_id);
+                        qtyMut.mutate({
+                          productId: r.product_id,
+                          outletId,
+                          quantity: qty,
+                        });
+                      }}
+                      onStatement={() => setStatementRow(r)}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -367,6 +399,8 @@ export function StockPageClient() {
                 ))}
               </TableBody>
             </Table>
+            </div>
+            </>
           )}
           {total > PAGE_SIZE ? (
             <div className="mt-3 flex flex-col gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
@@ -454,7 +488,7 @@ function StockRow({
           type="number"
           min={0}
           step="any"
-          className="ml-auto h-8 w-24 text-right font-money"
+          className="ml-auto min-h-11 w-28 text-right font-money"
           value={qty}
           onChange={(e) => setQty(e.target.value)}
           onBlur={() => {
@@ -485,7 +519,6 @@ function StockRow({
             type="button"
             variant="outline"
             size="sm"
-            className="h-8"
             onClick={onStatement}
             title="View purchases, sales and adjustments"
           >
@@ -495,5 +528,95 @@ function StockRow({
         </div>
       </TableCell>
     </TableRow>
+  );
+}
+
+function StockCard({
+  row,
+  outletId,
+  saving,
+  onQtySave,
+  onStatement,
+}: {
+  row: StockLevelRow;
+  outletId: string | null;
+  saving: boolean;
+  onQtySave: (qty: number) => void;
+  onStatement: () => void;
+}) {
+  const [qty, setQty] = useState(String(row.quantity));
+  useEffect(() => {
+    setQty(String(row.quantity));
+  }, [row.quantity]);
+
+  return (
+    <div className={cn("rounded-xl border border-border bg-card p-3", saving && "opacity-70")}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-semibold leading-snug text-foreground">{row.product_name}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {row.code ?? "No SKU"} · {row.unit}
+          </p>
+        </div>
+        <span
+          className={cn(
+            "shrink-0 rounded px-2 py-1 text-xs font-medium",
+            statusClass[row.stock_status]
+          )}
+        >
+          {statusLabel[row.stock_status]}
+        </span>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+        <div>
+          <span className="text-xs text-muted-foreground">Buying</span>
+          <p className="font-money">{row.cost_price > 0 ? formatTzs(row.cost_price) : "—"}</p>
+        </div>
+        <div>
+          <span className="text-xs text-muted-foreground">Selling</span>
+          <p className="font-money">{row.retail_price > 0 ? formatTzs(row.retail_price) : "—"}</p>
+        </div>
+        <div>
+          <span className="text-xs text-muted-foreground">Cost value</span>
+          <p className="font-money">{formatTzs(row.stock_value)}</p>
+        </div>
+        <div>
+          <span className="text-xs text-muted-foreground">Sell value</span>
+          <p className="font-money">{formatTzs(row.retail_stock_value)}</p>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-end gap-2">
+        <div className="flex-1">
+          <label className="text-xs text-muted-foreground">Quantity</label>
+          <Input
+            type="number"
+            min={0}
+            step="any"
+            className="mt-1 text-right font-money"
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+            onBlur={() => {
+              const n = Number(qty);
+              if (Number.isFinite(n) && n >= 0 && n !== row.quantity) {
+                onQtySave(n);
+              }
+            }}
+            disabled={!outletId}
+          />
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onStatement}
+          title="View purchases, sales and adjustments"
+        >
+          <FileText className="mr-1 size-3.5" />
+          Statement
+        </Button>
+      </div>
+    </div>
   );
 }

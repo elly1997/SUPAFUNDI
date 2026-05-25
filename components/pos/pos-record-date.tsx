@@ -26,7 +26,7 @@ export function PosRecordDate({ className }: Props) {
         value={businessDate}
         onChange={setBusinessDate}
         showPresets={false}
-        buttonClassName="h-9 min-w-0 flex-1"
+        buttonClassName="min-h-11 min-w-0 flex-1"
         align="start"
       />
       {isBackdated ? (
@@ -42,7 +42,7 @@ export function PosRecordDate({ className }: Props) {
         type="button"
         variant="ghost"
         size="sm"
-        className="h-8 shrink-0 px-2 text-xs"
+        className="min-h-10 shrink-0 px-2 text-xs"
         onClick={resetToToday}
       >
         <RotateCcw className="mr-1 size-3" />

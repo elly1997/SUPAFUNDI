@@ -97,7 +97,7 @@ export function PosAddToCartDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto sm:max-w-sm">
         <DialogHeader>
           <DialogTitle className="text-left leading-snug">{product.name}</DialogTitle>
           <p className="text-sm text-muted-foreground">

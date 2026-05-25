@@ -47,7 +47,7 @@ export function PosBusinessDateStrip({
           value={businessDate}
           onChange={onBusinessDateChange}
           disabledDates={reconciledDates}
-          buttonClassName="h-8 min-w-0 flex-1 sm:min-w-[11rem]"
+          buttonClassName="min-h-11 min-w-0 flex-1 sm:min-w-[11rem]"
           align="start"
         />
         {isBackdated ? (
@@ -88,7 +88,7 @@ export function PosBusinessDateStrip({
             type="button"
             variant="outline"
             size="sm"
-            className="mb-0.5 h-9 text-xs"
+            className="mb-0.5 min-h-11 text-xs"
             onClick={() => {
               onViewFromChange(businessDate);
               onViewToChange(businessDate);

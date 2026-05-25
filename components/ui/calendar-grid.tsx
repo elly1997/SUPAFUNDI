@@ -101,7 +101,7 @@ export function CalendarGrid({
   }
 
   return (
-    <div className={cn("w-[17.5rem] select-none p-2", className)}>
+    <div className={cn("w-[19.5rem] select-none p-2", className)}>
       <div className="mb-2 flex items-center justify-between gap-1">
         <Button
           type="button"
@@ -148,7 +148,7 @@ export function CalendarGrid({
               disabled={disabled}
               onClick={() => handleDayClick(day)}
               className={cn(
-                "h-8 w-8 rounded-lg text-xs font-medium transition-colors touch-manipulation",
+                "h-10 w-10 rounded-lg text-sm font-medium transition-colors touch-manipulation",
                 outside && "text-muted-foreground/40",
                 !outside && !disabled && "hover:bg-muted",
                 isToday(day) && !selectedDay && "ring-1 ring-primary/40",

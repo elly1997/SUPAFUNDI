@@ -105,7 +105,7 @@ export function PosCartCustomer({
           }}
         >
           <SelectTrigger
-            className="h-9 min-w-0 flex-1 rounded-lg border-border bg-surface-1 text-sm text-foreground"
+            className="min-h-11 min-w-0 flex-1 rounded-lg border-border bg-surface-1 text-sm text-foreground"
             aria-label="Customer"
           >
             <SelectValue>{displayLabel}</SelectValue>
@@ -132,7 +132,7 @@ export function PosCartCustomer({
           type="button"
           variant="outline"
           size="icon"
-          className="size-9 shrink-0 rounded-lg"
+          className="size-11 shrink-0 rounded-lg"
           title="Add customer"
           onClick={() => setAddOpen(true)}
         >

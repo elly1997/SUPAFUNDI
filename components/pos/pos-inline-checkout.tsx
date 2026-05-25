@@ -61,7 +61,7 @@ export function PosInlineCheckout({
           <Input
             type="number"
             min={0}
-            className="h-9 rounded-lg bg-surface-1 text-right font-money text-sm text-foreground"
+            className="min-h-11 rounded-lg bg-surface-1 text-right font-money text-sm text-foreground"
             value={amountPaid}
             onChange={(e) => onAmountPaidChange(e.target.value)}
           />
