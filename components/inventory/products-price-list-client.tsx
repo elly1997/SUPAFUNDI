@@ -22,7 +22,7 @@ import {
 import type { ProductPriceCatalogRow } from "@/lib/actions/inventory";
 import {
   applyMissingRetailPricesApi,
-  fetchProductPriceCatalog,
+  fetchProductPriceCatalogPage,
   patchCatalogField,
 } from "@/lib/api/inventory-catalog-fetch";
 import { useOrgSettingsStore } from "@/stores/orgSettingsStore";
@@ -36,7 +36,10 @@ type Props = {
   canManage?: boolean;
   onClearAll?: () => void;
   onEditProduct?: (productId: string) => void;
+  onTotalChange?: (total: number) => void;
 };
+
+const PAGE_SIZE = 50;
 
 export function ProductsPriceListClient({
   search = "",
@@ -44,16 +47,43 @@ export function ProductsPriceListClient({
   canManage = false,
   onClearAll,
   onEditProduct,
+  onTotalChange,
 }: Props) {
   const outletId = useAuthStore((s) => s.activeOutletId);
   const marginPct = useOrgSettingsStore((s) => s.defaultRetailMarginPct);
   const queryClient = useQueryClient();
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
 
-  const { data: rows = [], isLoading, isError, error } = useQuery({
-    queryKey: ["product-price-catalog", outletId],
-    queryFn: () => fetchProductPriceCatalog(outletId),
+  useEffect(() => {
+    setPage(1);
+  }, [search, categoryFilter, outletId]);
+
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: [
+      "product-price-catalog",
+      "page",
+      outletId,
+      page,
+      PAGE_SIZE,
+      search,
+      categoryFilter,
+    ],
+    queryFn: () =>
+      fetchProductPriceCatalogPage({
+        outletId,
+        page,
+        pageSize: PAGE_SIZE,
+        search,
+        categoryId: categoryFilter,
+      }),
   });
+  const rows = useMemo(() => data?.products ?? [], [data?.products]);
+  const total = data?.total ?? 0;
+
+  useEffect(() => {
+    onTotalChange?.(total);
+  }, [onTotalChange, total]);
 
   const missingRetailCount = useMemo(
     () =>
@@ -80,11 +110,6 @@ export function ProductsPriceListClient({
     onError: (e) =>
       toast.error(e instanceof Error ? e.message : "Apply failed"),
   });
-
-  const categoryOptions = useMemo(
-    () => Array.from(new Set(rows.map((r) => r.categoryName))).sort(),
-    [rows]
-  );
 
   const saveMut = useMutation({
     mutationFn: patchCatalogField,
@@ -115,22 +140,9 @@ export function ProductsPriceListClient({
     [outletId, saveMut]
   );
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (categoryFilter !== "all" && r.categoryName !== categoryFilter) {
-        return false;
-      }
-      if (!q) return true;
-      return (
-        r.name.toLowerCase().includes(q) ||
-        (r.code ?? "").toLowerCase().includes(q) ||
-        r.categoryName.toLowerCase().includes(q)
-      );
-    });
-  }, [rows, search, categoryFilter]);
-
-  const sections = useMemo(() => groupCatalogByCategory(filtered), [filtered]);
+  const sections = useMemo(() => groupCatalogByCategory(rows), [rows]);
+  const firstItem = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const lastItem = Math.min(page * PAGE_SIZE, total);
 
   return (
     <Card>
@@ -138,9 +150,9 @@ export function ProductsPriceListClient({
         <div className="space-y-1">
           <CardTitle>Price list</CardTitle>
           <CardDescription>
-            Grouped by category (from Excel import or Add product). Edits save
-            automatically. Stock quantities are on the Stock page.
-            {rows.length > 0 ? ` ${rows.length} products · ${categoryOptions.length} categories.` : ""}
+            Server-filtered by search and category. Edits save automatically.
+            Stock quantities are on the Stock page.
+            {total > 0 ? ` Showing ${firstItem}-${lastItem} of ${total} products.` : ""}
             {outletId
               ? " Buying price applies to your active outlet."
               : " Select an outlet in the header to edit buying price."}{" "}
@@ -149,7 +161,7 @@ export function ProductsPriceListClient({
           </CardDescription>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          {canManage && missingRetailCount > 0 && (
+          {canManage && (
             <Button
               type="button"
               variant="outline"
@@ -163,6 +175,7 @@ export function ProductsPriceListClient({
                 <Sparkles className="mr-2 size-4 text-warning" />
               )}
               Fill missing retail ({marginPct}%)
+              {missingRetailCount > 0 ? ` · ${missingRetailCount} on this page` : ""}
             </Button>
           )}
         {canManage && onClearAll && (
@@ -202,10 +215,10 @@ export function ProductsPriceListClient({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.length === 0 ? (
+                {rows.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={5} className="text-muted-foreground">
-                      {rows.length === 0
+                      {total === 0
                         ? "No products yet. Import on Stock or add one manually."
                         : "No products match your filters."}
                     </TableCell>
@@ -235,6 +248,33 @@ export function ProductsPriceListClient({
             </Table>
           </div>
         )}
+        {total > PAGE_SIZE ? (
+          <div className="mt-3 flex flex-col gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Page {page} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={page <= 1 || isLoading}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!data?.hasMore || isLoading}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

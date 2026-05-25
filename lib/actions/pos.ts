@@ -3,7 +3,6 @@
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
-  fetchAllPaginated,
   fetchByInChunks,
 } from "@/lib/supabase/query-chunks";
 import { listCategoriesForOrg } from "@/lib/actions/inventory";
@@ -32,25 +31,50 @@ export type PosCatalogRow = {
   retailPrice: number;
   wholesalePrice: number;
   stockQty: number;
-  costPrice: number;
 };
 
+export type PosCatalogInput = {
+  outletId: string;
+  q?: string | null;
+  categoryId?: string | null;
+  limit?: number;
+};
+
+function normalizeLimit(input?: number) {
+  const n = Math.floor(Number(input) || 80);
+  return Math.min(120, Math.max(20, n));
+}
+
+function escapeLikePattern(value: string) {
+  return value.replace(/[%_]/g, (m) => `\\${m}`);
+}
+
 export async function listPosCatalogProducts(
-  outletId: string
+  input: PosCatalogInput
 ): Promise<PosCatalogRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const search = input.q?.trim() ?? "";
+  const categoryId =
+    input.categoryId && input.categoryId !== "all" ? input.categoryId : null;
+  const limit = normalizeLimit(input.limit);
 
-  const products = await fetchAllPaginated(async (from, to) => {
-    const { data, error } = await supabase
-      .from("products")
-      .select("id, name, code, barcode, unit, category_id")
-      .eq("organization_id", ctx.organizationId)
-      .eq("is_active", true)
-      .order("name", { ascending: true })
-      .range(from, to);
-    return { data, error };
-  });
+  let query = supabase
+    .from("products")
+    .select("id, name, code, barcode, unit, category_id")
+    .eq("organization_id", ctx.organizationId)
+    .eq("is_active", true);
+  if (categoryId) query = query.eq("category_id", categoryId);
+  if (search) {
+    const like = `%${escapeLikePattern(search)}%`;
+    query = query.or(`name.ilike.${like},code.ilike.${like},barcode.ilike.${like}`);
+  }
+
+  const { data: productsRaw, error: productErr } = await query
+    .order("name", { ascending: true })
+    .limit(limit);
+  if (productErr) throw new Error(productErr.message);
+  const products = productsRaw ?? [];
 
   if (!products.length) return [];
 
@@ -66,12 +90,13 @@ export async function listPosCatalogProducts(
         .is("effective_to", null);
       return { data, error };
     }),
-    fetchAllPaginated(async (from, to) => {
+    fetchByInChunks(ids, async (chunk) => {
       const { data, error } = await supabase
         .from("stock")
-        .select("product_id, quantity, cost_price")
-        .eq("outlet_id", outletId)
-        .range(from, to);
+        .select("product_id, quantity")
+        .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", input.outletId)
+        .in("product_id", chunk);
       return { data, error };
     }),
   ]);
@@ -87,7 +112,7 @@ export async function listPosCatalogProducts(
   const stockMap = new Map(
     stockRows.map((s) => [
       s.product_id,
-      { qty: Number(s.quantity), cost: Number(s.cost_price) },
+      { qty: Number(s.quantity) },
     ])
   );
 
@@ -106,7 +131,6 @@ export async function listPosCatalogProducts(
         retailPrice,
         wholesalePrice,
         stockQty: stock?.qty ?? 0,
-        costPrice: stock?.cost ?? 0,
       };
     })
     .filter((p) => p.stockQty > 0 || p.retailPrice > 0 || p.wholesalePrice > 0);

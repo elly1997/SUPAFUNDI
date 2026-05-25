@@ -12,7 +12,7 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { PosCartPanel } from "@/components/pos/pos-cart-panel";
 import { PosCategoryChips } from "@/components/pos/pos-category-chips";
@@ -97,6 +97,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const session = useAuthStore((s) => s.session);
   const setActiveOutletId = useAuthStore((s) => s.setActiveOutletId);
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [chargeTotal, setChargeTotal] = useState("");
   const [chargeLocked, setChargeLocked] = useState(false);
@@ -170,7 +171,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     isLoading: productsLoading,
     isFetching: productsFetching,
     refetch: refetchProducts,
-  } = usePosProducts(effectiveOutletId, pricingMode);
+  } = usePosProducts(effectiveOutletId, pricingMode, deferredSearch, categoryId);
 
   const cartCatalogPriceKey = useMemo(() => {
     if (!lines.length || !products.length) return "";
@@ -233,20 +234,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     [lines]
   );
 
-  const filtered = useMemo(() => {
-    let list = products;
-    if (categoryId) {
-      list = list.filter((p) => p.categoryId === categoryId);
-    }
-    const q = search.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        (p.code?.toLowerCase().includes(q) ?? false) ||
-        (p.barcode?.toLowerCase().includes(q) ?? false)
-    );
-  }, [products, search, categoryId]);
+  const filtered = products;
 
   const paidAmount = Number(amountPaid) || 0;
   const cashChange =

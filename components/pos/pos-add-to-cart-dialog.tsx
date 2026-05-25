@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,12 +14,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { PosProductRow } from "@/hooks/usePosProducts";
 import {
+  enrichUnitsWithConversion,
   hasMultipleUnits,
   maxSellQtyInUnit,
   resolveUnitPrice,
   unitConversionHint,
   type ProductUnitOption,
 } from "@/lib/products/units";
+import { fetchProductUnitsMap } from "@/lib/api/product-units-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import type { PosPricingMode } from "@/hooks/usePosProducts";
@@ -49,14 +52,31 @@ export function PosAddToCartDialog({
   const [selectedUnitId, setSelectedUnitId] = useState<string>("");
   const [qty, setQty] = useState("1");
 
-  const units = product?.units ?? [];
+  const { data: unitsByProduct = {} } = useQuery({
+    queryKey: ["pos-product-units", product?.id, pricingMode],
+    queryFn: () => fetchProductUnitsMap(product ? [product.id] : []),
+    enabled: open && !!product?.id,
+    staleTime: 5 * 60_000,
+  });
+
+  const units = useMemo(() => {
+    if (!product) return [];
+    const loaded = unitsByProduct[product.id];
+    const rawUnits = loaded?.length ? loaded : product.units;
+    return enrichUnitsWithConversion(
+      rawUnits,
+      product.retailPrice,
+      product.wholesalePrice,
+      pricingMode
+    );
+  }, [pricingMode, product, unitsByProduct]);
 
   useEffect(() => {
     if (!open || !product) return;
     const base = units.find((u) => u.isBase) ?? units[0];
     setSelectedUnitId(base?.id ?? "");
     setQty("1");
-  }, [open, product?.id, units]);
+  }, [open, product, units]);
 
   const selectedUnit = useMemo(
     () => units.find((u) => u.id === selectedUnitId) ?? units[0],

@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/select";
 
 type Props = {
-  categories: string[];
+  categories: Array<string | { id: string; name: string }>;
   value: string;
   onChange: (value: string) => void;
   className?: string;
@@ -30,11 +30,17 @@ export function CatalogCategoryFilter({
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="all">All categories</SelectItem>
-        {categories.map((name) => (
-          <SelectItem key={name} value={name}>
-            {name}
+        {categories.map((category) => {
+          const value =
+            typeof category === "string" ? category : category.id;
+          const label =
+            typeof category === "string" ? category : category.name;
+          return (
+          <SelectItem key={value} value={value}>
+            {label}
           </SelectItem>
-        ))}
+          );
+        })}
       </SelectContent>
     </Select>
   );

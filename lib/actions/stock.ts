@@ -31,6 +31,34 @@ export type StockLevelRow = {
   suggested_order_qty: number;
 };
 
+export type StockLevelsSummary = {
+  totalValue: number;
+  totalRetailValue: number;
+  lineCount: number;
+  skusWithQty: number;
+  lowStockCount: number;
+  outOfStockCount: number;
+};
+
+export type StockLevelsPage = {
+  rows: StockLevelRow[];
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
+  summary: StockLevelsSummary;
+  categories: { id: string; name: string }[];
+};
+
+export type StockLevelsPageInput = {
+  outletId?: string | null;
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  categoryId?: string | null;
+  status?: StockStatus | "all";
+};
+
 function stockStatus(qty: number, reorder: number): StockStatus {
   if (qty <= 0) return "out_of_stock";
   if (reorder > 0 && qty <= reorder) return "low";
@@ -143,6 +171,78 @@ export async function listStockLevels(
       suggested_order_qty: suggested,
     };
   });
+}
+
+function normalizePage(input?: number) {
+  return Math.max(1, Math.floor(Number(input) || 1));
+}
+
+function normalizePageSize(input?: number) {
+  const n = Math.floor(Number(input) || 50);
+  return Math.min(100, Math.max(10, n));
+}
+
+function stockSummary(rows: StockLevelRow[]): StockLevelsSummary {
+  const withQty = rows.filter((r) => r.quantity > 0);
+  return {
+    totalValue: roundMoney(rows.reduce((s, r) => s + r.stock_value, 0)),
+    totalRetailValue: roundMoney(
+      rows.reduce((s, r) => s + r.retail_stock_value, 0)
+    ),
+    lineCount: rows.length,
+    skusWithQty: withQty.length,
+    lowStockCount: rows.filter((r) => r.stock_status === "low").length,
+    outOfStockCount: rows.filter(
+      (r) => r.quantity <= 0 && r.reorder_point > 0
+    ).length,
+  };
+}
+
+export async function listStockLevelsPage(
+  input: StockLevelsPageInput = {}
+): Promise<StockLevelsPage> {
+  const page = normalizePage(input.page);
+  const pageSize = normalizePageSize(input.pageSize);
+  const rows = await listStockLevels(input.outletId);
+  const summary = stockSummary(rows);
+  const categories = Array.from(
+    new Map(
+      rows.map((r) => [
+        r.category_id ?? "general",
+        { id: r.category_id ?? "general", name: r.category_name },
+      ])
+    ).values()
+  ).sort((a, b) => a.name.localeCompare(b.name));
+
+  const search = input.search?.trim().toLowerCase() ?? "";
+  const categoryId =
+    input.categoryId && input.categoryId !== "all" ? input.categoryId : null;
+  const status = input.status && input.status !== "all" ? input.status : null;
+  const filtered = rows.filter((r) => {
+    if (categoryId) {
+      const rowCategory = r.category_id ?? "general";
+      if (rowCategory !== categoryId) return false;
+    }
+    if (status && r.stock_status !== status) return false;
+    if (!search) return true;
+    return (
+      r.product_name.toLowerCase().includes(search) ||
+      (r.code ?? "").toLowerCase().includes(search) ||
+      r.category_name.toLowerCase().includes(search)
+    );
+  });
+
+  const from = (page - 1) * pageSize;
+  const pageRows = filtered.slice(from, from + pageSize);
+  return {
+    rows: pageRows,
+    page,
+    pageSize,
+    total: filtered.length,
+    hasMore: page * pageSize < filtered.length,
+    summary,
+    categories,
+  };
 }
 
 export type StockValuationSummary = {

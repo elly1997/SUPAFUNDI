@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Loader2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useForm, type Resolver } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -26,7 +26,6 @@ import { ProductsPriceListClient } from "@/components/inventory/products-price-l
 import {
   createProductApi,
   fetchInventoryCategories,
-  fetchProductPriceCatalog,
 } from "@/lib/api/inventory-catalog-fetch";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { canManageSettings, isUserRole } from "@/lib/auth/roles";
@@ -75,18 +74,14 @@ type AddProductForm = z.infer<typeof addProductSchema>;
 export function ProductsPageClient() {
   const queryClient = useQueryClient();
   const role = useAuthStore((s) => s.session?.role ?? null);
-  const outletId = useAuthStore((s) => s.activeOutletId);
   const canManage = canManageSettings(isUserRole(role ?? "") ? role : null);
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [catalogTotal, setCatalogTotal] = useState(0);
   const { data: outlets = [] } = useQuery({
     queryKey: ["org-outlets"],
     queryFn: fetchOrgOutlets,
-  });
-
-  const { data: catalog = [] } = useQuery({
-    queryKey: ["product-price-catalog", outletId],
-    queryFn: () => fetchProductPriceCatalog(outletId),
   });
 
   const { data: categories = [] } = useQuery({
@@ -201,8 +196,8 @@ export function ProductsPageClient() {
   }, [addOpen, categories, defaultOutletId, form]);
 
   const categoryOptions = useMemo(
-    () => Array.from(new Set(catalog.map((r) => r.categoryName))).sort(),
-    [catalog]
+    () => [...categories].sort((a, b) => a.name.localeCompare(b.name)),
+    [categories]
   );
 
   const invalidateCatalog = useCallback(() => {
@@ -282,11 +277,12 @@ export function ProductsPageClient() {
       </div>
 
       <ProductsPriceListClient
-        search={search}
+        search={deferredSearch}
         categoryFilter={categoryFilter}
         canManage={canManage}
         onClearAll={canManage ? () => setClearAllOpen(true) : undefined}
         onEditProduct={(id) => setEditProductId(id)}
+        onTotalChange={setCatalogTotal}
       />
 
       <ProductEditDialog
@@ -303,7 +299,7 @@ export function ProductsPageClient() {
       <ProductsClearAllDialog
         open={clearAllOpen}
         onOpenChange={setClearAllOpen}
-        productCount={catalog.length}
+        productCount={catalogTotal}
         onCleared={invalidateCatalog}
       />
 

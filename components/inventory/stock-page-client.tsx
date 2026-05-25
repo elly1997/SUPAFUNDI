@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
 import { StockItemStatementDialog } from "@/components/inventory/stock-item-statement-dialog";
@@ -20,6 +20,13 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { KpiCard } from "@/components/ui/kpi-card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -39,11 +46,8 @@ import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { suggestPurchaseOrderFromStock } from "@/lib/actions/purchase-orders";
 import { downloadInventoryTemplate } from "@/lib/excel/inventory-template";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
-import {
-  listStockLevels,
-  type StockLevelRow,
-  type StockStatus,
-} from "@/lib/actions/stock";
+import type { StockLevelRow, StockStatus } from "@/lib/actions/stock";
+import { fetchStockLevelsPage } from "@/lib/api/stock-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
@@ -60,6 +64,8 @@ const statusClass: Record<StockStatus, string> = {
   ok: "bg-inflow/15 text-inflow",
 };
 
+const PAGE_SIZE = 50;
+
 export function StockPageClient() {
   const outletId = useAuthStore((s) => s.activeOutletId);
   const router = useRouter();
@@ -68,7 +74,10 @@ export function StockPageClient() {
   const [savingQtyId, setSavingQtyId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<StockStatus | "all">("all");
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
+  const [page, setPage] = useState(1);
 
   const { data: outlets = [] } = useQuery({
     queryKey: ["org-outlets"],
@@ -86,26 +95,34 @@ export function StockPageClient() {
     void queryClient.invalidateQueries({ queryKey: ["categories"] });
   };
 
-  const { data: rows = [], isLoading } = useQuery({
-    queryKey: ["stock-levels", outletId],
-    queryFn: () => listStockLevels(outletId),
-  });
+  useEffect(() => {
+    setPage(1);
+  }, [deferredSearch, categoryFilter, statusFilter, outletId]);
 
-  const summary = useMemo(() => {
-    const totalValue = rows.reduce((s, r) => s + r.stock_value, 0);
-    const totalRetailValue = rows.reduce((s, r) => s + r.retail_stock_value, 0);
-    const withQty = rows.filter((r) => r.quantity > 0);
-    return {
-      totalValue,
-      totalRetailValue,
-      lineCount: rows.length,
-      skusWithQty: withQty.length,
-      lowStockCount: rows.filter((r) => r.stock_status === "low").length,
-      outOfStockCount: rows.filter(
-        (r) => r.quantity <= 0 && r.reorder_point > 0
-      ).length,
-    };
-  }, [rows]);
+  const { data, isLoading } = useQuery({
+    queryKey: [
+      "stock-levels",
+      "page",
+      outletId,
+      page,
+      PAGE_SIZE,
+      deferredSearch,
+      categoryFilter,
+      statusFilter,
+    ],
+    queryFn: () =>
+      fetchStockLevelsPage({
+        outletId,
+        page,
+        pageSize: PAGE_SIZE,
+        search: deferredSearch,
+        categoryId: categoryFilter,
+        status: statusFilter,
+      }),
+  });
+  const rows = useMemo(() => data?.rows ?? [], [data?.rows]);
+  const summary = data?.summary;
+  const total = data?.total ?? 0;
 
   const qtyMut = useMutation({
     mutationFn: patchStockQuantity,
@@ -135,31 +152,14 @@ export function StockPageClient() {
     },
   });
 
-  const lowStock = rows.filter((r) => r.stock_status !== "ok");
+  const attentionCount =
+    (summary?.lowStockCount ?? 0) + (summary?.outOfStockCount ?? 0);
 
-  const categoryOptions = useMemo(
-    () => Array.from(new Set(rows.map((r) => r.category_name))).sort(),
-    [rows]
-  );
-
-  const filteredRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (categoryFilter !== "all" && r.category_name !== categoryFilter) {
-        return false;
-      }
-      if (!q) return true;
-      return (
-        r.product_name.toLowerCase().includes(q) ||
-        (r.code ?? "").toLowerCase().includes(q) ||
-        r.category_name.toLowerCase().includes(q)
-      );
-    });
-  }, [rows, categoryFilter, search]);
+  const categoryOptions = data?.categories ?? [];
 
   const stockSections = useMemo(() => {
     return groupCatalogByCategory(
-      filteredRows.map((r) => ({
+      rows.map((r) => ({
         ...r,
         categoryName: r.category_name,
         name: r.product_name,
@@ -168,7 +168,7 @@ export function StockPageClient() {
       categoryName: section.categoryName,
       rows: section.rows,
     }));
-  }, [filteredRows]);
+  }, [rows]);
 
   return (
     <div className="space-y-6">
@@ -245,12 +245,12 @@ export function StockPageClient() {
         />
       </div>
 
-      {lowStock.length > 0 && (
+      {attentionCount > 0 && (
         <Card className="border-warning/30 bg-warning/5">
           <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
             <span className="flex items-center gap-2 text-warning">
               <AlertTriangle className="h-4 w-4 shrink-0" />
-              {lowStock.length} product(s) need attention
+              {attentionCount} product(s) need attention
             </span>
             <Button
               size="sm"
@@ -281,6 +281,20 @@ export function StockPageClient() {
           value={categoryFilter}
           onChange={setCategoryFilter}
         />
+        <Select
+          value={statusFilter}
+          onValueChange={(v) => setStatusFilter((v as StockStatus | "all") ?? "all")}
+        >
+          <SelectTrigger className="w-48">
+            <SelectValue placeholder="All statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="ok">OK</SelectItem>
+            <SelectItem value="low">Low stock</SelectItem>
+            <SelectItem value="out_of_stock">Out of stock</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <Card>
@@ -298,14 +312,11 @@ export function StockPageClient() {
             <div className="flex justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
-          ) : rows.length === 0 ? (
+          ) : rows.length === 0 && total === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              No active products. Add products under Inventory → Products, or
-              import Excel.
-            </p>
-          ) : filteredRows.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No products match your filters.
+              {deferredSearch || categoryFilter !== "all" || statusFilter !== "all"
+                ? "No products match your filters."
+                : "No active products. Add products under Inventory → Products, or import Excel."}
             </p>
           ) : (
             <Table>
@@ -357,6 +368,33 @@ export function StockPageClient() {
               </TableBody>
             </Table>
           )}
+          {total > PAGE_SIZE ? (
+            <div className="mt-3 flex flex-col gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                Page {page} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1 || isLoading}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!data?.hasMore || isLoading}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -393,6 +431,9 @@ function StockRow({
   onStatement: () => void;
 }) {
   const [qty, setQty] = useState(String(row.quantity));
+  useEffect(() => {
+    setQty(String(row.quantity));
+  }, [row.quantity]);
 
   return (
     <TableRow className={saving ? "opacity-70" : undefined}>

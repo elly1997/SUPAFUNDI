@@ -2,7 +2,6 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { fetchPosCatalog } from "@/lib/api/pos-products-fetch";
-import { fetchProductUnitsMap } from "@/lib/api/product-units-fetch";
 import { getPublicSupabaseEnv } from "@/lib/env/public";
 import {
   defaultUnitsForProduct,
@@ -29,12 +28,14 @@ export type PosProductRow = {
 
 export function usePosProducts(
   outletId: string | null,
-  pricingMode: PosPricingMode = "retail"
+  pricingMode: PosPricingMode = "retail",
+  search = "",
+  categoryId: string | null = null
 ) {
   const envOk = getPublicSupabaseEnv().ok;
 
   return useQuery({
-    queryKey: ["pos-products", outletId, pricingMode],
+    queryKey: ["pos-products", outletId, pricingMode, search, categoryId],
     enabled: envOk && !!outletId,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
@@ -44,29 +45,21 @@ export function usePosProducts(
         return [];
       }
 
-      const catalog = await fetchPosCatalog(outletId);
-
-      let unitsByProduct: Record<string, ProductUnitOption[]> = {};
-      try {
-        unitsByProduct = await fetchProductUnitsMap(
-          catalog.map((p) => p.id)
-        );
-      } catch {
-        unitsByProduct = {};
-      }
+      const catalog = await fetchPosCatalog(outletId, {
+        q: search,
+        categoryId,
+        limit: 80,
+      });
 
       return catalog.map((p) => {
         const displayPrice =
           pricingMode === "wholesale" ? p.wholesalePrice : p.retailPrice;
-        const rawUnits =
-          unitsByProduct[p.id]?.length > 0
-            ? unitsByProduct[p.id]
-            : defaultUnitsForProduct(
-                p.id,
-                p.unit,
-                p.retailPrice,
-                p.wholesalePrice
-              );
+        const rawUnits = defaultUnitsForProduct(
+          p.id,
+          p.unit,
+          p.retailPrice,
+          p.wholesalePrice
+        );
         const units = enrichUnitsWithConversion(
           rawUnits,
           p.retailPrice,
@@ -83,7 +76,7 @@ export function usePosProducts(
           wholesalePrice: p.wholesalePrice,
           displayPrice,
           stockQty: p.stockQty,
-          costPrice: p.costPrice,
+          costPrice: 0,
           categoryId: p.categoryId,
           units,
         };

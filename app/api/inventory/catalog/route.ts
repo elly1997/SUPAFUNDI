@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   listProductPriceCatalog,
+  listProductPriceCatalogPage,
   patchProductCatalogField,
 } from "@/lib/actions/inventory";
 import { requireOrgContext } from "@/lib/server/org-context";
@@ -9,7 +10,23 @@ import { z } from "zod";
 export async function GET(request: Request) {
   try {
     await requireOrgContext();
-    const outletId = new URL(request.url).searchParams.get("outletId");
+    const params = new URL(request.url).searchParams;
+    const outletId = params.get("outletId");
+    const page = params.get("page");
+    const pageSize = params.get("pageSize");
+    const search = params.get("search") ?? "";
+    const categoryId = params.get("categoryId");
+    if (page || pageSize || search || categoryId) {
+      const result = await listProductPriceCatalogPage({
+        outletId,
+        page: page ? Number(page) : undefined,
+        pageSize: pageSize ? Number(pageSize) : undefined,
+        search,
+        categoryId,
+      });
+      return NextResponse.json(result);
+    }
+
     const rows = await listProductPriceCatalog(outletId);
     return NextResponse.json({ products: rows });
   } catch (e) {
