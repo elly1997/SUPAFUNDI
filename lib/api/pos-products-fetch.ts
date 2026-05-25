@@ -14,7 +14,7 @@ export async function fetchPosCatalog(
   if (params?.limit) q.set("limit", String(params.limit));
   const res = await fetch(
     `/api/pos/products?${q}`,
-    { credentials: "include", cache: "no-store" }
+    { credentials: "include" }
   );
   const body = (await res.json()) as {
     products?: PosCatalogRow[];

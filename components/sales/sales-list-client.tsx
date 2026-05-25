@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { format, subDays } from "date-fns";
 import { Loader2, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { SaleVoidActions } from "@/components/sales/sale-void-actions";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Card,
@@ -26,11 +26,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { listRecentSales } from "@/lib/actions/sales";
+import { fetchSalesPage } from "@/lib/api/sales-list-fetch";
 import { saleTypeLabel } from "@/lib/constants/sale-documents";
 import { cn } from "@/lib/utils";
 import { formatTzs, formatDateTimeEAT } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
+
+const PAGE_SIZE = 50;
 
 export function SalesListClient() {
   const router = useRouter();
@@ -48,18 +50,30 @@ export function SalesListClient() {
     if (to) setToDate(to);
   }, [searchParams]);
   const [invoiceSearch, setInvoiceSearch] = useState("");
+  const deferredInvoiceSearch = useDeferredValue(invoiceSearch);
   const [lookupPending, setLookupPending] = useState(false);
+  const [page, setPage] = useState(1);
 
-  const { data: sales = [], isLoading } = useQuery({
-    queryKey: ["sales-list", fromDate, toDate],
-    queryFn: () => listRecentSales(200, { fromDate, toDate }),
+  useEffect(() => {
+    setPage(1);
+  }, [fromDate, toDate, deferredInvoiceSearch]);
+
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ["sales-list", "page", fromDate, toDate, deferredInvoiceSearch, page],
+    queryFn: () =>
+      fetchSalesPage({
+        page,
+        pageSize: PAGE_SIZE,
+        fromDate,
+        toDate,
+        invoiceSearch: deferredInvoiceSearch,
+      }),
+    placeholderData: keepPreviousData,
   });
-
-  const filteredSales = useMemo(() => {
-    const q = invoiceSearch.trim().toLowerCase();
-    if (!q) return sales;
-    return sales.filter((s) => s.invoice_no.toLowerCase().includes(q));
-  }, [sales, invoiceSearch]);
+  const sales = data?.sales ?? [];
+  const total = data?.total ?? 0;
+  const firstItem = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const lastItem = Math.min(page * PAGE_SIZE, total);
 
   async function goToInvoice() {
     const q = invoiceSearch.trim();
@@ -152,16 +166,16 @@ export function SalesListClient() {
           <div className="flex justify-center py-8">
             <Loader2 className="size-6 animate-spin text-muted-foreground" />
           </div>
-        ) : filteredSales.length === 0 ? (
+        ) : sales.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            {invoiceSearch.trim()
+            {deferredInvoiceSearch.trim()
               ? "No sales match this invoice filter."
               : "No sales in this date range."}
           </p>
         ) : (
           <>
           <div className="space-y-3 md:hidden">
-            {filteredSales.map((sale) => (
+            {sales.map((sale) => (
               <div key={sale.id} className="rounded-xl border border-border bg-card p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -227,7 +241,7 @@ export function SalesListClient() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredSales.map((sale) => (
+              {sales.map((sale) => (
                 <TableRow key={sale.id}>
                   <TableCell>
                     <Link
@@ -277,6 +291,32 @@ export function SalesListClient() {
               ))}
             </TableBody>
           </Table>
+          </div>
+          <div className="mt-3 flex flex-col gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Showing {firstItem}-{lastItem} of {total} sales
+              {isFetching ? " · refreshing…" : ""}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={page <= 1 || isFetching}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Previous
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!data?.hasMore || isFetching}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
           </div>
           </>
         )}

@@ -36,6 +36,7 @@ type Props = {
   onAmountPaidChange?: (v: string) => void;
   onCompleteSale?: () => void;
   needsCustomer?: boolean;
+  needsPaymentAccount?: boolean;
   showAmountPaid?: boolean;
   isCheckoutPending?: boolean;
   customerId?: string;
@@ -68,6 +69,7 @@ export function PosCartPanel({
   onAmountPaidChange,
   onCompleteSale,
   needsCustomer = false,
+  needsPaymentAccount = false,
   showAmountPaid = false,
   isCheckoutPending = false,
   customerId = "",
@@ -260,6 +262,7 @@ export function PosCartPanel({
             onAmountPaidChange={onAmountPaidChange}
             onComplete={onCompleteSale}
             needsCustomer={needsCustomer}
+            needsPaymentAccount={needsPaymentAccount}
             showAmountPaid={showAmountPaid}
             disabled={lines.length === 0 || checkoutDisabled}
             isPending={isCheckoutPending}

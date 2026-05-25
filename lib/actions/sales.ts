@@ -93,6 +93,8 @@ const completeSaleInput = z.object({
 
 export type CompleteSaleInput = z.infer<typeof completeSaleInput>;
 
+const routedPaymentMethods = new Set(["mpesa", "card", "bank_transfer"]);
+
 export type CompleteSaleResult =
   | {
       ok: true;
@@ -186,6 +188,18 @@ export async function completeSale(
     const supabase = await createServerSupabaseClient();
     const vatConfig = await getOrgVatConfig();
     const taxRate = effectiveTaxRate(vatConfig, input.taxRate);
+
+    if (
+      input.amountPaid > 0 &&
+      routedPaymentMethods.has(input.paymentMethod) &&
+      !input.paymentAccountId
+    ) {
+      return {
+        ok: false,
+        message:
+          "Select a collection account before completing M-Pesa, card, or bank payments.",
+      };
+    }
 
     const { data: outlet } = await supabase
       .from("outlets")
@@ -609,6 +623,118 @@ export type SaleListRow = {
   customer_name: string | null;
 };
 
+export type SalesPageResult = {
+  sales: SaleListRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+};
+
+function normalizeSalesPage(input?: number) {
+  const n = Math.floor(Number(input) || 1);
+  return Math.max(1, n);
+}
+
+function normalizeSalesPageSize(input?: number) {
+  const n = Math.floor(Number(input) || 50);
+  return Math.min(100, Math.max(20, n));
+}
+
+function escapeSaleSearch(value: string) {
+  return value.replace(/[%_]/g, (m) => `\\${m}`);
+}
+
+async function attachSaleCustomerNames(
+  rows: Array<SaleListRow & { customer_id?: string | null }>
+): Promise<SaleListRow[]> {
+  const supabase = await createServerSupabaseClient();
+  const customerIds = Array.from(
+    new Set(rows.map((r) => r.customer_id).filter((id): id is string => !!id))
+  );
+  const customerNames = new Map<string, string>();
+  if (customerIds.length > 0) {
+    const { data: customers } = await supabase
+      .from("customers")
+      .select("id, name")
+      .in("id", customerIds);
+    for (const c of customers ?? []) {
+      customerNames.set(c.id, c.name);
+    }
+  }
+  return rows.map((row) => ({
+    id: row.id,
+    invoice_no: row.invoice_no,
+    sale_type: row.sale_type,
+    sale_date: row.sale_date,
+    total_amount: row.total_amount,
+    amount_paid: row.amount_paid,
+    balance_due: row.balance_due,
+    status: row.status,
+    customer_name: row.customer_id ? (customerNames.get(row.customer_id) ?? null) : null,
+  }));
+}
+
+export async function listSalesPage(input?: {
+  page?: number;
+  pageSize?: number;
+  outletId?: string | null;
+  fromDate?: string;
+  toDate?: string;
+  invoiceSearch?: string;
+}): Promise<SalesPageResult> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const page = normalizeSalesPage(input?.page);
+  const pageSize = normalizeSalesPageSize(input?.pageSize);
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  const invoiceSearch = input?.invoiceSearch?.trim() ?? "";
+
+  let query = supabase
+    .from("sales")
+    .select(
+      "id, invoice_no, sale_type, sale_date, total_amount, amount_paid, balance_due, status, customer_id",
+      { count: "exact" }
+    )
+    .eq("organization_id", ctx.organizationId);
+  if (input?.outletId) query = query.eq("outlet_id", input.outletId);
+  if (input?.fromDate) query = query.gte("sale_date", `${input.fromDate}T00:00:00.000Z`);
+  if (input?.toDate) query = query.lte("sale_date", `${input.toDate}T23:59:59.999Z`);
+  if (invoiceSearch) {
+    query = query.ilike("invoice_no", `%${escapeSaleSearch(invoiceSearch)}%`);
+  }
+
+  const { data, error, count } = await query
+    .order("sale_date", { ascending: false })
+    .range(from, to);
+  if (error) throw new Error(error.message);
+
+  const sales = await attachSaleCustomerNames(
+    (data ?? []).map((row) => ({
+      id: row.id,
+      invoice_no: row.invoice_no,
+      sale_type: row.sale_type,
+      sale_date: row.sale_date,
+      total_amount: Number(row.total_amount),
+      amount_paid: Number(row.amount_paid),
+      balance_due: Number(row.balance_due),
+      status: row.status,
+      customer_id: row.customer_id,
+      customer_name: null,
+    }))
+  );
+
+  const total = count ?? sales.length;
+  return {
+    sales,
+    total,
+    page,
+    pageSize,
+    hasMore: page * pageSize < total,
+  };
+}
+
 export async function listRecentSales(
   limit = 50,
   filters?: {
@@ -641,34 +767,20 @@ export async function listRecentSales(
     throw new Error(error.message);
   }
   const rows = data ?? [];
-  const customerIds = Array.from(
-    new Set(
-      rows.map((r) => r.customer_id).filter((id): id is string => !!id)
-    )
+  return attachSaleCustomerNames(
+    rows.map((row) => ({
+      id: row.id,
+      invoice_no: row.invoice_no,
+      sale_type: row.sale_type,
+      sale_date: row.sale_date,
+      total_amount: Number(row.total_amount),
+      amount_paid: Number(row.amount_paid),
+      balance_due: Number(row.balance_due),
+      status: row.status,
+      customer_id: row.customer_id,
+      customer_name: null,
+    }))
   );
-  const customerNames = new Map<string, string>();
-  if (customerIds.length > 0) {
-    const { data: customers } = await supabase
-      .from("customers")
-      .select("id, name")
-      .in("id", customerIds);
-    for (const c of customers ?? []) {
-      customerNames.set(c.id, c.name);
-    }
-  }
-  return rows.map((row) => ({
-    id: row.id,
-    invoice_no: row.invoice_no,
-    sale_type: row.sale_type,
-    sale_date: row.sale_date,
-    total_amount: Number(row.total_amount),
-    amount_paid: Number(row.amount_paid),
-    balance_due: Number(row.balance_due),
-    status: row.status,
-    customer_name: row.customer_id
-      ? (customerNames.get(row.customer_id) ?? null)
-      : null,
-  }));
 }
 
 /** Exact invoice/receipt lookup for sales history navigation. */

@@ -47,6 +47,7 @@ type Props = {
   onSetExactAmount: () => void;
   onComplete: () => void;
   isPending: boolean;
+  needsPaymentAccount?: boolean;
   onCustomerSelect?: (customer: PosCustomer | null) => void;
   paymentAccountId?: string;
   onPaymentAccountIdChange?: (id: string) => void;
@@ -69,6 +70,7 @@ export function PosCheckoutDialog({
   onSetExactAmount,
   onComplete,
   isPending,
+  needsPaymentAccount = false,
   onCustomerSelect,
   paymentAccountId = "",
   onPaymentAccountIdChange,
@@ -203,6 +205,11 @@ export function PosCheckoutDialog({
             onChange={onPaymentAccountIdChange}
           />
         )}
+        {needsPaymentAccount && (
+          <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+            Select a collection account before completing this payment.
+          </p>
+        )}
 
         {paymentMethod === "mpesa" && (
           <div className="space-y-2">
@@ -248,7 +255,12 @@ export function PosCheckoutDialog({
         <DialogFooter className="flex-col gap-2 sm:flex-col">
           <Button
             className="h-12 w-full rounded-xl text-base font-semibold"
-            disabled={isPending || !!creditExceeded || !!creditNoLimit}
+            disabled={
+              isPending ||
+              needsPaymentAccount ||
+              !!creditExceeded ||
+              !!creditNoLimit
+            }
             onClick={onComplete}
           >
             {isPending ? (

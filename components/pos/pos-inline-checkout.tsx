@@ -19,6 +19,7 @@ type Props = {
   onAmountPaidChange: (v: string) => void;
   onComplete: () => void;
   needsCustomer: boolean;
+  needsPaymentAccount: boolean;
   showAmountPaid: boolean;
   disabled: boolean;
   isPending: boolean;
@@ -34,6 +35,7 @@ export function PosInlineCheckout({
   onAmountPaidChange,
   onComplete,
   needsCustomer,
+  needsPaymentAccount,
   showAmountPaid,
   disabled,
   isPending,
@@ -55,6 +57,11 @@ export function PosInlineCheckout({
           Select a registered customer for partial or on-account payment.
         </p>
       )}
+      {needsPaymentAccount && (
+        <p className="rounded-lg border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-warning">
+          Select a collection account before completing this payment.
+        </p>
+      )}
       {showAmountPaid && (
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">Amount paid</Label>
@@ -70,7 +77,7 @@ export function PosInlineCheckout({
       <Button
         type="button"
         className="h-11 w-full rounded-xl text-sm font-semibold shadow-md shadow-primary/20"
-        disabled={disabled || isPending || needsCustomer}
+        disabled={disabled || isPending || needsCustomer || needsPaymentAccount}
         onClick={onComplete}
       >
         {isPending ? (

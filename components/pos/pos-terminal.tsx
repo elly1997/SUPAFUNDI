@@ -28,11 +28,11 @@ import {
   formatPaymentMethodLabel,
   getReceiptStamp,
   printPosReceipt,
-  type ReceiptPrintData,
 } from "@/components/pos/pos-receipt-print";
 import { PosSessionGate } from "@/components/pos/pos-session-gate";
 import { PosWholesaleBanner } from "@/components/pos/pos-wholesale-banner";
 import type { PaymentMethod } from "@/components/pos/pos-payment-chips";
+import { needsPosPaymentAccount } from "@/components/pos/pos-payment-account-picker";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Dialog,
@@ -244,6 +244,8 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const needsCustomer =
     !customerId &&
     (paymentMethod === "credit_account" || balanceDuePreview > 0);
+  const needsPaymentAccount =
+    needsPosPaymentAccount(paymentMethod) && !paymentAccountId;
 
   const customerLabel = customerId
     ? (customerName ?? "Registered customer")
@@ -387,26 +389,6 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       };
       setReceipt(saleReceipt);
 
-      if (session) {
-        const printData: ReceiptPrintData = {
-          organizationName: session.organizationName ?? "SUPAFUNDI TRADERS",
-          invoiceNo: saleReceipt.invoiceNo,
-          totalAmount: saleReceipt.totalAmount,
-          changeGiven: saleReceipt.changeGiven,
-          balanceDue: saleReceipt.balanceDue,
-          paymentMethod: saleReceipt.paymentMethod,
-          lines: saleReceipt.lines,
-          soldAt: new Date(),
-          customerName: saleReceipt.customerName,
-          compactTotal: true,
-        };
-        if (!printPosReceipt(printData)) {
-          toast.error(
-            "Allow pop-ups to print the receipt, or use Print receipt below"
-          );
-        }
-      }
-
       setCheckoutOpen(false);
       setCartSheetOpen(false);
       clear();
@@ -502,12 +484,25 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   };
 
   const handleCompleteSale = useCallback(() => {
+    if (checkout.isPending) {
+      return;
+    }
+    if (lines.length === 0) {
+      toast.error("Cart is empty");
+      return;
+    }
     if (needsCustomer) {
       toast.error("Select a registered customer for partial or on-account payment");
       return;
     }
+    if (needsPaymentAccount) {
+      toast.error(
+        `Select a collection account for ${formatPaymentMethodLabel(paymentMethod)}`
+      );
+      return;
+    }
     checkout.mutate();
-  }, [needsCustomer, checkout]);
+  }, [checkout, lines.length, needsCustomer, needsPaymentAccount, paymentMethod]);
 
   const showAmountPaid =
     paymentMethod === "credit_account" ||
@@ -538,8 +533,9 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     onAmountPaidChange: setAmountPaid,
     onCompleteSale: handleCompleteSale,
     needsCustomer,
+    needsPaymentAccount,
     showAmountPaid,
-    isCheckoutPending: checkout.isPending,
+    isCheckoutPending: lines.length > 0 && checkout.isPending,
     customerId,
     onCustomerIdChange: setCustomerId,
     onCustomerSelect: handleCustomerSelect,
@@ -790,6 +786,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                 }
                 onComplete={() => checkout.mutate()}
                 isPending={checkout.isPending}
+                needsPaymentAccount={needsPaymentAccount}
                 onCustomerSelect={handleCustomerSelect}
                 paymentAccountId={paymentAccountId}
                 onPaymentAccountIdChange={setPaymentAccountId}
