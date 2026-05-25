@@ -89,6 +89,23 @@
     background: #64748b;
   }
 
+  .pos-workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pos-catalog-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.75rem), 1fr));
+  }
+
+  @media (min-width: 1024px) {
+    .pos-workspace-grid {
+      grid-template-columns:
+        clamp(13rem, 24vw, 16rem)
+        minmax(22rem, 1fr)
+        clamp(16rem, 30vw, 21rem);
+    }
+  }
+
   .pos-select-popup {
     z-index: 120 !important;
   }

@@ -594,7 +594,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
             <>
               <PosWholesaleBanner mode={pricingMode} customerName={customerName} />
 
-              <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(13rem,25%)_minmax(0,1fr)_minmax(16rem,30%)] xl:grid-cols-[minmax(14rem,24%)_minmax(0,1fr)_minmax(18rem,30%)]">
+              <div className="pos-workspace-grid grid min-h-0 flex-1 overflow-hidden">
                 <PosCashflowPanel
                   outletId={effectiveOutletId}
                   products={products}
@@ -656,7 +656,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                         </p>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                      <div className="pos-catalog-grid grid gap-2">
                         {filtered.map((p) => (
                           <PosProductCard
                             key={p.id}

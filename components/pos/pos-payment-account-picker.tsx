@@ -9,7 +9,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import {
   formatAccountDetails,
@@ -41,10 +40,12 @@ export function PosPaymentAccountPicker({
   });
 
   useEffect(() => {
-    if (accounts.length > 0 && !value) {
+    if (accounts.length > 0 && (!value || !accounts.some((a) => a.id === value))) {
       onChange(accounts[0]!.id);
     }
   }, [accounts, value, onChange]);
+  const selectedAccount =
+    accounts.find((a) => a.id === value) ?? accounts[0] ?? null;
 
   if (isLoading) {
     return (
@@ -77,11 +78,13 @@ export function PosPaymentAccountPicker({
         Collect to
       </Label>
       <Select
-        value={value || accounts[0]?.id}
+        value={selectedAccount?.id ?? ""}
         onValueChange={(v) => onChange(v ?? "")}
       >
         <SelectTrigger className="mt-1 h-11 rounded-xl">
-          <SelectValue placeholder="Select account" />
+          <span className="min-w-0 truncate text-left">
+            {selectedAccount ? selectedAccount.name : "Select account"}
+          </span>
         </SelectTrigger>
         <SelectContent>
           {accounts.map((a) => (
@@ -124,10 +127,12 @@ export function PosBankDepositAccountPicker({
   });
 
   useEffect(() => {
-    if (accounts.length > 0 && !value) {
+    if (accounts.length > 0 && (!value || !accounts.some((a) => a.id === value))) {
       onChange(accounts[0]!.id);
     }
   }, [accounts, value, onChange]);
+  const selectedAccount =
+    accounts.find((a) => a.id === value) ?? accounts[0] ?? null;
 
   if (isLoading) {
     return (
@@ -166,11 +171,13 @@ export function PosBankDepositAccountPicker({
         Deposit to bank
       </Label>
       <Select
-        value={value || accounts[0]?.id}
+        value={selectedAccount?.id ?? ""}
         onValueChange={(v) => onChange(v ?? "")}
       >
         <SelectTrigger className="h-11 rounded-xl">
-          <SelectValue placeholder="Select bank account" />
+          <span className="min-w-0 truncate text-left">
+            {selectedAccount ? selectedAccount.name : "Select bank account"}
+          </span>
         </SelectTrigger>
         <SelectContent>
           {accounts.map((a) => (
@@ -187,7 +194,7 @@ export function PosBankDepositAccountPicker({
       </Select>
       <ul className="space-y-1 rounded-lg border border-border/60 bg-surface-1/30 p-2">
         {accounts.map((a) => {
-          const selected = (value || accounts[0]?.id) === a.id;
+          const selected = selectedAccount?.id === a.id;
           return (
             <li key={a.id}>
               <button

@@ -147,7 +147,9 @@ export async function listBankAccounts(): Promise<PaymentAccountRow[]> {
 export async function listCashDepositAccounts(): Promise<PaymentAccountRow[]> {
   const accounts = await listBankAccounts();
   return accounts
-    .filter((a) => a.account_type === "bank")
+    .filter(
+      (a) => a.account_type === "bank" || a.pos_payment_method === "bank_transfer"
+    )
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
