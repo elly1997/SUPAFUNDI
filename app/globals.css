@@ -94,7 +94,7 @@
   }
 
   .pos-catalog-grid {
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.75rem), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr));
   }
 
   @media (min-width: 1024px) {
@@ -102,6 +102,13 @@
       grid-template-columns:
         clamp(13rem, 24vw, 16rem)
         minmax(22rem, 1fr)
+        clamp(16rem, 30vw, 21rem);
+    }
+
+    .pos-workspace-grid[data-cashflow="collapsed"] {
+      grid-template-columns:
+        3.75rem
+        minmax(26rem, 1fr)
         clamp(16rem, 30vw, 21rem);
     }
   }

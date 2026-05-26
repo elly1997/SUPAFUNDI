@@ -30,6 +30,7 @@ import {
   printPosReceipt,
 } from "@/components/pos/pos-receipt-print";
 import { PosSessionGate } from "@/components/pos/pos-session-gate";
+import { PosSyncStatus } from "@/components/pos/pos-sync-status";
 import { PosWholesaleBanner } from "@/components/pos/pos-wholesale-banner";
 import type { PaymentMethod } from "@/components/pos/pos-payment-chips";
 import { needsPosPaymentAccount } from "@/components/pos/pos-payment-account-picker";
@@ -114,6 +115,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const [stkPending, setStkPending] = useState(false);
   const [pricingMode, setPricingMode] = useState<PosPricingMode>("retail");
   const [sessionOverride, setSessionOverride] = useState(false);
+  const [cashflowCollapsed, setCashflowCollapsed] = useState(false);
   const [qtyProduct, setQtyProduct] = useState<PosProductRow | null>(null);
   const [qtyOpen, setQtyOpen] = useState(false);
   const prevPricingModeRef = useRef<PosPricingMode>(pricingMode);
@@ -578,6 +580,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
         pricingMode={pricingMode}
         onPricingModeChange={setPricingMode}
         cartSummary={cartSummary}
+        className="lg:hidden"
       />
 
       {effectiveOutletId ? (
@@ -588,15 +591,28 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
         >
           {({ canSell }) => (
             <>
-              <PosWholesaleBanner mode={pricingMode} customerName={customerName} />
-
-              <div className="pos-workspace-grid grid min-h-0 flex-1 overflow-hidden">
+              <div
+                className="pos-workspace-grid grid min-h-0 flex-1 overflow-hidden"
+                data-cashflow={cashflowCollapsed ? "collapsed" : "expanded"}
+              >
                 <PosCashflowPanel
                   outletId={effectiveOutletId}
                   products={products}
+                  collapsed={cashflowCollapsed}
+                  onCollapsedChange={setCashflowCollapsed}
                   className="hidden h-full min-h-0 min-w-0 lg:flex lg:flex-col"
                 />
                 <section className="flex min-h-0 min-w-0 flex-col overflow-hidden border-x border-border pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
+                  <PosHeader
+                    outlets={outlets}
+                    outletId={effectiveOutletId}
+                    pricingMode={pricingMode}
+                    onPricingModeChange={setPricingMode}
+                    cartSummary={cartSummary}
+                    showSync={false}
+                    className="hidden lg:block"
+                  />
+                  <PosWholesaleBanner mode={pricingMode} customerName={customerName} />
                   <div className="space-y-2 border-b p-2.5">
                     <div className="flex gap-2">
                       <div className="relative min-w-0 flex-1">
@@ -631,6 +647,15 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                           className={cn("size-5", productsFetching && "animate-spin")}
                         />
                       </Button>
+                      <div className="hidden shrink-0 items-center xl:flex">
+                        <PosSyncStatus />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                      <span>High-demand items appear first from recent sales.</span>
+                      <span className="font-money">
+                        {filtered.length} visible
+                      </span>
                     </div>
                     <PosCategoryChips value={categoryId} onChange={setCategoryId} />
                   </div>

@@ -2,7 +2,14 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { ExternalLink, Landmark, Loader2, TrendingDown } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Landmark,
+  Loader2,
+  TrendingDown,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -45,9 +52,17 @@ type Props = {
   outletId: string;
   products: PosProductRow[];
   className?: string;
+  collapsed?: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
 };
 
-export function PosCashflowPanel({ outletId, products, className }: Props) {
+export function PosCashflowPanel({
+  outletId,
+  products,
+  className,
+  collapsed = false,
+  onCollapsedChange,
+}: Props) {
   const taxRate = useTaxRate();
   const [tab, setTab] = useState<Tab>("expense");
   const businessDate = useBusinessDateStore((s) => s.businessDate);
@@ -174,6 +189,35 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
 
   const selectedProduct = products.find((p) => p.id === productId);
 
+  if (collapsed) {
+    return (
+      <aside
+        className={cn(
+          "flex min-h-0 w-full min-w-[3.5rem] flex-col items-center border-r border-border bg-card/40 py-3",
+          className
+        )}
+      >
+        <button
+          type="button"
+          className="flex min-h-11 w-11 items-center justify-center rounded-xl border border-border bg-surface-1 text-outflow hover:border-outflow/50"
+          aria-label="Expand cash out panel"
+          onClick={() => onCollapsedChange?.(false)}
+        >
+          <ChevronRight className="size-5" />
+        </button>
+        <div className="mt-3 flex flex-1 flex-col items-center gap-2 text-center">
+          <TrendingDown className="size-5 text-outflow" />
+          <span className="[writing-mode:vertical-rl] text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Cash out
+          </span>
+        </div>
+        <span className="mb-1 rounded-full bg-outflow/10 px-2 py-1 font-money text-[10px] font-bold text-outflow">
+          {dayExpenses.length}
+        </span>
+      </aside>
+    );
+  }
+
   return (
     <aside
       className={cn(
@@ -190,6 +234,18 @@ export function PosCashflowPanel({ outletId, products, className }: Props) {
               {businessDate} · {formatTzs(dayTotal)} expenses
             </p>
           </div>
+          {onCollapsedChange && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 rounded-lg"
+              aria-label="Collapse cash out panel"
+              onClick={() => onCollapsedChange(true)}
+            >
+              <ChevronLeft className="size-4" />
+            </Button>
+          )}
         </div>
       </div>
 

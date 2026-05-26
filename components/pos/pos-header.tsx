@@ -14,6 +14,9 @@ type Props = {
   pricingMode: PosPricingMode;
   onPricingModeChange: (mode: PosPricingMode) => void;
   cartSummary?: string | null;
+  className?: string;
+  showSync?: boolean;
+  showPricing?: boolean;
 };
 
 /** POS-specific controls row (sits below global module nav). */
@@ -23,9 +26,12 @@ export function PosHeader({
   pricingMode,
   onPricingModeChange,
   cartSummary,
+  className,
+  showSync = true,
+  showPricing = true,
 }: Props) {
   return (
-    <div className="shrink-0 border-b border-border bg-surface-1/50 px-3 py-2 sm:px-4">
+    <div className={`shrink-0 border-b border-border bg-surface-1/50 px-3 py-2 sm:px-4 ${className ?? ""}`}>
       <div className="flex flex-wrap items-center gap-2">
         <PosOutletPicker outlets={outlets} className="min-w-[9rem] flex-1 sm:max-w-xs" />
         {outletId ? (
@@ -38,10 +44,14 @@ export function PosHeader({
             {cartSummary}
           </span>
         ) : null}
-        <div className="ml-auto flex shrink-0 items-center gap-2">
-          <PosSyncStatus />
-          <PosPricingToggle mode={pricingMode} onChange={onPricingModeChange} />
-        </div>
+        {(showSync || showPricing) && (
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {showSync && <PosSyncStatus />}
+            {showPricing && (
+              <PosPricingToggle mode={pricingMode} onChange={onPricingModeChange} />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

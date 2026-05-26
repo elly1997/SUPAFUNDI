@@ -22,6 +22,10 @@ export function PosProductCard({
   onQtyClick,
 }: Props) {
   const outOfStock = product.stockQty <= 0;
+  const demandLabel =
+    product.recentSoldQty > 0
+      ? `${product.recentSoldQty.toLocaleString()} sold / 30d`
+      : "No recent sales";
 
   return (
     <div
@@ -61,6 +65,23 @@ export function PosProductCard({
             >
               {outOfStock ? "Out of stock" : `${product.stockQty} ${product.unit}`}
             </span>
+          </span>
+          <span className="mt-1 flex flex-wrap items-center gap-1 text-[10px]">
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-0.5 font-semibold",
+                product.recentSoldQty > 0
+                  ? "bg-primary/10 text-primary"
+                  : "bg-muted text-muted-foreground"
+              )}
+            >
+              {demandLabel}
+            </span>
+            {product.avgDailySold > 0 && (
+              <span className="text-muted-foreground">
+                ~{product.avgDailySold}/day
+              </span>
+            )}
           </span>
         </span>
         <span

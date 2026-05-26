@@ -43,6 +43,32 @@ function mapUnitRow(r: {
   };
 }
 
+function withLegacyUnitDirectionInference(
+  units: ProductUnitOption[]
+): ProductUnitOption[] {
+  const base = units.find((u) => u.isBase) ?? units[0];
+  if (!base) return units;
+
+  const baseRetail = base.retailPrice ?? base.wholesalePrice ?? 0;
+  const baseWholesale = base.wholesalePrice ?? base.retailPrice ?? baseRetail;
+  return units.map((unit) => {
+    if (unit.isBase || unit.unitsPerBase || unit.factorToBase <= 1) {
+      return unit;
+    }
+    const unitRetail = unit.retailPrice ?? unit.wholesalePrice ?? 0;
+    const unitWholesale = unit.wholesalePrice ?? unit.retailPrice ?? unitRetail;
+    const likelySmallerRetail =
+      baseRetail > 0 && unitRetail > 0 && unitRetail < baseRetail;
+    const likelySmallerWholesale =
+      baseWholesale > 0 && unitWholesale > 0 && unitWholesale < baseWholesale;
+
+    if (likelySmallerRetail || likelySmallerWholesale) {
+      return { ...unit, unitsPerBase: true };
+    }
+    return unit;
+  });
+}
+
 export async function listProductUnitsMap(
   productIds: string[]
 ): Promise<Record<string, ProductUnitOption[]>> {
@@ -95,6 +121,9 @@ export async function listProductUnitsMap(
     const pid = String(row.product_id);
     if (!out[pid]) out[pid] = [];
     out[pid].push(mapUnitRow(row));
+  }
+  for (const [productId, units] of Object.entries(out)) {
+    out[productId] = withLegacyUnitDirectionInference(units);
   }
   return out;
 }

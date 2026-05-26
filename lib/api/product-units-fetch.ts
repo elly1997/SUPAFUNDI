@@ -1,7 +1,7 @@
 import type { ProductEditDetail } from "@/lib/actions/product-units";
 import type { ProductUnitOption } from "@/lib/products/units";
 
-const PRODUCT_UNITS_CACHE_PREFIX = "supafundi_product_units";
+const PRODUCT_UNITS_CACHE_PREFIX = "supafundi_product_units_v2";
 const PRODUCT_UNITS_CACHE_TTL = 5 * 60_000;
 
 function unitCacheKey(productId: string) {

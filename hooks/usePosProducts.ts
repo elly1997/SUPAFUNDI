@@ -25,6 +25,8 @@ export type PosProductRow = {
   stockQty: number;
   costPrice: number;
   categoryId: string | null;
+  recentSoldQty: number;
+  avgDailySold: number;
   units: ProductUnitOption[];
 };
 
@@ -99,6 +101,8 @@ function mapCatalogProducts(
       stockQty: p.stockQty,
       costPrice: 0,
       categoryId: p.categoryId,
+      recentSoldQty: p.recentSoldQty ?? 0,
+      avgDailySold: p.avgDailySold ?? 0,
       units,
     };
   });

@@ -31,6 +31,8 @@ export type PosCatalogRow = {
   retailPrice: number;
   wholesalePrice: number;
   stockQty: number;
+  recentSoldQty: number;
+  avgDailySold: number;
 };
 
 export type PosCatalogInput = {
@@ -49,6 +51,32 @@ function escapeLikePattern(value: string) {
   return value.replace(/[%_]/g, (m) => `\\${m}`);
 }
 
+async function loadSalesVelocity(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  outletId: string
+) {
+  const velocity = new Map<string, number>();
+  const { data, error } = await (
+    supabase as unknown as {
+      rpc: (
+        fn: "get_product_sales_velocity",
+        args: { p_outlet_id: string; p_days: number }
+      ) => Promise<{
+        data: { product_id: string; qty: number }[] | null;
+        error: { message: string } | null;
+      }>;
+    }
+  ).rpc("get_product_sales_velocity", {
+    p_outlet_id: outletId,
+    p_days: 30,
+  });
+  if (error) throw new Error(error.message);
+  for (const row of data ?? []) {
+    velocity.set(row.product_id, Number(row.qty) || 0);
+  }
+  return velocity;
+}
+
 export async function listPosCatalogProducts(
   input: PosCatalogInput
 ): Promise<PosCatalogRow[]> {
@@ -58,6 +86,7 @@ export async function listPosCatalogProducts(
   const categoryId =
     input.categoryId && input.categoryId !== "all" ? input.categoryId : null;
   const limit = normalizeLimit(input.limit);
+  const velocity = await loadSalesVelocity(supabase, input.outletId);
 
   let query = supabase
     .from("products")
@@ -70,9 +99,10 @@ export async function listPosCatalogProducts(
     query = query.or(`name.ilike.${like},code.ilike.${like},barcode.ilike.${like}`);
   }
 
+  const queryLimit = search || categoryId ? Math.min(limit * 3, 360) : 360;
   const { data: productsRaw, error: productErr } = await query
     .order("name", { ascending: true })
-    .limit(limit);
+    .limit(queryLimit);
   if (productErr) throw new Error(productErr.message);
   const products = productsRaw ?? [];
 
@@ -121,6 +151,7 @@ export async function listPosCatalogProducts(
       const stock = stockMap.get(p.id);
       const retailPrice = retailMap.get(p.id) ?? 0;
       const wholesalePrice = wholesaleMap.get(p.id) ?? retailPrice;
+      const recentSoldQty = velocity.get(p.id) ?? 0;
       return {
         id: p.id,
         name: p.name,
@@ -131,9 +162,17 @@ export async function listPosCatalogProducts(
         retailPrice,
         wholesalePrice,
         stockQty: stock?.qty ?? 0,
+        recentSoldQty,
+        avgDailySold: Math.round((recentSoldQty / 30) * 10) / 10,
       };
     })
-    .filter((p) => p.stockQty > 0 || p.retailPrice > 0 || p.wholesalePrice > 0);
+    .filter((p) => p.stockQty > 0 || p.retailPrice > 0 || p.wholesalePrice > 0)
+    .sort((a, b) => {
+      const demand = b.recentSoldQty - a.recentSoldQty;
+      if (demand !== 0) return demand;
+      return a.name.localeCompare(b.name);
+    })
+    .slice(0, limit);
 }
 
 /** Best-selling products at an outlet (last 30 days) for POS quick picks. */
