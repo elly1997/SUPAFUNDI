@@ -72,10 +72,16 @@ export function PosAddToCartDialog({
   }, [pricingMode, product, unitsByProduct]);
 
   useEffect(() => {
-    if (!open || !product) return;
-    const base = units.find((u) => u.isBase) ?? units[0];
-    setSelectedUnitId(base?.id ?? "");
+    if (!open || !product?.id) return;
     setQty("1");
+  }, [open, product?.id]);
+
+  useEffect(() => {
+    if (!open || !product || units.length === 0) return;
+    const base = units.find((u) => u.isBase) ?? units[0];
+    setSelectedUnitId((current) =>
+      current && units.some((u) => u.id === current) ? current : (base?.id ?? "")
+    );
   }, [open, product, units]);
 
   const selectedUnit = useMemo(
@@ -103,6 +109,7 @@ export function PosAddToCartDialog({
           <p className="text-sm text-muted-foreground">
             {formatTzs(unitPrice)} / {selectedUnit.unitLabel}
             {` · ${maxQty} ${selectedUnit.unitLabel} available`}
+            {unitConversionHint(selectedUnit)}
           </p>
         </DialogHeader>
 

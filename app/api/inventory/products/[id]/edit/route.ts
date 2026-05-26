@@ -15,6 +15,7 @@ const updateSchema = z.object({
       unitLabel: z.string().min(1).max(40),
       factorToBase: z.number().positive(),
       isBase: z.boolean(),
+      unitsPerBase: z.boolean().default(false),
       retailPrice: z.number().nonnegative().nullable().optional(),
       wholesalePrice: z.number().nonnegative().nullable().optional(),
       sortOrder: z.number().int().default(0),

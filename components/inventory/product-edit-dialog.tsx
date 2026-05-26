@@ -26,6 +26,7 @@ type UnitDraft = {
   unitLabel: string;
   factorToBase: string;
   isBase: boolean;
+  unitsPerBase: boolean;
   retailPrice: string;
   wholesalePrice: string;
 };
@@ -42,6 +43,7 @@ function newUnitDraft(isBase = false): UnitDraft {
     unitLabel: isBase ? "pcs" : "box",
     factorToBase: isBase ? "1" : "1",
     isBase,
+    unitsPerBase: false,
     retailPrice: "",
     wholesalePrice: "",
   };
@@ -70,6 +72,7 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
         unitLabel: u.unitLabel,
         factorToBase: String(u.factorToBase),
         isBase: u.isBase,
+        unitsPerBase: u.unitsPerBase ?? false,
         retailPrice: u.retailPrice != null ? String(u.retailPrice) : "",
         wholesalePrice:
           u.wholesalePrice != null ? String(u.wholesalePrice) : "",
@@ -85,6 +88,7 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
         unitLabel: u.unitLabel.trim(),
         factorToBase: Number(u.factorToBase),
         isBase: u.isBase,
+        unitsPerBase: u.isBase ? false : u.unitsPerBase,
         retailPrice: u.retailPrice ? Number(u.retailPrice) : null,
         wholesalePrice: u.wholesalePrice ? Number(u.wholesalePrice) : null,
         sortOrder: i,
@@ -108,7 +112,12 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
 
   const setBaseUnit = (key: string) => {
     setUnitDrafts((prev) =>
-      prev.map((u) => ({ ...u, isBase: u.key === key, factorToBase: u.key === key ? "1" : u.factorToBase }))
+      prev.map((u) => ({
+        ...u,
+        isBase: u.key === key,
+        factorToBase: u.key === key ? "1" : u.factorToBase,
+        unitsPerBase: u.key === key ? false : u.unitsPerBase,
+      }))
     );
   };
 
@@ -251,6 +260,36 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
                           }
                         />
                       </div>
+                      {!u.isBase && (
+                        <div className="sm:col-span-2">
+                          <Label className="text-xs">Conversion direction</Label>
+                          <select
+                            aria-label={`Conversion direction for ${u.unitLabel || "unit"}`}
+                            className="mt-1 flex min-h-11 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                            value={u.unitsPerBase ? "units_per_base" : "base_per_unit"}
+                            onChange={(e) =>
+                              setUnitDrafts((prev) =>
+                                prev.map((x) =>
+                                  x.key === u.key
+                                    ? {
+                                        ...x,
+                                        unitsPerBase:
+                                          e.target.value === "units_per_base",
+                                      }
+                                    : x
+                                )
+                              )
+                            }
+                          >
+                            <option value="base_per_unit">
+                              1 {u.unitLabel || "sell unit"} consumes this many base units
+                            </option>
+                            <option value="units_per_base">
+                              1 base unit contains this many {u.unitLabel || "sell units"}
+                            </option>
+                          </select>
+                        </div>
+                      )}
                       <div>
                         <Label className="text-xs">Retail (TZS)</Label>
                         <Input

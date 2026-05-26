@@ -9,26 +9,13 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
-import { KpiCard } from "@/components/ui/kpi-card";
-import { getDashboardKpis } from "@/lib/actions/dashboard";
+import { DashboardKpisClient } from "@/components/dashboard/dashboard-kpis-client";
 import { getSessionProfile } from "@/lib/auth/session";
 import { cn } from "@/lib/utils";
 import { canUsePos } from "@/lib/auth/roles";
-import { formatTzs } from "@/lib/utils/currency";
 
 export default async function DashboardHomePage() {
   const profile = await getSessionProfile();
-  let kpis = {
-    salesToday: 0,
-    salesCountToday: 0,
-    expensesToday: 0,
-    netToday: 0,
-  };
-  try {
-    kpis = await getDashboardKpis(profile?.outletId ?? undefined);
-  } catch {
-    /* show zeros */
-  }
 
   return (
     <div className="app-page space-y-6">
@@ -48,37 +35,7 @@ export default async function DashboardHomePage() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard
-          title="Sales today"
-          value={formatTzs(kpis.salesToday)}
-          subtitle={`${kpis.salesCountToday} transactions`}
-          variant="inflow"
-          className="glass-card"
-        />
-        <KpiCard
-          title="Expenses today"
-          value={formatTzs(kpis.expensesToday)}
-          subtitle="Recorded cash out"
-          variant="outflow"
-          className="glass-card"
-        />
-        <KpiCard
-          title="Net today"
-          value={formatTzs(kpis.netToday)}
-          subtitle="Sales minus expenses"
-          variant={kpis.netToday >= 0 ? "inflow" : "outflow"}
-          className="glass-card"
-        />
-        <Link href="/reports" className="block">
-          <KpiCard
-            title="Reports"
-            value="View"
-            subtitle="Trends, top products, alerts"
-            className="glass-card transition-transform hover:scale-[1.02]"
-          />
-        </Link>
-      </div>
+      <DashboardKpisClient fallbackOutletId={profile?.outletId} />
 
       <Card className="glass-card border-primary/25 bg-gradient-to-br from-primary/10 to-transparent">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">

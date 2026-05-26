@@ -3,6 +3,7 @@
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
+import { businessDayBounds, resolveBusinessDate } from "@/lib/utils/iso-date";
 
 export type DashboardKpis = {
   salesToday: number;
@@ -11,29 +12,27 @@ export type DashboardKpis = {
   netToday: number;
 };
 
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 export async function getDashboardKpis(
-  outletId?: string | null
+  outletId?: string | null,
+  businessDate?: string | null
 ): Promise<DashboardKpis> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
-  const today = todayIso();
+  const date = resolveBusinessDate(businessDate);
+  const bounds = businessDayBounds(date);
 
   let salesQ = supabase
     .from("sales")
     .select("total_amount")
     .eq("organization_id", ctx.organizationId)
     .eq("status", "completed")
-    .gte("sale_date", today)
-    .lte("sale_date", today);
+    .gte("sale_date", bounds.from)
+    .lte("sale_date", bounds.to);
   let expQ = supabase
     .from("expenses")
     .select("amount")
     .eq("organization_id", ctx.organizationId)
-    .eq("expense_date", today);
+    .eq("expense_date", date);
   if (outletId) {
     salesQ = salesQ.eq("outlet_id", outletId);
     expQ = expQ.eq("outlet_id", outletId);

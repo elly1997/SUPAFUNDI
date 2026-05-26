@@ -24,6 +24,7 @@ function mapUnitRow(r: {
   unit_label: string;
   factor_to_base: number;
   is_base: boolean;
+  units_per_base?: boolean | null;
   retail_price: number | null;
   wholesale_price: number | null;
   sort_order: number;
@@ -33,6 +34,8 @@ function mapUnitRow(r: {
     unitLabel: String(r.unit_label),
     factorToBase: Number(r.factor_to_base),
     isBase: Boolean(r.is_base),
+    unitsPerBase:
+      r.units_per_base != null ? Boolean(r.units_per_base) : undefined,
     retailPrice: r.retail_price != null ? Number(r.retail_price) : null,
     wholesalePrice:
       r.wholesale_price != null ? Number(r.wholesale_price) : null,
@@ -47,7 +50,24 @@ export async function listProductUnitsMap(
   if (!productIds.length) return out;
 
   const supabase = await createServerSupabaseClient();
-  const rows = await fetchByInChunks(productIds, async (chunk) => {
+  let rows;
+  try {
+    rows = await fetchByInChunks(productIds, async (chunk) => {
+      const { data, error } = await unitsDb(supabase)
+        .from("product_units")
+        .select(
+          "id, product_id, unit_label, factor_to_base, is_base, units_per_base, retail_price, wholesale_price, sort_order"
+        )
+        .in("product_id", chunk)
+        .order("sort_order")
+        .order("unit_label");
+      return { data, error };
+    });
+  } catch (e) {
+    if (!(e instanceof Error) || !e.message.includes("units_per_base")) {
+      throw e;
+    }
+    rows = await fetchByInChunks(productIds, async (chunk) => {
     const { data, error } = await unitsDb(supabase)
       .from("product_units")
       .select(
@@ -58,6 +78,7 @@ export async function listProductUnitsMap(
       .order("unit_label");
     return { data, error };
   });
+  }
 
   for (const r of rows) {
     const row = r as {
@@ -66,6 +87,7 @@ export async function listProductUnitsMap(
       unit_label: string;
       factor_to_base: number;
       is_base: boolean;
+      units_per_base?: boolean | null;
       retail_price: number | null;
       wholesale_price: number | null;
       sort_order: number;
@@ -144,6 +166,7 @@ const unitInput = z.object({
   unitLabel: z.string().min(1).max(40),
   factorToBase: z.number().positive(),
   isBase: z.boolean().default(false),
+  unitsPerBase: z.boolean().default(false),
   retailPrice: z.number().nonnegative().nullable().optional(),
   wholesalePrice: z.number().nonnegative().nullable().optional(),
   sortOrder: z.number().int().default(0),
@@ -181,6 +204,11 @@ export async function updateProductEdit(
     if (!product) return { ok: false, message: "Product not found." };
 
     const baseUnit = baseUnits[0]!;
+    const normalizedUnits = input.units.map((u) => ({
+      ...u,
+      unitsPerBase: u.isBase ? false : u.unitsPerBase,
+      factorToBase: u.isBase ? 1 : u.factorToBase,
+    }));
     const { error: pErr } = await supabase
       .from("products")
       .update({
@@ -191,7 +219,7 @@ export async function updateProductEdit(
       .eq("id", input.productId);
     if (pErr) return { ok: false, message: pErr.message };
 
-    await syncProductUnits(supabase, input.productId, input.units);
+    await syncProductUnits(supabase, input.productId, normalizedUnits);
 
     revalidatePath("/inventory/products");
     revalidatePath("/inventory/stock");
@@ -238,6 +266,7 @@ export async function ensureBaseProductUnit(
     unit_label: baseUnit.trim(),
     factor_to_base: 1,
     is_base: true,
+    units_per_base: false,
     retail_price: retailPrice,
     wholesale_price: wholesalePrice ?? retailPrice,
     sort_order: 0,
@@ -271,6 +300,7 @@ async function syncProductUnits(
       unit_label: u.unitLabel.trim(),
       factor_to_base: u.factorToBase,
       is_base: u.isBase,
+      units_per_base: u.isBase ? false : u.unitsPerBase,
       retail_price: u.retailPrice ?? null,
       wholesale_price: u.wholesalePrice ?? null,
       sort_order: u.sortOrder ?? i,

@@ -1,0 +1,78 @@
+"use client";
+
+import { useQuery } from "@tanstack/react-query";
+import { Loader2 } from "lucide-react";
+import Link from "next/link";
+import { KpiCard } from "@/components/ui/kpi-card";
+import { fetchDashboardKpis } from "@/lib/api/dashboard-fetch";
+import { formatTzs } from "@/lib/utils/currency";
+import { useAuthStore } from "@/stores/authStore";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
+
+type Props = {
+  fallbackOutletId?: string | null;
+};
+
+export function DashboardKpisClient({ fallbackOutletId }: Props) {
+  const activeOutletId = useAuthStore((s) => s.activeOutletId);
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
+  const outletId = activeOutletId ?? fallbackOutletId ?? null;
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ["dashboard-kpis", outletId, businessDate],
+    queryFn: () => fetchDashboardKpis({ outletId, businessDate }),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+
+  const kpis = data ?? {
+    salesToday: 0,
+    salesCountToday: 0,
+    expensesToday: 0,
+    netToday: 0,
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>Business date: {businessDate}</span>
+        {(isLoading || isFetching) && (
+          <span className="inline-flex items-center gap-1">
+            <Loader2 className="size-3 animate-spin" />
+            Updating
+          </span>
+        )}
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard
+          title="Sales today"
+          value={formatTzs(kpis.salesToday)}
+          subtitle={`${kpis.salesCountToday} transactions`}
+          variant="inflow"
+          className="glass-card"
+        />
+        <KpiCard
+          title="Expenses today"
+          value={formatTzs(kpis.expensesToday)}
+          subtitle="Recorded cash out"
+          variant="outflow"
+          className="glass-card"
+        />
+        <KpiCard
+          title="Net today"
+          value={formatTzs(kpis.netToday)}
+          subtitle="Sales minus expenses"
+          variant={kpis.netToday >= 0 ? "inflow" : "outflow"}
+          className="glass-card"
+        />
+        <Link href="/reports" className="block">
+          <KpiCard
+            title="Reports"
+            value="View"
+            subtitle="Trends, top products, alerts"
+            className="glass-card transition-transform hover:scale-[1.02]"
+          />
+        </Link>
+      </div>
+    </div>
+  );
+}
