@@ -9,6 +9,7 @@ import {
   PosPaymentAccountPicker,
 } from "@/components/pos/pos-payment-account-picker";
 import { PosPaymentChips, type PaymentMethod } from "@/components/pos/pos-payment-chips";
+import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 
 type Props = {
@@ -25,6 +26,7 @@ type Props = {
   isPending: boolean;
   paymentAccountId?: string;
   onPaymentAccountIdChange?: (id: string) => void;
+  compact?: boolean;
 };
 
 export function PosInlineCheckout({
@@ -41,10 +43,20 @@ export function PosInlineCheckout({
   isPending,
   paymentAccountId = "",
   onPaymentAccountIdChange,
+  compact = false,
 }: Props) {
   return (
-    <div className="space-y-2 border-t border-border/60 pt-2">
-      <PosPaymentChips value={paymentMethod} onChange={onPaymentMethodChange} />
+    <div
+      className={cn(
+        "border-t border-border/60 pt-2",
+        compact ? "space-y-1.5" : "space-y-2"
+      )}
+    >
+      <PosPaymentChips
+        value={paymentMethod}
+        onChange={onPaymentMethodChange}
+        compact={compact}
+      />
       {needsPosPaymentAccount(paymentMethod) && onPaymentAccountIdChange && (
         <PosPaymentAccountPicker
           posMethod={paymentMethod}
@@ -68,7 +80,10 @@ export function PosInlineCheckout({
           <Input
             type="number"
             min={0}
-            className="min-h-11 rounded-lg bg-surface-1 text-right font-money text-sm text-foreground"
+            className={cn(
+              "rounded-lg bg-surface-1 text-right font-money text-sm text-foreground",
+              compact ? "min-h-9" : "min-h-11"
+            )}
             value={amountPaid}
             onChange={(e) => onAmountPaidChange(e.target.value)}
           />
@@ -76,7 +91,10 @@ export function PosInlineCheckout({
       )}
       <Button
         type="button"
-        className="h-11 w-full rounded-xl text-sm font-semibold shadow-md shadow-primary/20"
+        className={cn(
+          "w-full rounded-xl font-semibold shadow-md shadow-primary/20",
+          compact ? "h-10 text-xs" : "h-11 text-sm"
+        )}
         disabled={disabled || isPending || needsCustomer || needsPaymentAccount}
         onClick={onComplete}
       >

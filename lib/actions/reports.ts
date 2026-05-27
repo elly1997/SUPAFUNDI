@@ -66,6 +66,8 @@ export type BalanceSheetRow = {
   name: string;
   account_type: string;
   balance: number;
+  /** Synthetic line (e.g. unclosed net income rolled into equity). */
+  isComputed?: boolean;
 };
 
 export type FinancialReportSummary = {
@@ -77,6 +79,17 @@ export type FinancialReportSummary = {
     totalAssets: number;
     totalLiabilities: number;
     totalEquity: number;
+    /** Cumulative net income (income − COGS − expenses) included under equity. */
+    netIncomeIncluded: number;
+    totalLiabilitiesAndEquity: number;
+    asOfDate: string;
+    isBalanced: boolean;
+    balanceVariance: number;
+    inventoryReconciliation: {
+      glBalance: number;
+      stockLedgerAtCost: number;
+      variance: number;
+    };
   };
   profitAndLoss: {
     income: ProfitLossRow[];
@@ -86,72 +99,56 @@ export type FinancialReportSummary = {
     totalCogs: number;
     totalExpenses: number;
     netIncome: number;
+    periodFrom: string | null;
+    periodTo: string | null;
   };
 };
 
-export async function getFinancialReports(
-  fromDate?: string,
-  toDate?: string
-): Promise<FinancialReportSummary> {
-  const ctx = await requireOrgContext();
-  const supabase = await createServerSupabaseClient();
+type CoaRow = {
+  id: string;
+  code: string;
+  name: string;
+  account_type: string;
+  normal_balance: string;
+};
 
-  let entriesQuery = supabase
-    .from("journal_entries")
-    .select("id")
-    .eq("organization_id", ctx.organizationId)
-    .eq("is_posted", true);
-  if (fromDate) entriesQuery = entriesQuery.gte("entry_date", fromDate);
-  if (toDate) entriesQuery = entriesQuery.lte("entry_date", toDate);
-  const { data: entries, error: entErr } = await entriesQuery;
-  if (entErr) throw new Error(entErr.message);
+type JournalLineRow = {
+  journal_entry_id: string;
+  account_id: string;
+  debit: number;
+  credit: number;
+};
 
-  const entryIds = (entries ?? []).map((e) => e.id);
-  const empty: FinancialReportSummary = {
-    trialBalance: [],
-    balanceSheet: {
-      assets: [],
-      liabilities: [],
-      equity: [],
-      totalAssets: 0,
-      totalLiabilities: 0,
-      totalEquity: 0,
-    },
-    profitAndLoss: {
-      income: [],
-      expenses: [],
-      cogs: [],
-      totalIncome: 0,
-      totalCogs: 0,
-      totalExpenses: 0,
-      netIncome: 0,
-    },
-  };
-  if (entryIds.length === 0) return empty;
+function reportTodayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
 
-  const [{ data: accounts, error: accErr }, lines] = await Promise.all([
-    supabase
-      .from("chart_of_accounts")
-      .select("id, code, name, account_type, normal_balance")
-      .eq("organization_id", ctx.organizationId)
-      .eq("is_active", true),
-    fetchByInChunks(entryIds, async (chunk) => {
-      const { data, error } = await supabase
-        .from("journal_entry_lines")
-        .select("account_id, debit, credit")
-        .in("journal_entry_id", chunk);
-      return { data, error };
-    }),
-  ]);
-  if (accErr) throw new Error(accErr.message);
+function finalizeTrialBalanceRows(
+  byCode: Map<string, TrialBalanceRow>
+): TrialBalanceRow[] {
+  return Array.from(byCode.values())
+    .map((a) => {
+      const d = roundMoney(a.total_debit);
+      const c = roundMoney(a.total_credit);
+      const balance =
+        a.normal_balance === "debit"
+          ? roundMoney(d - c)
+          : roundMoney(c - d);
+      return { ...a, total_debit: d, total_credit: c, balance };
+    })
+    .sort((a, b) => a.code.localeCompare(b.code));
+}
 
-  const accountMap = new Map(
-    (accounts ?? []).map((a) => [a.id, a])
-  );
-
+function accumulateTrialBalance(
+  lines: JournalLineRow[],
+  entryDateById: Map<string, string>,
+  accountMap: Map<string, CoaRow>,
+  includeEntry: (entryDate: string) => boolean
+): Map<string, TrialBalanceRow> {
   const byCode = new Map<string, TrialBalanceRow>();
-
   for (const line of lines) {
+    const entryDate = entryDateById.get(line.journal_entry_id);
+    if (!entryDate || !includeEntry(entryDate)) continue;
     const coa = accountMap.get(line.account_id);
     if (!coa) continue;
     const existing = byCode.get(coa.code) ?? {
@@ -167,23 +164,13 @@ export async function getFinancialReports(
     existing.total_credit += Number(line.credit);
     byCode.set(coa.code, existing);
   }
+  return byCode;
+}
 
-  const trialBalance: TrialBalanceRow[] = Array.from(byCode.values())
-    .map((a) => {
-      const d = roundMoney(a.total_debit);
-      const c = roundMoney(a.total_credit);
-      const balance =
-        a.normal_balance === "debit"
-          ? roundMoney(d - c)
-          : roundMoney(c - d);
-      return { ...a, total_debit: d, total_credit: c, balance };
-    })
-    .sort((a, b) => a.code.localeCompare(b.code));
-
+function profitAndLossFromTrialBalance(trialBalance: TrialBalanceRow[]) {
   const income: ProfitLossRow[] = [];
   const expenses: ProfitLossRow[] = [];
   const cogs: ProfitLossRow[] = [];
-
   for (const row of trialBalance) {
     if (row.balance === 0) continue;
     const pl: ProfitLossRow = {
@@ -196,14 +183,27 @@ export async function getFinancialReports(
     else if (row.account_type === "expense") expenses.push(pl);
     else if (row.account_type === "cogs") cogs.push(pl);
   }
-
   const totalIncome = roundMoney(income.reduce((s, r) => s + r.amount, 0));
   const totalCogs = roundMoney(cogs.reduce((s, r) => s + r.amount, 0));
   const totalExpenses = roundMoney(
     expenses.reduce((s, r) => s + r.amount, 0)
   );
   const netIncome = roundMoney(totalIncome - totalCogs - totalExpenses);
+  return {
+    income,
+    expenses,
+    cogs,
+    totalIncome,
+    totalCogs,
+    totalExpenses,
+    netIncome,
+  };
+}
 
+function balanceSheetFromTrialBalance(
+  trialBalance: TrialBalanceRow[],
+  netIncomeIncluded: number
+) {
   const assets: BalanceSheetRow[] = [];
   const liabilities: BalanceSheetRow[] = [];
   const equity: BalanceSheetRow[] = [];
@@ -219,30 +219,189 @@ export async function getFinancialReports(
     else if (row.account_type === "liability") liabilities.push(bs);
     else if (row.account_type === "equity") equity.push(bs);
   }
+  if (netIncomeIncluded !== 0) {
+    equity.push({
+      code: "3910",
+      name: "Net income (unclosed P&L)",
+      account_type: "equity",
+      balance: netIncomeIncluded,
+      isComputed: true,
+    });
+  }
   const totalAssets = roundMoney(assets.reduce((s, r) => s + r.balance, 0));
   const totalLiabilities = roundMoney(
     liabilities.reduce((s, r) => s + r.balance, 0)
   );
-  const totalEquity = roundMoney(equity.reduce((s, r) => s + r.balance, 0));
+  const totalEquityAccounts = roundMoney(
+    equity.filter((r) => !r.isComputed).reduce((s, r) => s + r.balance, 0)
+  );
+  const totalEquity = roundMoney(totalEquityAccounts + netIncomeIncluded);
+  const totalLiabilitiesAndEquity = roundMoney(
+    totalLiabilities + totalEquity
+  );
+  const balanceVariance = roundMoney(
+    totalAssets - totalLiabilitiesAndEquity
+  );
+  return {
+    assets,
+    liabilities,
+    equity,
+    totalAssets,
+    totalLiabilities,
+    totalEquity,
+    netIncomeIncluded,
+    totalLiabilitiesAndEquity,
+    isBalanced: balanceVariance === 0,
+    balanceVariance,
+  };
+}
+
+async function sumStockInventoryAtCost(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  organizationId: string
+): Promise<number> {
+  const { data, error } = await supabase
+    .from("stock")
+    .select("quantity, cost_price")
+    .eq("organization_id", organizationId);
+  if (error) throw new Error(error.message);
+  return roundMoney(
+    (data ?? []).reduce(
+      (sum, row) => sum + Number(row.quantity) * Number(row.cost_price),
+      0
+    )
+  );
+}
+
+export async function getFinancialReports(
+  fromDate?: string,
+  toDate?: string
+): Promise<FinancialReportSummary> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+
+  /** Balance sheet & trial balance: cumulative posted GL through this date. */
+  const asOfDate = toDate ?? reportTodayIso();
+  const periodFrom = fromDate ?? null;
+  const periodTo = toDate ?? asOfDate;
+
+  const [{ data: accounts, error: accErr }, stockLedgerAtCost] =
+    await Promise.all([
+      supabase
+        .from("chart_of_accounts")
+        .select("id, code, name, account_type, normal_balance")
+        .eq("organization_id", ctx.organizationId)
+        .eq("is_active", true),
+      sumStockInventoryAtCost(supabase, ctx.organizationId),
+    ]);
+  if (accErr) throw new Error(accErr.message);
+
+  const accountMap = new Map((accounts ?? []).map((a) => [a.id, a]));
+
+  const { data: entries, error: entErr } = await supabase
+    .from("journal_entries")
+    .select("id, entry_date")
+    .eq("organization_id", ctx.organizationId)
+    .eq("is_posted", true)
+    .lte("entry_date", asOfDate);
+  if (entErr) throw new Error(entErr.message);
+
+  const entryDateById = new Map(
+    (entries ?? []).map((e) => [e.id, String(e.entry_date)])
+  );
+  const entryIds = (entries ?? []).map((e) => e.id);
+
+  const emptyBalanceSheet = {
+    assets: [] as BalanceSheetRow[],
+    liabilities: [] as BalanceSheetRow[],
+    equity: [] as BalanceSheetRow[],
+    totalAssets: 0,
+    totalLiabilities: 0,
+    totalEquity: 0,
+    netIncomeIncluded: 0,
+    totalLiabilitiesAndEquity: 0,
+    asOfDate,
+    isBalanced: true,
+    balanceVariance: 0,
+    inventoryReconciliation: {
+      glBalance: 0,
+      stockLedgerAtCost,
+      variance: roundMoney(0 - stockLedgerAtCost),
+    },
+  };
+
+  if (entryIds.length === 0) {
+    return {
+      trialBalance: [],
+      balanceSheet: emptyBalanceSheet,
+      profitAndLoss: {
+        income: [],
+        expenses: [],
+        cogs: [],
+        totalIncome: 0,
+        totalCogs: 0,
+        totalExpenses: 0,
+        netIncome: 0,
+        periodFrom,
+        periodTo,
+      },
+    };
+  }
+
+  const lines = await fetchByInChunks(entryIds, async (chunk) => {
+    const { data, error } = await supabase
+      .from("journal_entry_lines")
+      .select("journal_entry_id, account_id, debit, credit")
+      .in("journal_entry_id", chunk);
+    return { data, error };
+  });
+
+  const cumulativeByCode = accumulateTrialBalance(
+    lines as JournalLineRow[],
+    entryDateById,
+    accountMap,
+    () => true
+  );
+  const periodByCode = accumulateTrialBalance(
+    lines as JournalLineRow[],
+    entryDateById,
+    accountMap,
+    (entryDate) => {
+      if (periodFrom && entryDate < periodFrom) return false;
+      if (entryDate > periodTo) return false;
+      return true;
+    }
+  );
+
+  const trialBalance = finalizeTrialBalanceRows(cumulativeByCode);
+  const cumulativePl = profitAndLossFromTrialBalance(trialBalance);
+  const periodPl = profitAndLossFromTrialBalance(
+    finalizeTrialBalanceRows(periodByCode)
+  );
+
+  const bsCore = balanceSheetFromTrialBalance(
+    trialBalance,
+    cumulativePl.netIncome
+  );
+
+  const inventoryGlBalance =
+    trialBalance.find((r) => r.code === "1200")?.balance ?? 0;
 
   return {
     trialBalance,
     balanceSheet: {
-      assets,
-      liabilities,
-      equity,
-      totalAssets,
-      totalLiabilities,
-      totalEquity,
+      ...bsCore,
+      asOfDate,
+      inventoryReconciliation: {
+        glBalance: inventoryGlBalance,
+        stockLedgerAtCost,
+        variance: roundMoney(stockLedgerAtCost - inventoryGlBalance),
+      },
     },
     profitAndLoss: {
-      income,
-      expenses,
-      cogs,
-      totalIncome,
-      totalCogs,
-      totalExpenses,
-      netIncome,
+      ...periodPl,
+      periodFrom,
+      periodTo,
     },
   };
 }

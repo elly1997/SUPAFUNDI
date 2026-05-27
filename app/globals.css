@@ -102,14 +102,21 @@
       grid-template-columns:
         clamp(13rem, 24vw, 16rem)
         minmax(22rem, 1fr)
-        clamp(16rem, 30vw, 21rem);
+        clamp(18rem, 24vw, 23rem);
     }
 
     .pos-workspace-grid[data-cashflow="collapsed"] {
       grid-template-columns:
         3.75rem
         minmax(26rem, 1fr)
-        clamp(16rem, 30vw, 21rem);
+        clamp(18rem, 24vw, 23rem);
+    }
+
+    /* Cart list grows; checkout block scrolls if needed */
+    .pos-cart-footer {
+      max-height: min(40vh, 18.5rem);
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
   }
 

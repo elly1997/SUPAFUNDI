@@ -42,12 +42,18 @@ export function FinancialReports({ fromDate, toDate }: FinancialReportsProps) {
   if (!data) return null;
 
   const { trialBalance, balanceSheet: bs, profitAndLoss: pl } = data;
+  const inv = bs.inventoryReconciliation;
 
   return (
     <div className="space-y-6">
       <Card className="glass-card">
         <CardHeader>
-          <CardTitle>Profit &amp; loss (all posted entries)</CardTitle>
+          <CardTitle>Profit &amp; loss</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            {pl.periodFrom && pl.periodTo
+              ? `Posted activity from ${pl.periodFrom} to ${pl.periodTo}`
+              : "Posted activity in the selected period"}
+          </p>
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
           <div className="flex flex-wrap justify-between gap-2">
@@ -73,9 +79,42 @@ export function FinancialReports({ fromDate, toDate }: FinancialReportsProps) {
 
       <Card className="glass-card">
         <CardHeader>
-          <CardTitle>Balance sheet (posted balances)</CardTitle>
+          <CardTitle>Balance sheet</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Cumulative posted GL balances as of {bs.asOfDate}. Assets should
+            equal liabilities + equity (including unclosed net income).
+          </p>
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
+          <div className="rounded-lg border border-border bg-muted/30 p-3">
+            <p className="font-medium text-foreground">Inventory (cost)</p>
+            <div className="mt-2 space-y-1">
+              <div className="flex flex-wrap justify-between gap-2">
+                <span className="text-muted-foreground">
+                  1200 Inventory Asset (GL)
+                </span>
+                <span className="font-money">{formatTzs(inv.glBalance)}</span>
+              </div>
+              <div className="flex flex-wrap justify-between gap-2">
+                <span className="text-muted-foreground">
+                  Stock on hand (qty × cost)
+                </span>
+                <span className="font-money">
+                  {formatTzs(inv.stockLedgerAtCost)}
+                </span>
+              </div>
+              {inv.variance !== 0 ? (
+                <p className="pt-1 text-xs text-amber-400">
+                  Variance {formatTzs(inv.variance)} — receive goods through GRN
+                  or adjust stock so the GL matches physical inventory.
+                </p>
+              ) : (
+                <p className="pt-1 text-xs text-muted-foreground">
+                  GL matches stock ledger at cost.
+                </p>
+              )}
+            </div>
+          </div>
           <div>
             <p className="mb-2 font-medium text-foreground">Assets</p>
             {bs.assets.length === 0 ? (
@@ -102,26 +141,47 @@ export function FinancialReports({ fromDate, toDate }: FinancialReportsProps) {
               Liabilities &amp; equity
             </p>
             {[...bs.liabilities, ...bs.equity].map((r) => (
-              <div key={r.code} className="flex flex-wrap justify-between gap-2 py-0.5">
-                <span className="min-w-0 text-muted-foreground">
+              <div
+                key={`${r.code}-${r.name}`}
+                className="flex flex-wrap justify-between gap-2 py-0.5"
+              >
+                <span
+                  className={
+                    r.isComputed
+                      ? "min-w-0 italic text-muted-foreground"
+                      : "min-w-0 text-muted-foreground"
+                  }
+                >
                   {r.code} {r.name}
                 </span>
                 <span className="font-money">{formatTzs(r.balance)}</span>
               </div>
             ))}
             <p className="mt-2 flex flex-wrap justify-between gap-2 border-t pt-2 font-semibold">
-              <span>Total L + E</span>
+              <span>Total liabilities + equity</span>
               <span className="font-money">
-                {formatTzs(bs.totalLiabilities + bs.totalEquity)}
+                {formatTzs(bs.totalLiabilitiesAndEquity)}
               </span>
             </p>
           </div>
+          {!bs.isBalanced ? (
+            <p className="text-xs text-destructive">
+              Out of balance by {formatTzs(Math.abs(bs.balanceVariance))} —
+              check for unposted entries or misclassified transactions (e.g.
+              bank deposit recorded as expense).
+            </p>
+          ) : (
+            <p className="text-xs text-inflow">Balance sheet balances.</p>
+          )}
         </CardContent>
       </Card>
 
       <Card className="glass-card">
         <CardHeader>
           <CardTitle>Trial balance</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            All posted accounts as of {bs.asOfDate}
+          </p>
         </CardHeader>
         <CardContent>
           {trialBalance.length === 0 ? (

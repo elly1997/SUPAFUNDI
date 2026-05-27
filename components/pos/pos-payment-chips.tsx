@@ -27,9 +27,38 @@ const METHODS: {
 type Props = {
   value: PaymentMethod;
   onChange: (value: PaymentMethod) => void;
+  /** Narrow cart sidebar — horizontal chips instead of tall tiles. */
+  compact?: boolean;
 };
 
-export function PosPaymentChips({ value, onChange }: Props) {
+export function PosPaymentChips({ value, onChange, compact = false }: Props) {
+  if (compact) {
+    return (
+      <div className="grid grid-cols-5 gap-1">
+        {METHODS.map(({ value: v, label, icon: Icon }) => {
+          const selected = value === v;
+          return (
+            <button
+              key={v}
+              type="button"
+              onClick={() => onChange(v)}
+              title={label}
+              className={cn(
+                "flex min-h-9 flex-col items-center justify-center gap-0.5 rounded-lg border px-0.5 py-1 text-center transition-all touch-manipulation active:scale-[0.97]",
+                selected
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border/60 bg-muted/50 text-muted-foreground hover:bg-muted"
+              )}
+            >
+              <Icon className={cn("size-3.5", selected && "text-primary")} />
+              <span className="text-[9px] font-semibold leading-none">{label}</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-3 gap-2 xl:grid-cols-5">
       {METHODS.map(({ value: v, label, icon: Icon }) => {
