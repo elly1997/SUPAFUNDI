@@ -17,6 +17,7 @@ import {
   enrichUnitsWithConversion,
   hasMultipleUnits,
   maxSellQtyInUnit,
+  pickDefaultSellUnit,
   resolveUnitPrice,
   unitConversionHint,
   type ProductUnitOption,
@@ -78,11 +79,18 @@ export function PosAddToCartDialog({
 
   useEffect(() => {
     if (!open || !product || units.length === 0) return;
-    const base = units.find((u) => u.isBase) ?? units[0];
-    setSelectedUnitId((current) =>
-      current && units.some((u) => u.id === current) ? current : (base?.id ?? "")
+    const preferred = pickDefaultSellUnit(
+      units,
+      product.retailPrice,
+      product.wholesalePrice,
+      pricingMode
     );
-  }, [open, product, units]);
+    setSelectedUnitId((current) =>
+      current && units.some((u) => u.id === current)
+        ? current
+        : (preferred.id ?? "")
+    );
+  }, [open, product, units, pricingMode]);
 
   const selectedUnit = useMemo(
     () => units.find((u) => u.id === selectedUnitId) ?? units[0],

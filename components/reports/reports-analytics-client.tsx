@@ -347,6 +347,10 @@ export function ReportsAnalyticsClient() {
         <Card className="glass-card">
           <CardHeader>
             <CardTitle className="text-base">Top products</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Ranked by how often sold (line count), then revenue. Quantities use
+              the unit recorded at checkout.
+            </p>
           </CardHeader>
           <CardContent className="space-y-2">
             {operational.topProducts.length === 0 ? (
@@ -354,13 +358,21 @@ export function ReportsAnalyticsClient() {
             ) : (
               operational.topProducts.map((p, i) => (
                 <div
-                  key={p.name}
-                  className="flex justify-between rounded-lg border border-border/60 bg-surface-1/40 px-3 py-2 text-sm"
+                  key={p.productId ?? p.name}
+                  className="flex items-start justify-between gap-2 rounded-lg border border-border/60 bg-surface-1/40 px-3 py-2 text-sm"
                 >
-                  <span>
-                    {i + 1}. {p.name}
-                  </span>
-                  <span className="font-money font-semibold">
+                  <div className="min-w-0">
+                    <p className="font-medium leading-snug">
+                      {i + 1}. {p.name}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {p.lineCount} sale{p.lineCount === 1 ? "" : "s"}
+                      {p.quantity > 0
+                        ? ` · ${p.quantity}${p.unitLabel ? ` ${p.unitLabel}` : ""}`
+                        : ""}
+                    </p>
+                  </div>
+                  <span className="shrink-0 font-money text-xs font-semibold tabular-nums">
                     {formatTzs(p.revenue)}
                   </span>
                 </div>

@@ -21,6 +21,68 @@ export function findBaseUnit(
   return units.find((u) => u.isBase) ?? units[0];
 }
 
+/**
+ * POS default sell unit — prefer retail denomination (e.g. meter) over stock base (e.g. roll).
+ */
+export function pickDefaultSellUnit(
+  units: ProductUnitOption[],
+  baseRetail: number,
+  baseWholesale: number,
+  pricingMode: "retail" | "wholesale" = "retail"
+): ProductUnitOption {
+  if (units.length === 0) {
+    throw new Error("pickDefaultSellUnit requires at least one unit");
+  }
+  if (units.length === 1) return units[0]!;
+
+  const enriched = enrichUnitsWithConversion(
+    units,
+    baseRetail,
+    baseWholesale,
+    pricingMode
+  );
+  const nonBase = enriched.filter((u) => !u.isBase);
+  const perBaseUnits = nonBase.filter((u) => u.unitsPerBase);
+  if (perBaseUnits.length === 1) return perBaseUnits[0]!;
+
+  const base = findBaseUnit(enriched) ?? enriched[0]!;
+  const basePrice = resolveUnitPrice(
+    base,
+    baseRetail,
+    baseWholesale,
+    pricingMode
+  );
+
+  if (perBaseUnits.length > 1) {
+    return perBaseUnits.reduce((best, u) =>
+      resolveUnitPrice(u, baseRetail, baseWholesale, pricingMode) <
+      resolveUnitPrice(best, baseRetail, baseWholesale, pricingMode)
+        ? u
+        : best
+    );
+  }
+
+  const withExplicit = nonBase.filter((u) => {
+    const p =
+      pricingMode === "wholesale" ? u.wholesalePrice : u.retailPrice;
+    return p != null && p > 0;
+  });
+  if (withExplicit.length === 1) return withExplicit[0]!;
+
+  let cheapest: ProductUnitOption | null = null;
+  let cheapestPrice = Infinity;
+  for (const u of nonBase) {
+    const p = resolveUnitPrice(u, baseRetail, baseWholesale, pricingMode);
+    if (p > 0 && p < cheapestPrice && p < basePrice) {
+      cheapest = u;
+      cheapestPrice = p;
+    }
+  }
+  if (cheapest) return cheapest;
+
+  return base;
+}
+
 /** Infer smaller sell unit priced per piece of a larger stock unit (meters per roll). */
 export function usesUnitsPerBase(
   unit: ProductUnitOption,

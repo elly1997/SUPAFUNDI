@@ -416,7 +416,16 @@ export type OperationalReports = {
   avgTicket: number;
   creditOutstanding: number;
   lowStockCount: number;
-  topProducts: { name: string; quantity: number; revenue: number }[];
+  topProducts: {
+    productId: string | null;
+    name: string;
+    /** Number of sale lines (frequency). */
+    lineCount: number;
+    /** Sum of sell_qty when recorded, else base quantity. */
+    quantity: number;
+    unitLabel: string | null;
+    revenue: number;
+  }[];
   salesByDay: { date: string; total: number; count: number }[];
   paymentMix: { method: string; total: number; count: number }[];
 };
@@ -712,7 +721,9 @@ async function buildOperationalResult(
       fetchByInChunks(saleIds, async (chunk) => {
         const { data, error } = await supabase
           .from("sale_items")
-          .select("product_name, quantity, total_price")
+          .select(
+            "product_id, product_name, quantity, sell_qty, sell_unit, total_price"
+          )
           .in("sale_id", chunk);
         return { data, error };
       }),
@@ -727,18 +738,72 @@ async function buildOperationalResult(
     ]);
 
     if (saleItems.length > 0) {
-      const prodMap = new Map<string, { quantity: number; revenue: number }>();
+      type Agg = {
+        productId: string | null;
+        name: string;
+        lineCount: number;
+        quantity: number;
+        revenue: number;
+        unitCounts: Map<string, number>;
+      };
+      const prodMap = new Map<string, Agg>();
       for (const row of saleItems) {
+        const productId = row.product_id ?? null;
+        const key = productId ?? `name:${row.product_name ?? "Unknown"}`;
         const name = row.product_name ?? "Unknown";
-        const prev = prodMap.get(name) ?? { quantity: 0, revenue: 0 };
-        prodMap.set(name, {
-          quantity: prev.quantity + Number(row.quantity),
-          revenue: prev.revenue + Number(row.total_price),
+        const sellQty =
+          row.sell_qty != null ? Number(row.sell_qty) : Number(row.quantity);
+        const sellUnit =
+          row.sell_unit != null && String(row.sell_unit).trim()
+            ? String(row.sell_unit).trim()
+            : null;
+        const prev = prodMap.get(key) ?? {
+          productId,
+          name,
+          lineCount: 0,
+          quantity: 0,
+          revenue: 0,
+          unitCounts: new Map<string, number>(),
+        };
+        if (sellUnit) {
+          prev.unitCounts.set(
+            sellUnit,
+            (prev.unitCounts.get(sellUnit) ?? 0) + 1
+          );
+        }
+        prodMap.set(key, {
+          ...prev,
+          name,
+          lineCount: prev.lineCount + 1,
+          quantity: roundMoney(prev.quantity + sellQty),
+          revenue: roundMoney(prev.revenue + Number(row.total_price)),
         });
       }
-      topProducts = Array.from(prodMap.entries())
-        .map(([name, v]) => ({ name, ...v }))
-        .sort((a, b) => b.revenue - a.revenue)
+      topProducts = Array.from(prodMap.values())
+        .map((v) => {
+          let unitLabel: string | null = null;
+          if (v.unitCounts.size === 1) {
+            unitLabel = Array.from(v.unitCounts.keys())[0] ?? null;
+          } else if (v.unitCounts.size > 1) {
+            unitLabel = Array.from(v.unitCounts.entries()).sort(
+              (a, b) => b[1] - a[1]
+            )[0]?.[0] ?? null;
+          }
+          return {
+            productId: v.productId,
+            name: v.name,
+            lineCount: v.lineCount,
+            quantity: v.quantity,
+            unitLabel,
+            revenue: v.revenue,
+          };
+        })
+        .sort(
+          (a, b) =>
+            b.lineCount - a.lineCount ||
+            b.revenue - a.revenue ||
+            b.quantity - a.quantity
+        )
         .slice(0, 8);
     }
 
@@ -861,9 +926,10 @@ export async function getOperationalExportCsv(
       (p) => `${p.method},${p.total},${p.count}`
     ),
     "",
-    "Product,Qty,Revenue",
+    "Product,Lines sold,Qty,Unit,Revenue",
     ...data.topProducts.map(
-      (p) => `"${p.name.replace(/"/g, '""')}",${p.quantity},${p.revenue}`
+      (p) =>
+        `"${p.name.replace(/"/g, '""')}",${p.lineCount},${p.quantity},${p.unitLabel ?? ""},${p.revenue}`
     ),
   ];
   return lines.join("\n");
