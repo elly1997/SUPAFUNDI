@@ -6,7 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { maxSellFromCartFields } from "@/lib/products/units";
+import {
+  adjustSellQty,
+  formatSellQty,
+  maxSellFromCartFields,
+} from "@/lib/products/units";
+import { computeLineTotal } from "@/lib/utils/calculations";
 import { formatTzs } from "@/lib/utils/currency";
 import { PosInlineCheckout } from "@/components/pos/pos-inline-checkout";
 import type { PaymentMethod } from "@/components/pos/pos-payment-chips";
@@ -115,10 +120,11 @@ export function PosCartPanel({
         ) : (
           <ul className="divide-y divide-border/70">
             {lines.map((line) => {
-              const lineTotal =
-                line.quantity *
-                line.unitPrice *
-                (1 - line.discountPct / 100);
+              const lineTotal = computeLineTotal(
+                line.quantity,
+                line.unitPrice,
+                line.discountPct
+              );
               const maxQty = maxSellFromCartFields(
                 line.availableStock,
                 line.factorToBase,
@@ -148,17 +154,18 @@ export function PosCartPanel({
                       size="icon"
                       className="size-8 rounded-md touch-manipulation lg:size-7"
                       onClick={() => {
-                        const r = onUpdateQuantity(
-                          line.lineKey,
-                          line.quantity - 1
-                        );
+                        const next = adjustSellQty(line.quantity, -1);
+                        const r = onUpdateQuantity(line.lineKey, next);
                         if (!r.ok) onStockError(r);
                       }}
                     >
                       <Minus className="size-3.5" />
                     </Button>
-                    <span className="min-w-[1.25rem] text-center text-xs font-bold tabular-nums text-foreground">
-                      {line.quantity}
+                    <span
+                      className="min-w-[2rem] text-center text-xs font-bold tabular-nums text-foreground"
+                      title="Tap product to enter exact qty (e.g. 0.5)"
+                    >
+                      {formatSellQty(line.quantity)}
                     </span>
                     <Button
                       type="button"
@@ -167,10 +174,8 @@ export function PosCartPanel({
                       className="size-8 rounded-md touch-manipulation lg:size-7"
                       disabled={line.quantity >= maxQty}
                       onClick={() => {
-                        const r = onUpdateQuantity(
-                          line.lineKey,
-                          line.quantity + 1
-                        );
+                        const next = adjustSellQty(line.quantity, 1);
+                        const r = onUpdateQuantity(line.lineKey, next);
                         if (!r.ok) onStockError(r);
                       }}
                     >

@@ -17,17 +17,21 @@ import {
   enrichUnitsWithConversion,
   hasMultipleUnits,
   maxSellQtyInUnit,
+  MIN_SELL_QTY,
+  parseSellQty,
   pickDefaultSellUnit,
   resolveUnitPrice,
+  sellQtysEqual,
   unitConversionHint,
   type ProductUnitOption,
 } from "@/lib/products/units";
+import { computeLineTotal } from "@/lib/utils/calculations";
 import { fetchProductUnitsMap } from "@/lib/api/product-units-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import type { PosPricingMode } from "@/hooks/usePosProducts";
 
-const QUICK_QTY = [1, 5, 10, 50] as const;
+const QUICK_QTY = [0.5, 1, 2, 5, 10] as const;
 
 export type PosAddToCartPayload = {
   unit: ProductUnitOption;
@@ -106,8 +110,9 @@ export function PosAddToCartDialog({
     pricingMode
   );
   const maxQty = maxSellQtyInUnit(product.stockQty, selectedUnit);
-  const parsed = Math.max(1, Math.floor(Number(qty) || 1));
+  const parsed = parseSellQty(qty);
   const showUnitPicker = hasMultipleUnits(units);
+  const lineTotal = computeLineTotal(parsed, unitPrice, 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -118,6 +123,9 @@ export function PosAddToCartDialog({
             {formatTzs(unitPrice)} / {selectedUnit.unitLabel}
             {` · ${maxQty} ${selectedUnit.unitLabel} available`}
             {unitConversionHint(selectedUnit)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Fractions allowed (e.g. 0.5 m, 1.25 kg).
           </p>
         </DialogHeader>
 
@@ -159,12 +167,12 @@ export function PosAddToCartDialog({
           </div>
         )}
 
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-5 gap-2">
           {QUICK_QTY.map((n) => (
             <Button
               key={n}
               type="button"
-              variant={parsed === n ? "default" : "outline"}
+              variant={sellQtysEqual(parsed, n) ? "default" : "outline"}
               className="h-11 rounded-xl font-bold"
               disabled={n > maxQty}
               onClick={() => setQty(String(n))}
@@ -176,8 +184,10 @@ export function PosAddToCartDialog({
 
         <Input
           type="number"
-          min={1}
+          min={MIN_SELL_QTY}
           max={maxQty}
+          step="any"
+          inputMode="decimal"
           className="h-14 rounded-xl text-center text-2xl font-bold font-money tabular-nums"
           value={qty}
           onChange={(e) => setQty(e.target.value)}
@@ -186,7 +196,7 @@ export function PosAddToCartDialog({
         <DialogFooter className="gap-2 sm:flex-col">
           <Button
             className="h-12 w-full rounded-xl text-base font-semibold"
-            disabled={parsed > maxQty || parsed < 1}
+            disabled={parsed > maxQty || parsed < MIN_SELL_QTY}
             onClick={() => {
               onConfirm({
                 unit: selectedUnit,
@@ -196,7 +206,7 @@ export function PosAddToCartDialog({
               onOpenChange(false);
             }}
           >
-            Add {parsed} {selectedUnit.unitLabel} · {formatTzs(parsed * unitPrice)}
+            Add {parsed} {selectedUnit.unitLabel} · {formatTzs(lineTotal)}
           </Button>
           <Button variant="ghost" className="w-full" onClick={() => onOpenChange(false)}>
             Cancel

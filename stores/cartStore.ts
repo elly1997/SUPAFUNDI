@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { cartLineKey, maxSellFromCartFields } from "@/lib/products/units";
+import { cartLineKey, maxSellFromCartFields, MIN_SELL_QTY, parseSellQty, roundSellQty } from "@/lib/products/units";
 import type { PosPricingMode } from "@/hooks/usePosProducts";
 
 export type CartLine = {
@@ -47,7 +47,7 @@ type CartState = {
 export const useCartStore = create<CartState>((set, get) => ({
   lines: [],
   addProduct: (product, quantity = 1) => {
-    const qty = Math.max(1, Math.floor(quantity));
+    const qty = parseSellQty(quantity);
     const lineKey =
       product.lineKey ?? cartLineKey(product.productId, product.unit);
     const maxSell = maxSellFromCartFields(
@@ -58,7 +58,7 @@ export const useCartStore = create<CartState>((set, get) => ({
     const s = get();
     const existing = s.lines.find((l) => l.lineKey === lineKey);
     if (existing) {
-      const nextQty = existing.quantity + qty;
+      const nextQty = roundSellQty(existing.quantity + qty);
       if (nextQty > maxSell) {
         return {
           ok: false,
@@ -84,7 +84,7 @@ export const useCartStore = create<CartState>((set, get) => ({
     if (maxSell < qty) {
       return {
         ok: false,
-        reason: maxSell < 1 ? "out_of_stock" : "insufficient_stock",
+        reason: maxSell < MIN_SELL_QTY ? "out_of_stock" : "insufficient_stock",
         available: maxSell,
       };
     }
@@ -109,12 +109,13 @@ export const useCartStore = create<CartState>((set, get) => ({
     }
     const line = s.lines.find((l) => l.lineKey === lineKey);
     if (!line) return { ok: true };
+    const qty = roundSellQty(quantity);
     const maxSell = maxSellFromCartFields(
       line.availableStock,
       line.factorToBase,
       line.unitsPerBase
     );
-    if (quantity > maxSell) {
+    if (qty > maxSell) {
       return {
         ok: false,
         reason: "insufficient_stock",
@@ -123,7 +124,7 @@ export const useCartStore = create<CartState>((set, get) => ({
     }
     set({
       lines: s.lines.map((l) =>
-        l.lineKey === lineKey ? { ...l, quantity } : l
+        l.lineKey === lineKey ? { ...l, quantity: qty } : l
       ),
     });
     return { ok: true };

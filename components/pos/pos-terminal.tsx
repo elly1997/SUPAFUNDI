@@ -54,7 +54,11 @@ import {
 import type { CompleteSaleInput } from "@/lib/actions/sales";
 import type { PosCustomer } from "@/lib/api/customers-fetch";
 import { completeSaleApi } from "@/lib/api/daily-ops-fetch";
-import { cartLineKey, resolveUnitPrice } from "@/lib/products/units";
+import {
+  cartLineKey,
+  formatSellQty,
+  resolveUnitPrice,
+} from "@/lib/products/units";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
@@ -82,7 +86,7 @@ function stockToast(result: AddProductResult) {
   if (result.reason === "out_of_stock") {
     toast.error("Out of stock");
   } else {
-    toast.error(`Only ${result.available} in stock`);
+    toast.error(`Only ${formatSellQty(result.available)} in stock`);
   }
 }
 

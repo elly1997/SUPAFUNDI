@@ -15,6 +15,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
   computeLineTotal,
   roundMoney,
+  roundStockQty,
 } from "@/lib/utils/calculations";
 import { resolveSaleTotals } from "@/lib/utils/sale-totals";
 import {
@@ -228,7 +229,7 @@ export async function completeSale(
     let cogsAmount = 0;
     for (const line of input.lines) {
       const stock = stockByProduct.get(line.productId);
-      const baseQty = roundMoney(
+      const baseQty = roundStockQty(
         sellQtyToBaseQty(line.quantity, saleLineAsUnit(line))
       );
       if (!stock) {
@@ -372,7 +373,7 @@ export async function completeSale(
       sale_id: sale.id,
       product_id: l.productId,
       product_name: l.productName,
-      quantity: roundMoney(sellQtyToBaseQty(l.quantity, saleLineAsUnit(l))),
+      quantity: roundStockQty(sellQtyToBaseQty(l.quantity, saleLineAsUnit(l))),
       unit_price: l.unitPrice,
       discount_pct: l.discountPct,
       tax_rate: taxRate,
@@ -464,10 +465,10 @@ export async function completeSale(
 
     for (const line of input.lines) {
       const stock = stockByProduct.get(line.productId)!;
-      const baseQty = roundMoney(
+      const baseQty = roundStockQty(
         sellQtyToBaseQty(line.quantity, saleLineAsUnit(line))
       );
-      const newQty = roundMoney(Number(stock.quantity) - baseQty);
+      const newQty = roundStockQty(Number(stock.quantity) - baseQty);
       const { error: updErr } = await supabase
         .from("stock")
         .update({ quantity: newQty })
@@ -983,7 +984,7 @@ export async function voidSale(
       if (stock?.id) {
         await supabase
           .from("stock")
-          .update({ quantity: roundMoney(Number(stock.quantity) + qty) })
+          .update({ quantity: roundStockQty(Number(stock.quantity) + qty) })
           .eq("id", stock.id);
       }
       await supabase.from("stock_movements").insert({

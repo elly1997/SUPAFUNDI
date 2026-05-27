@@ -1,3 +1,5 @@
+import { roundStockQty } from "@/lib/utils/calculations";
+
 export type ProductUnitOption = {
   id: string;
   unitLabel: string;
@@ -13,6 +15,42 @@ export type ProductUnitOption = {
 
 export function cartLineKey(productId: string, unitLabel: string): string {
   return `${productId}:${unitLabel}`;
+}
+
+/** Smallest sellable quantity (wire by the meter, metal by kg, etc.). */
+export const MIN_SELL_QTY = 0.001;
+
+export function roundSellQty(value: number): number {
+  return roundStockQty(value);
+}
+
+/** Max sellable in this unit — never above physical stock. */
+export function floorSellQty(value: number): number {
+  if (value <= 0) return 0;
+  return Math.floor(value * 1000 + Number.EPSILON) / 1000;
+}
+
+export function parseSellQty(raw: number | string): number {
+  const n = typeof raw === "string" ? Number(raw.trim()) : raw;
+  if (!Number.isFinite(n) || n < MIN_SELL_QTY) return MIN_SELL_QTY;
+  return roundSellQty(n);
+}
+
+export function formatSellQty(qty: number): string {
+  const r = roundSellQty(qty);
+  return r.toFixed(3).replace(/\.?0+$/, "");
+}
+
+/** Step qty up/down in the cart (+/− buttons). */
+export function adjustSellQty(qty: number, direction: 1 | -1): number {
+  const step = qty < 1 ? 0.1 : 0.5;
+  const next = roundSellQty(qty + direction * step);
+  if (next < MIN_SELL_QTY) return 0;
+  return next;
+}
+
+export function sellQtysEqual(a: number, b: number): boolean {
+  return roundSellQty(a) === roundSellQty(b);
 }
 
 export function findBaseUnit(
@@ -141,11 +179,11 @@ export function maxSellQtyInUnit(
 ): number {
   const perBase = unitsPerBase ?? unit.unitsPerBase ?? false;
   if (baseStockQty <= 0 || unit.factorToBase <= 0) return 0;
-  if (unit.isBase) return Math.floor(baseStockQty);
+  if (unit.isBase) return floorSellQty(baseStockQty);
   if (perBase) {
-    return Math.floor(baseStockQty * unit.factorToBase);
+    return floorSellQty(baseStockQty * unit.factorToBase);
   }
-  return Math.floor(baseStockQty / unit.factorToBase);
+  return floorSellQty(baseStockQty / unit.factorToBase);
 }
 
 /** How much base stock is consumed when selling qty in this unit. */
@@ -155,10 +193,13 @@ export function sellQtyToBaseQty(
   unitsPerBase?: boolean
 ): number {
   const perBase = unitsPerBase ?? unit.unitsPerBase ?? false;
+  let base: number;
   if (unit.isBase || perBase) {
-    return sellQty / unit.factorToBase;
+    base = sellQty / unit.factorToBase;
+  } else {
+    base = sellQty * unit.factorToBase;
   }
-  return sellQty * unit.factorToBase;
+  return roundStockQty(base);
 }
 
 export function resolveUnitPrice(
