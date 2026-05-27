@@ -26,6 +26,7 @@ import {
   fetchBankTransactions,
   recordCashDepositApi,
 } from "@/lib/api/banking-fetch";
+import { ExpenseVoidActions } from "@/components/finance/expense-void-actions";
 import { PosBankDepositAccountPicker } from "@/components/pos/pos-payment-account-picker";
 import {
   createSupplierApi,
@@ -399,6 +400,16 @@ export function PosCashflowPanel({
                         {e.expense_date}
                         {e.description ? ` · ${e.description}` : ""}
                       </p>
+                      <div className="mt-1.5">
+                        <ExpenseVoidActions
+                          expenseId={e.id}
+                          category={e.category}
+                          description={e.description}
+                          amount={e.amount}
+                          expenseDate={e.expense_date}
+                          compact
+                        />
+                      </div>
                     </li>
                   ))}
                 </ul>

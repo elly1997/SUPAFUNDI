@@ -3,9 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { resolveExpenseAccountCode } from "@/lib/accounting/expense-coa";
-import { buildExpenseJournalLines } from "@/lib/accounting/posting-rules";
+import {
+  buildExpenseJournalLines,
+  buildReversingJournalLines,
+  type JournalLineInput,
+} from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { requireManagerContext } from "@/lib/server/require-manager";
 import { requireOrgContext } from "@/lib/server/org-context";
+import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { resolveBusinessDate } from "@/lib/utils/iso-date";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -27,7 +33,49 @@ export type ExpenseListRow = {
   amount: number;
   expense_date: string;
   payment_method: string | null;
+  outlet_id: string | null;
 };
+
+type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
+
+async function loadExpenseJournalLines(
+  supabase: Supabase,
+  expenseId: string
+): Promise<JournalLineInput[]> {
+  const { data: entry } = await supabase
+    .from("journal_entries")
+    .select("id")
+    .eq("source_id", expenseId)
+    .eq("source_type", "expense")
+    .eq("is_reversal", false)
+    .maybeSingle();
+  if (!entry) return [];
+
+  const { data: lines } = await supabase
+    .from("journal_entry_lines")
+    .select("account_id, debit, credit")
+    .eq("journal_entry_id", entry.id);
+  if (!lines?.length) return [];
+
+  const accountIds = Array.from(new Set(lines.map((l) => l.account_id)));
+  const { data: accounts } = await supabase
+    .from("chart_of_accounts")
+    .select("id, code")
+    .in("id", accountIds);
+  const codeById = new Map((accounts ?? []).map((a) => [a.id, a.code]));
+
+  return lines
+    .map((l) => {
+      const code = codeById.get(l.account_id);
+      if (!code) return null;
+      return {
+        accountCode: code,
+        debit: Number(l.debit),
+        credit: Number(l.credit),
+      };
+    })
+    .filter((l): l is JournalLineInput => l !== null);
+}
 
 export async function listExpenses(
   limit = 50,
@@ -41,7 +89,9 @@ export async function listExpenses(
   const supabase = await createServerSupabaseClient();
   let query = supabase
     .from("expenses")
-    .select("id, category, description, amount, expense_date, payment_method")
+    .select(
+      "id, category, description, amount, expense_date, payment_method, outlet_id"
+    )
     .eq("organization_id", ctx.organizationId);
   if (filters?.outletId) {
     query = query.eq("outlet_id", filters.outletId);
@@ -63,7 +113,67 @@ export async function listExpenses(
     amount: Number(e.amount),
     expense_date: e.expense_date,
     payment_method: e.payment_method,
+    outlet_id: e.outlet_id,
   }));
+}
+
+/** Reverse GL and remove a mis-posted expense (e.g. bank deposit recorded as bank charges). */
+export async function voidExpense(
+  expenseId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await requireManagerContext();
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: expense } = await supabase
+      .from("expenses")
+      .select("id, category, description, amount, expense_date, outlet_id")
+      .eq("id", expenseId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!expense) {
+      return { ok: false, message: "Expense not found." };
+    }
+
+    const originalLines = await loadExpenseJournalLines(supabase, expenseId);
+    if (originalLines.length > 0) {
+      const reverseLines = buildReversingJournalLines(originalLines);
+      const label = formatExpenseCategoryLabel(expense.category ?? "misc");
+      const journal = await postJournalEntry({
+        description: `Void expense: ${label} — ${expense.description ?? ""}`.trim(),
+        sourceType: "manual",
+        sourceId: expenseId,
+        outletId: expense.outlet_id ?? undefined,
+        entryDate: expense.expense_date,
+        lines: reverseLines,
+      });
+      if (!journal.ok) {
+        return { ok: false, message: journal.message };
+      }
+    }
+
+    const { error: delErr } = await supabase
+      .from("expenses")
+      .delete()
+      .eq("id", expenseId)
+      .eq("organization_id", ctx.organizationId);
+    if (delErr) {
+      return { ok: false, message: delErr.message };
+    }
+
+    revalidatePath("/finance/expenses");
+    revalidatePath("/finance/banking");
+    revalidatePath("/daily-closing");
+    revalidatePath("/pos");
+    revalidatePath("/reports");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Void expense failed",
+    };
+  }
 }
 
 export async function recordExpense(

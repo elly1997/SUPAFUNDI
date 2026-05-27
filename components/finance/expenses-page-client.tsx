@@ -31,6 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ExpenseVoidActions } from "@/components/finance/expense-void-actions";
 import { fetchExpenses, recordExpenseApi } from "@/lib/api/daily-ops-fetch";
 import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { formatTzs } from "@/lib/utils/currency";
@@ -101,6 +102,16 @@ export function ExpensesPageClient() {
                   </p>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">{e.expense_date}</p>
+                <div className="mt-2">
+                  <ExpenseVoidActions
+                    expenseId={e.id}
+                    category={e.category}
+                    description={e.description}
+                    amount={e.amount}
+                    expenseDate={e.expense_date}
+                    compact
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -112,6 +123,7 @@ export function ExpensesPageClient() {
                 <TableHead>Category</TableHead>
                 <TableHead>Description</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
+                <TableHead className="w-[100px]" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -124,6 +136,16 @@ export function ExpensesPageClient() {
                   <TableCell>{e.description ?? "—"}</TableCell>
                   <TableCell className="text-right">
                     {formatTzs(e.amount)}
+                  </TableCell>
+                  <TableCell>
+                    <ExpenseVoidActions
+                      expenseId={e.id}
+                      category={e.category}
+                      description={e.description}
+                      amount={e.amount}
+                      expenseDate={e.expense_date}
+                      compact
+                    />
                   </TableCell>
                 </TableRow>
               ))}
