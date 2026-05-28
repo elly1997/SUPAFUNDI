@@ -5,6 +5,7 @@ import {
   buildSaleDocumentPrintData,
   InvoicePrintButton,
 } from "@/components/invoices/invoice-print-button";
+import { IssueDraftSaleCard } from "@/components/invoices/issue-draft-sale-card";
 import { SaleVoidActions } from "@/components/sales/sale-void-actions";
 import { buttonVariants } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
@@ -158,6 +159,17 @@ export default async function InvoiceDetailPage({ params }: Props) {
           </Table>
         </CardContent>
       </Card>
+
+      {sale.status === "draft" &&
+      (sale.sale_type === "quotation" ||
+        sale.sale_type === "proforma" ||
+        sale.sale_type === "delivery_note") ? (
+        <IssueDraftSaleCard
+          saleId={sale.id}
+          totalAmount={sale.total_amount}
+          hasCustomer={!!sale.customer_id}
+        />
+      ) : null}
 
       {sale.status === "draft" ? (
         <p className="text-sm text-muted-foreground">

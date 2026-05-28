@@ -42,6 +42,7 @@ const createDraftInput = z.object({
   taxRate: z.number().min(0).max(100).default(18),
   cartDiscountAmount: z.number().nonnegative().default(0),
   notes: z.string().max(2000).optional(),
+  bankAccountLabel: z.string().max(200).optional(),
   lines: z.array(lineInput).min(1),
   validUntil: z.string().optional(),
 });
@@ -204,6 +205,9 @@ export async function createDraftSaleDocument(
     const notes = [
       input.notes?.trim(),
       input.validUntil ? `Valid until: ${input.validUntil}` : null,
+      input.bankAccountLabel?.trim()
+        ? `Preferred bank account: ${input.bankAccountLabel.trim()}`
+        : null,
     ]
       .filter(Boolean)
       .join("\n");
@@ -260,6 +264,99 @@ export async function createDraftSaleDocument(
     return {
       ok: false,
       message: e instanceof Error ? e.message : "Create failed",
+    };
+  }
+}
+
+const issueDraftInput = z.object({
+  saleId: z.string().uuid(),
+  paymentMethod: z.enum([
+    "cash",
+    "mpesa",
+    "card",
+    "bank_transfer",
+    "credit_account",
+    "cheque",
+  ]),
+  amountPaid: z.number().nonnegative(),
+  paymentAccountId: z.string().uuid().optional(),
+});
+
+export async function issueDraftDocument(
+  raw: z.infer<typeof issueDraftInput>
+): Promise<
+  | { ok: true; saleId: string; invoiceNo: string; balanceDue: number }
+  | { ok: false; message: string }
+> {
+  try {
+    const input = issueDraftInput.parse(raw);
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: draft } = await supabase
+      .from("sales")
+      .select(
+        "id, outlet_id, customer_id, sale_type, status, tax_rate, discount_amount, notes"
+      )
+      .eq("id", input.saleId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!draft) return { ok: false, message: "Draft document not found." };
+    if (draft.status !== "draft") {
+      return { ok: false, message: "Only draft documents can be issued." };
+    }
+    if (!draft.outlet_id) {
+      return { ok: false, message: "Draft is missing outlet information." };
+    }
+
+    const { data: items, error: itemsErr } = await supabase
+      .from("sale_items")
+      .select("product_id, product_name, quantity, unit_price, discount_pct")
+      .eq("sale_id", input.saleId);
+    if (itemsErr) return { ok: false, message: itemsErr.message };
+    if (!items?.length) return { ok: false, message: "Draft has no line items." };
+    if (items.some((i) => !i.product_id)) {
+      return {
+        ok: false,
+        message:
+          "This draft contains custom lines without stock items. Use catalog products only before issuing.",
+      };
+    }
+
+    const issued = await finalizeDraftSale(input.saleId, {
+      outletId: draft.outlet_id,
+      customerId: draft.customer_id,
+      saleType: draft.sale_type === "wholesale" ? "wholesale" : "retail",
+      lines: items.map((i) => ({
+        productId: i.product_id as string,
+        productName: i.product_name,
+        quantity: Number(i.quantity),
+        sellUnit: "pcs",
+        factorToBase: 1,
+        unitPrice: Number(i.unit_price),
+        discountPct: Number(i.discount_pct),
+      })),
+      cartDiscountAmount: Number(draft.discount_amount ?? 0),
+      taxRate: Number(draft.tax_rate ?? 18),
+      paymentMethod: input.paymentMethod,
+      amountPaid: input.amountPaid,
+      paymentAccountId: input.paymentAccountId,
+      notes: [draft.notes, `Issued from draft ${draft.sale_type}`]
+        .filter(Boolean)
+        .join("\n"),
+    });
+
+    if (!issued.ok) return issued;
+    return {
+      ok: true,
+      saleId: issued.saleId,
+      invoiceNo: issued.invoiceNo,
+      balanceDue: issued.balanceDue,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Issue failed",
     };
   }
 }

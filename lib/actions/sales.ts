@@ -821,8 +821,10 @@ export type SaleDetail = {
   change_given: number;
   balance_due: number;
   notes: string | null;
+  customer_id: string | null;
   customer_name: string | null;
   items: {
+    product_id: string | null;
     product_name: string;
     quantity: number;
     unit_price: number;
@@ -848,7 +850,7 @@ export async function getSaleById(saleId: string): Promise<SaleDetail | null> {
   const { data: items } = await supabase
     .from("sale_items")
     .select(
-      "product_name, quantity, unit_price, discount_pct, total_price"
+      "product_id, product_name, quantity, unit_price, discount_pct, total_price"
     )
     .eq("sale_id", saleId);
   let customerName: string | null = null;
@@ -875,8 +877,10 @@ export async function getSaleById(saleId: string): Promise<SaleDetail | null> {
     change_given: Number(sale.change_given),
     balance_due: Number(sale.balance_due),
     notes: sale.notes,
+    customer_id: sale.customer_id,
     customer_name: customerName,
     items: (items ?? []).map((i) => ({
+      product_id: i.product_id,
       product_name: i.product_name,
       quantity: Number(i.quantity),
       unit_price: Number(i.unit_price),

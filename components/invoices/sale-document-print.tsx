@@ -22,6 +22,7 @@ export type SaleDocumentPrintData = {
   invoiceNo: string;
   documentDate: string;
   validUntil?: string | null;
+  bankAccountLabel?: string | null;
   customerName?: string | null;
   status: string;
   lines: SaleDocumentPrintLine[];
@@ -45,6 +46,14 @@ function parseValidUntil(notes: string | null | undefined): string | null {
   if (!notes) return null;
   const m = notes.match(/Valid until:\s*(\d{4}-\d{2}-\d{2})/i);
   return m?.[1] ?? null;
+}
+
+function parsePreferredBankAccount(
+  notes: string | null | undefined
+): string | null {
+  if (!notes) return null;
+  const m = notes.match(/Preferred bank account:\s*(.+)$/im);
+  return m?.[1]?.trim() ?? null;
 }
 
 export function buildSaleDocumentPrintData(input: {
@@ -83,6 +92,7 @@ export function buildSaleDocumentPrintData(input: {
     invoiceNo: input.invoiceNo,
     documentDate: input.documentDate,
     validUntil: parseValidUntil(input.notes),
+    bankAccountLabel: parsePreferredBankAccount(input.notes),
     customerName: input.customerName,
     status: input.status,
     lines: input.items.map((i) => ({
@@ -104,7 +114,7 @@ export function printSaleDocument(data: SaleDocumentPrintData): boolean {
   const title = saleTypeLabel(data.saleType);
   const isDraft = data.status === "draft";
   const contact = [
-    data.address,
+    data.address || "186 Arusha, Tanzania",
     data.phone ? `Tel: ${data.phone}` : null,
     data.email,
     data.taxId ? `TIN: ${data.taxId}` : null,
@@ -165,6 +175,11 @@ ${isDraft ? '<div class="draft-banner">DRAFT — Not a tax invoice until finaliz
     <div class="meta-block"><strong>Document no:</strong> ${escapeHtml(data.invoiceNo)}</div>
     <div class="meta-block"><strong>Date:</strong> ${escapeHtml(data.documentDate)}</div>
     ${data.validUntil ? `<div class="meta-block"><strong>Valid until:</strong> ${escapeHtml(data.validUntil)}</div>` : ""}
+    ${
+      data.bankAccountLabel
+        ? `<div class="meta-block"><strong>Bank account:</strong> ${escapeHtml(data.bankAccountLabel)}</div>`
+        : ""
+    }
   </div>
   <div class="meta-block" style="text-align:right">
     ${data.customerName ? `<div><strong>Customer:</strong><br/>${escapeHtml(data.customerName)}</div>` : "<div><strong>Customer:</strong> Walk-in</div>"}

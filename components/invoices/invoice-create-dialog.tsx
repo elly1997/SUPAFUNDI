@@ -36,6 +36,7 @@ import { saleTypeLabel } from "@/lib/constants/sale-documents";
 import { createDraftSaleDocument } from "@/lib/actions/invoices";
 import { fetchPosCustomers } from "@/lib/api/customers-fetch";
 import { fetchProductPriceCatalog } from "@/lib/api/inventory-catalog-fetch";
+import { fetchPaymentAccounts } from "@/lib/api/banking-fetch";
 import { useTaxRate } from "@/hooks/useTaxRate";
 import { computeLineTotal } from "@/lib/utils/calculations";
 import { formatTzs } from "@/lib/utils/currency";
@@ -73,6 +74,7 @@ export function InvoiceCreateDialog({
   const outletId = useAuthStore((s) => s.activeOutletId);
   const [customerId, setCustomerId] = useState("");
   const [validUntil, setValidUntil] = useState("");
+  const [bankAccountId, setBankAccountId] = useState("");
   const [pickProduct, setPickProduct] = useState("");
   const [qty, setQty] = useState(1);
   const [unitPrice, setUnitPrice] = useState(0);
@@ -89,6 +91,11 @@ export function InvoiceCreateDialog({
     queryKey: ["product-price-catalog", outletId],
     queryFn: () => fetchProductPriceCatalog(outletId),
     enabled: open && !!outletId,
+  });
+  const { data: bankAccounts = [] } = useQuery({
+    queryKey: ["payment-accounts"],
+    queryFn: fetchPaymentAccounts,
+    enabled: open,
   });
 
   const productOptions = useMemo(
@@ -114,6 +121,7 @@ export function InvoiceCreateDialog({
     setQty(1);
     setUnitPrice(0);
     setCustomName("");
+    setBankAccountId("");
     setLines([]);
   }, [open, outletId]);
 
@@ -247,6 +255,8 @@ export function InvoiceCreateDialog({
               saleType: defaultType,
               taxRate,
               cartDiscountAmount: 0,
+              bankAccountLabel:
+                bankAccounts.find((a) => a.id === bankAccountId)?.name || undefined,
               lines: lines.map((l) => ({
                 productId: l.productId,
                 productName: l.productName,
@@ -287,6 +297,29 @@ export function InvoiceCreateDialog({
                 value={validUntil}
                 onChange={(e) => setValidUntil(e.target.value)}
               />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Bank account for quotation (optional)</Label>
+              <Select
+                value={bankAccountId || "__none__"}
+                onValueChange={(v) =>
+                  setBankAccountId(!v || v === "__none__" ? "" : v)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select bank account" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">No bank account shown</SelectItem>
+                  {bankAccounts
+                    .filter((a) => a.is_active)
+                    .map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
