@@ -55,3 +55,31 @@ export function catalogJsonToImportRows(
     notes: p.notes,
   }));
 }
+
+export async function downloadBusinessCsv(params: {
+  type: import("@/lib/backup/business-export-types").BusinessExportType;
+  fromDate?: string;
+  toDate?: string;
+  outletId?: string | null;
+}): Promise<void> {
+  const q = new URLSearchParams({ type: params.type });
+  if (params.fromDate) q.set("fromDate", params.fromDate);
+  if (params.toDate) q.set("toDate", params.toDate);
+  if (params.outletId) q.set("outletId", params.outletId);
+
+  const res = await fetch(`/api/backup/business?${q}`, {
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  const filename = match?.[1] ?? `${params.type}.csv`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}

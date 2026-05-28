@@ -517,7 +517,9 @@ export type Database = {
           status: string;
           reference_no: string | null;
           received_by: string | null;
+          payment_date: string;
           payment_account_id: string | null;
+          created_at: string;
         };
         Insert: {
           id?: string;
@@ -531,10 +533,12 @@ export type Database = {
           received_by?: string | null;
           payment_date?: string;
           payment_account_id?: string | null;
+          created_at?: string;
         };
         Update: {
           status?: string;
           reference_no?: string | null;
+          payment_date?: string;
         };
         Relationships: [];
       };
