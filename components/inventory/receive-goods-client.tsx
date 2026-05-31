@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { SearchableSelect } from "@/components/shared/searchable-select";
+import { IncomingTransfersPanel } from "@/components/inventory/incoming-transfers-panel";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -356,6 +357,8 @@ export function ReceiveGoodsClient() {
           Supplier registry
         </Link>
       </div>
+
+      <IncomingTransfersPanel outletId={outletId || null} />
 
       <Card className="overflow-visible">
         <CardHeader>

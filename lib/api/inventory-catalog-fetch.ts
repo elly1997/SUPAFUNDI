@@ -232,3 +232,17 @@ export async function patchStockQuantity(params: {
   });
   if (!res.ok) throw new Error(await parseError(res));
 }
+
+export async function deleteProductApi(
+  productId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await fetch(`/api/inventory/products/${productId}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  const body = (await res.json()) as { ok?: boolean; message?: string };
+  if (!res.ok || !body.ok) {
+    return { ok: false, message: body.message ?? "Could not delete product" };
+  }
+  return { ok: true };
+}

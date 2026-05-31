@@ -3,19 +3,30 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowLeftRight,
   ClipboardList,
   Download,
   FileSpreadsheet,
   FileText,
   Loader2,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
+import { IncomingTransfersPanel } from "@/components/inventory/incoming-transfers-panel";
 import { StockItemStatementDialog } from "@/components/inventory/stock-item-statement-dialog";
+import { StockTransferDialog } from "@/components/inventory/stock-transfer-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -40,7 +51,8 @@ import {
   CatalogCategoryTableHeader,
   stockSectionValue,
 } from "@/components/inventory/catalog-category-table-header";
-import { patchStockQuantity } from "@/lib/api/inventory-catalog-fetch";
+import { patchStockQuantity, deleteProductApi } from "@/lib/api/inventory-catalog-fetch";
+import { canManageSettings, isUserRole } from "@/lib/auth/roles";
 import { groupCatalogByCategory } from "@/lib/products/catalog-grouping";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { suggestPurchaseOrderFromStock } from "@/lib/actions/purchase-orders";
@@ -68,9 +80,13 @@ const PAGE_SIZE = 50;
 
 export function StockPageClient() {
   const outletId = useAuthStore((s) => s.activeOutletId);
+  const role = useAuthStore((s) => s.session?.role ?? null);
+  const canManage = canManageSettings(isUserRole(role ?? "") ? role : null);
   const router = useRouter();
   const queryClient = useQueryClient();
   const [statementRow, setStatementRow] = useState<StockLevelRow | null>(null);
+  const [transferRow, setTransferRow] = useState<StockLevelRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<StockLevelRow | null>(null);
   const [savingQtyId, setSavingQtyId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -135,6 +151,18 @@ export function StockPageClient() {
     onError: (e) => {
       toast.error(e instanceof Error ? e.message : "Update failed");
       void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (productId: string) => deleteProductApi(productId),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Product removed from catalogue");
+        setDeleteTarget(null);
+        void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+        void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
+      } else toast.error(r.message);
     },
   });
 
@@ -245,6 +273,8 @@ export function StockPageClient() {
         />
       </div>
 
+      <IncomingTransfersPanel outletId={outletId} compact />
+
       {attentionCount > 0 && (
         <Card className="border-warning/30 bg-warning/5">
           <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
@@ -300,12 +330,21 @@ export function StockPageClient() {
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle>Stock on hand</CardTitle>
-          <Link
-            href="/inventory/receive"
-            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
-          >
-            Receive goods
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/inventory/transfers"
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+            >
+              <ArrowLeftRight className="mr-1 size-3.5" />
+              Transfers
+            </Link>
+            <Link
+              href="/inventory/receive"
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+            >
+              Receive goods
+            </Link>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -345,6 +384,8 @@ export function StockPageClient() {
                         });
                       }}
                       onStatement={() => setStatementRow(r)}
+                      onTransfer={() => setTransferRow(r)}
+                      onDelete={canManage ? () => setDeleteTarget(r) : undefined}
                     />
                   ))}
                 </div>
@@ -393,6 +434,8 @@ export function StockPageClient() {
                           });
                         }}
                         onStatement={() => setStatementRow(r)}
+                        onTransfer={() => setTransferRow(r)}
+                        onDelete={canManage ? () => setDeleteTarget(r) : undefined}
                       />
                     ))}
                   </Fragment>
@@ -447,6 +490,45 @@ export function StockPageClient() {
         defaultOutletId={defaultOutletId}
         onImported={invalidateAfterImport}
       />
+
+      <StockTransferDialog
+        open={!!transferRow}
+        onOpenChange={(o) => !o && setTransferRow(null)}
+        row={transferRow}
+        fromOutletId={outletId}
+        outlets={outlets}
+        onSuccess={() => {
+          void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+          void queryClient.invalidateQueries({ queryKey: ["incoming-transfers"] });
+          void queryClient.invalidateQueries({ queryKey: ["stock-transfers"] });
+        }}
+      />
+
+      <Dialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Remove product from shop?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Delete <strong className="text-foreground">{deleteTarget?.product_name}</strong>?
+            This is only allowed when stock is zero across all outlets.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMut.isPending || !deleteTarget}
+              onClick={() =>
+                deleteTarget && deleteMut.mutate(deleteTarget.product_id)
+              }
+            >
+              {deleteMut.isPending ? "Removing…" : "Delete product"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -457,12 +539,16 @@ function StockRow({
   saving,
   onQtySave,
   onStatement,
+  onTransfer,
+  onDelete,
 }: {
   row: StockLevelRow;
   outletId: string | null;
   saving: boolean;
   onQtySave: (qty: number) => void;
   onStatement: () => void;
+  onTransfer?: () => void;
+  onDelete?: () => void;
 }) {
   const [qty, setQty] = useState(String(row.quantity));
   useEffect(() => {
@@ -514,7 +600,19 @@ function StockRow({
         {formatTzs(row.retail_stock_value)}
       </TableCell>
       <TableCell className="text-right">
-        <div className="flex justify-end gap-1">
+        <div className="flex flex-wrap justify-end gap-1">
+          {row.quantity > 0 && onTransfer ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onTransfer}
+              title="Transfer to another outlet"
+            >
+              <ArrowLeftRight className="mr-1 size-3.5" />
+              Transfer
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="outline"
@@ -525,6 +623,18 @@ function StockRow({
             <FileText className="mr-1 size-3.5" />
             Statement
           </Button>
+          {row.quantity === 0 && onDelete ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-destructive"
+              onClick={onDelete}
+              title="Delete product (zero stock only)"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          ) : null}
         </div>
       </TableCell>
     </TableRow>
@@ -537,12 +647,16 @@ function StockCard({
   saving,
   onQtySave,
   onStatement,
+  onTransfer,
+  onDelete,
 }: {
   row: StockLevelRow;
   outletId: string | null;
   saving: boolean;
   onQtySave: (qty: number) => void;
   onStatement: () => void;
+  onTransfer?: () => void;
+  onDelete?: () => void;
 }) {
   const [qty, setQty] = useState(String(row.quantity));
   useEffect(() => {
@@ -587,8 +701,8 @@ function StockCard({
         </div>
       </div>
 
-      <div className="mt-3 flex items-end gap-2">
-        <div className="flex-1">
+      <div className="mt-3 flex flex-wrap items-end gap-2">
+        <div className="min-w-[120px] flex-1">
           <label className="text-xs text-muted-foreground">Quantity</label>
           <Input
             type="number"
@@ -606,6 +720,12 @@ function StockCard({
             disabled={!outletId}
           />
         </div>
+        {row.quantity > 0 && onTransfer ? (
+          <Button type="button" variant="secondary" size="sm" onClick={onTransfer}>
+            <ArrowLeftRight className="mr-1 size-3.5" />
+            Transfer
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="outline"
@@ -616,6 +736,17 @@ function StockCard({
           <FileText className="mr-1 size-3.5" />
           Statement
         </Button>
+        {row.quantity === 0 && onDelete ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="text-destructive"
+            onClick={onDelete}
+          >
+            <Trash2 className="size-3.5" />
+          </Button>
+        ) : null}
       </div>
     </div>
   );

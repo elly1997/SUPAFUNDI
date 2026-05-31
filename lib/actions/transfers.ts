@@ -276,6 +276,110 @@ export async function createStockTransfer(
   }
 }
 
+export type IncomingTransferRow = TransferListRow & {
+  from_outlet_id: string | null;
+  to_outlet_id: string | null;
+};
+
+export async function listIncomingStockTransfers(
+  outletId: string
+): Promise<IncomingTransferRow[]> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("stock_transfers")
+    .select(
+      "id, reference_no, status, from_outlet_id, to_outlet_id, created_at, dispatched_at"
+    )
+    .eq("organization_id", ctx.organizationId)
+    .eq("to_outlet_id", outletId)
+    .eq("status", "dispatched")
+    .order("dispatched_at", { ascending: false })
+    .limit(50);
+  if (error) throw new Error(error.message);
+
+  const rows = data ?? [];
+  const outletIds = Array.from(
+    new Set(
+      rows
+        .flatMap((r) => [r.from_outlet_id, r.to_outlet_id])
+        .filter((id): id is string => !!id)
+    )
+  );
+  const { data: outlets } = outletIds.length
+    ? await supabase.from("outlets").select("id, name").in("id", outletIds)
+    : { data: [] };
+  const outletMap = new Map((outlets ?? []).map((o) => [o.id, o.name]));
+
+  const transferIds = rows.map((r) => r.id);
+  const { data: itemCounts } = transferIds.length
+    ? await supabase
+        .from("stock_transfer_items")
+        .select("transfer_id")
+        .in("transfer_id", transferIds)
+    : { data: [] };
+  const countMap = new Map<string, number>();
+  for (const row of itemCounts ?? []) {
+    countMap.set(row.transfer_id, (countMap.get(row.transfer_id) ?? 0) + 1);
+  }
+
+  return rows.map((r) => ({
+    id: r.id,
+    reference_no: r.reference_no,
+    status: r.status,
+    from_outlet_id: r.from_outlet_id,
+    to_outlet_id: r.to_outlet_id,
+    from_outlet_name: r.from_outlet_id
+      ? (outletMap.get(r.from_outlet_id) ?? null)
+      : null,
+    to_outlet_name: r.to_outlet_id
+      ? (outletMap.get(r.to_outlet_id) ?? null)
+      : null,
+    created_at: r.created_at,
+    item_count: countMap.get(r.id) ?? 0,
+  }));
+}
+
+/** Create, approve, and dispatch in one step (stock list quick transfer). */
+export async function transferStockFromList(
+  raw: z.infer<typeof createTransferInput>
+): Promise<
+  | { ok: true; transferId: string; referenceNo: string | null }
+  | { ok: false; message: string }
+> {
+  const created = await createStockTransfer(raw);
+  if (!created.ok) return created;
+
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const { error: approveErr } = await supabase
+    .from("stock_transfers")
+    .update({ status: "approved", approved_by: ctx.userId })
+    .eq("id", created.transferId);
+  if (approveErr) {
+    await supabase.from("stock_transfers").delete().eq("id", created.transferId);
+    return { ok: false, message: approveErr.message };
+  }
+
+  const dispatched = await dispatchStockTransfer(created.transferId);
+  if (!dispatched.ok) {
+    await supabase
+      .from("stock_transfers")
+      .update({ status: "cancelled" })
+      .eq("id", created.transferId);
+    return dispatched;
+  }
+
+  const detail = await getStockTransferById(created.transferId);
+  revalidatePath("/inventory/receive");
+  revalidatePath("/inventory/stock");
+  return {
+    ok: true,
+    transferId: created.transferId,
+    referenceNo: detail?.reference_no ?? null,
+  };
+}
+
 export async function approveStockTransfer(
   transferId: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
@@ -374,6 +478,7 @@ export async function dispatchStockTransfer(
 
     revalidatePath("/inventory/transfers");
     revalidatePath("/inventory/stock");
+    revalidatePath("/inventory/receive");
     return { ok: true };
   } catch (e) {
     return {
@@ -462,6 +567,7 @@ export async function receiveStockTransfer(
 
     revalidatePath("/inventory/transfers");
     revalidatePath("/inventory/stock");
+    revalidatePath("/inventory/receive");
     return { ok: true };
   } catch (e) {
     return {
