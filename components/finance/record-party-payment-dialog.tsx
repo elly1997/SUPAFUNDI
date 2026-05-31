@@ -50,7 +50,7 @@ async function recordCustomerPaymentApi(
     { ok: true } | { ok: false; message: string }
   >;
 }
-import { formatTzs } from "@/lib/utils/currency";
+import { formatDateEAT, formatTzs } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type Props = {
@@ -185,14 +185,14 @@ export function RecordPartyPaymentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+      <DialogContent className="max-h-[90vh] w-full overflow-x-hidden overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>
+          <DialogTitle className="break-words pr-8">
             Pay {partyType === "supplier" ? "supplier" : "customer"} —{" "}
             {partyName}
           </DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <p className="text-sm text-muted-foreground">
             Outstanding:{" "}
             <span className="font-money font-semibold text-warning">
@@ -270,10 +270,10 @@ export function RecordPartyPaymentDialog({
           </div>
 
           {partyType === "customer" && invoices.length > 0 && (
-            <div className="space-y-2 rounded-lg border border-border p-3">
-              <div className="flex items-center justify-between gap-2">
+            <div className="space-y-3 rounded-lg border border-border p-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <Label className="text-sm">Allocate to invoices</Label>
-                <label className="flex items-center gap-2 text-xs">
+                <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                   <input
                     type="checkbox"
                     checked={payAll}
@@ -284,24 +284,30 @@ export function RecordPartyPaymentDialog({
                       }
                     }}
                   />
-                  Pay all open ({formatTzs(invoiceTotal)})
+                  <span className="whitespace-nowrap">
+                    Pay all open ({formatTzs(invoiceTotal)})
+                  </span>
                 </label>
               </div>
               {!payAll && (
-                <ul className="max-h-40 space-y-2 overflow-y-auto text-sm">
+                <ul className="max-h-48 space-y-2 overflow-y-auto text-sm">
                   {invoices.map((inv) => (
                     <li
                       key={inv.saleId}
-                      className="flex flex-wrap items-center gap-2"
+                      className="grid gap-2 rounded-md border border-border/60 bg-muted/20 p-2 sm:grid-cols-[minmax(0,1fr)_7rem] sm:items-center"
                     >
-                      <span className="min-w-0 flex-1 truncate">
-                        {inv.invoiceNo} · {inv.saleDate} ·{" "}
-                        {formatTzs(inv.balanceDue)}
-                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{inv.invoiceNo}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatDateEAT(inv.saleDate)} · Due{" "}
+                          {formatTzs(inv.balanceDue)}
+                        </p>
+                      </div>
                       <Input
                         type="number"
-                        className="h-8 w-28 font-money"
-                        placeholder="Amt"
+                        min={0}
+                        className="h-9 w-full font-money sm:w-full"
+                        placeholder="Amount"
                         value={selected[inv.saleId] ?? ""}
                         onChange={(e) =>
                           setSelected((s) => ({
@@ -320,11 +326,18 @@ export function RecordPartyPaymentDialog({
             </div>
           )}
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+        <DialogFooter className="gap-2 sm:gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full sm:w-auto"
+            onClick={() => onOpenChange(false)}
+          >
             Cancel
           </Button>
           <Button
+            type="button"
+            className="w-full sm:w-auto"
             disabled={!amount || mut.isPending || (needsBank && !bankAccountId)}
             onClick={() => mut.mutate()}
           >
