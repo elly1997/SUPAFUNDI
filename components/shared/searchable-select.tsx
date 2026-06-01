@@ -19,6 +19,8 @@ export type SearchableSelectOption = {
   label: string;
   /** Extra text used for filtering (e.g. SKU, code). */
   keywords?: string;
+  /** Right-aligned secondary text (e.g. stock on hand). */
+  hint?: string;
 };
 
 type PanelPosition = {
@@ -218,7 +220,7 @@ export function SearchableSelect({
                   role="option"
                   aria-selected={o.value === value}
                   className={cn(
-                    "w-full rounded-md px-2 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground",
+                    "flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground",
                     o.value === value && "bg-primary/15 font-medium text-primary"
                   )}
                   onClick={() => {
@@ -226,7 +228,12 @@ export function SearchableSelect({
                     close();
                   }}
                 >
-                  {o.label}
+                  <span className="min-w-0 truncate">{o.label}</span>
+                  {o.hint ? (
+                    <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                      {o.hint}
+                    </span>
+                  ) : null}
                 </button>
               </li>
             ))

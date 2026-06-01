@@ -54,6 +54,8 @@ type ReceivePickProduct = {
   name: string;
   code: string | null;
   costPrice: number;
+  unit: string;
+  stockQty: number;
 };
 
 const selectFieldClass =
@@ -122,6 +124,8 @@ export function ReceiveGoodsClient() {
       name: p.name,
       code: p.code,
       costPrice: p.costPrice,
+      unit: p.unit,
+      stockQty: p.stockQty,
     }));
     if (pendingPick && !rows.some((r) => r.id === pendingPick.id)) {
       return [pendingPick, ...rows];
@@ -211,7 +215,8 @@ export function ReceiveGoodsClient() {
       products.map((p) => ({
         value: p.id,
         label: p.code ? `${p.name} (${p.code})` : p.name,
-        keywords: `${p.name} ${p.code ?? ""}`,
+        hint: `${p.stockQty} ${p.unit}`,
+        keywords: `${p.name} ${p.code ?? ""} ${p.stockQty}`,
       })),
     [products]
   );
@@ -220,7 +225,8 @@ export function ReceiveGoodsClient() {
     if (!pickProduct) return undefined;
     const p = products.find((x) => x.id === pickProduct);
     if (!p) return undefined;
-    return p.code ? `${p.name} (${p.code})` : p.name;
+    const base = p.code ? `${p.name} (${p.code})` : p.name;
+    return `${base} · ${p.stockQty} ${p.unit}`;
   }, [pickProduct, products]);
 
   const addProductMut = useMutation({
@@ -245,6 +251,8 @@ export function ReceiveGoodsClient() {
           name: createdName,
           code: r.code ?? null,
           costPrice: unitCost > 0 ? unitCost : 0,
+          unit: "pcs",
+          stockQty: 0,
         };
         setPendingPick(created);
         setPickProduct(r.productId);

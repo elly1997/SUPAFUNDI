@@ -103,7 +103,8 @@ export function InvoiceCreateDialog({
       catalog.map((p) => ({
         value: p.id,
         label: p.code ? `${p.name} (${p.code})` : p.name,
-        keywords: `${p.name} ${p.code ?? ""} ${p.categoryName}`,
+        hint: `${p.stockQty} ${p.unit}`,
+        keywords: `${p.name} ${p.code ?? ""} ${p.categoryName} ${p.stockQty}`,
       })),
     [catalog]
   );
@@ -112,7 +113,8 @@ export function InvoiceCreateDialog({
     if (!pickProduct) return undefined;
     const p = catalog.find((x) => x.id === pickProduct);
     if (!p) return undefined;
-    return p.code ? `${p.name} (${p.code})` : p.name;
+    const base = p.code ? `${p.name} (${p.code})` : p.name;
+    return `${base} · ${p.stockQty} ${p.unit}`;
   }, [pickProduct, catalog]);
 
   useEffect(() => {
