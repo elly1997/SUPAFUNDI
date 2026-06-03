@@ -170,7 +170,9 @@ export async function getCustomerStatement(
   for (const e of ledger ?? []) {
     const debit = Number(e.debit);
     const credit = Number(e.credit);
-    const isDepositApplied = e.reference_type === "deposit_applied";
+    const isDepositApplied =
+      e.reference_type === "deposit_applied" ||
+      e.reference_type === "deposit_to_credit";
     raw.push({
       id: `led-${e.id}`,
       date: String(e.entry_date ?? e.created_at).slice(0, 10),

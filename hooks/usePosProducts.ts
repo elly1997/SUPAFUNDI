@@ -99,7 +99,7 @@ function mapCatalogProducts(
       wholesalePrice: p.wholesalePrice,
       displayPrice,
       stockQty: p.stockQty,
-      costPrice: 0,
+      costPrice: p.costPrice,
       categoryId: p.categoryId,
       recentSoldQty: p.recentSoldQty ?? 0,
       avgDailySold: p.avgDailySold ?? 0,

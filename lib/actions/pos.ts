@@ -31,6 +31,7 @@ export type PosCatalogRow = {
   retailPrice: number;
   wholesalePrice: number;
   stockQty: number;
+  costPrice: number;
   recentSoldQty: number;
   avgDailySold: number;
 };
@@ -123,7 +124,7 @@ export async function listPosCatalogProducts(
     fetchByInChunks(ids, async (chunk) => {
       const { data, error } = await supabase
         .from("stock")
-        .select("product_id, quantity")
+        .select("product_id, quantity, cost_price")
         .eq("organization_id", ctx.organizationId)
         .eq("outlet_id", input.outletId)
         .in("product_id", chunk);
@@ -142,7 +143,7 @@ export async function listPosCatalogProducts(
   const stockMap = new Map(
     stockRows.map((s) => [
       s.product_id,
-      { qty: Number(s.quantity) },
+      { qty: Number(s.quantity), cost: Number(s.cost_price ?? 0) },
     ])
   );
 
@@ -162,6 +163,7 @@ export async function listPosCatalogProducts(
         retailPrice,
         wholesalePrice,
         stockQty: stock?.qty ?? 0,
+        costPrice: stock?.cost ?? 0,
         recentSoldQty,
         avgDailySold: Math.round((recentSoldQty / 30) * 10) / 10,
       };

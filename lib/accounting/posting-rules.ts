@@ -144,26 +144,52 @@ export function buildCustomerDepositJournalLines(
   amount: number,
   paymentMethod: "cash" | "mpesa" | "bank_transfer"
 ): JournalLineInput[] {
+  return buildCustomerDepositReceiptJournalLines(
+    amount,
+    0,
+    amount,
+    paymentMethod
+  );
+}
+
+/** Deposit receipt split between AR (credit payment) and deposit liability. */
+export function buildCustomerDepositReceiptJournalLines(
+  totalAmount: number,
+  toCredit: number,
+  toDeposit: number,
+  paymentMethod: "cash" | "mpesa" | "bank_transfer"
+): JournalLineInput[] {
   const asset =
     paymentMethod === "mpesa"
       ? SYSTEM_ACCOUNT_CODES.mpesa
       : paymentMethod === "bank_transfer"
         ? SYSTEM_ACCOUNT_CODES.bank
         : SYSTEM_ACCOUNT_CODES.cash;
-  return [
+  const lines: JournalLineInput[] = [
     {
       accountCode: asset,
-      debit: amount,
+      debit: totalAmount,
       credit: 0,
       memo: "Customer deposit received",
     },
-    {
+  ];
+  if (toCredit > 0) {
+    lines.push({
+      accountCode: SYSTEM_ACCOUNT_CODES.ar,
+      debit: 0,
+      credit: toCredit,
+      memo: "Applied to credit balance",
+    });
+  }
+  if (toDeposit > 0) {
+    lines.push({
       accountCode: SYSTEM_ACCOUNT_CODES.customerDeposits,
       debit: 0,
-      credit: amount,
+      credit: toDeposit,
       memo: "Customer deposit liability",
-    },
-  ];
+    });
+  }
+  return lines;
 }
 
 /** Daily cash count variance: positive = over, negative = short. */

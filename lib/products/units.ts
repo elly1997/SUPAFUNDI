@@ -186,6 +186,24 @@ export function maxSellQtyInUnit(
   return floorSellQty(baseStockQty / unit.factorToBase);
 }
 
+/** Cart / sale line → minimal unit shape for stock conversion. */
+export function cartLineAsUnit(line: {
+  unit: string;
+  factorToBase: number;
+  unitsPerBase?: boolean;
+}): ProductUnitOption {
+  return {
+    id: "",
+    unitLabel: line.unit,
+    factorToBase: line.factorToBase,
+    isBase: line.factorToBase === 1 && !line.unitsPerBase,
+    unitsPerBase: line.unitsPerBase,
+    retailPrice: null,
+    wholesalePrice: null,
+    sortOrder: 0,
+  };
+}
+
 /** How much base stock is consumed when selling qty in this unit. */
 export function sellQtyToBaseQty(
   sellQty: number,

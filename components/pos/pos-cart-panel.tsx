@@ -13,10 +13,12 @@ import {
 } from "@/lib/products/units";
 import { computeLineTotal } from "@/lib/utils/calculations";
 import { formatTzs } from "@/lib/utils/currency";
+import { PosCartMargin } from "@/components/pos/pos-cart-margin";
 import { PosInlineCheckout } from "@/components/pos/pos-inline-checkout";
 import type { PaymentMethod } from "@/components/pos/pos-payment-chips";
 import type { PosCustomer } from "@/lib/api/customers-fetch";
 import type { AddProductResult, CartLine } from "@/stores/cartStore";
+import type { CartMarginSummary } from "@/lib/utils/cart-margin";
 
 type Props = {
   lines: CartLine[];
@@ -49,6 +51,8 @@ type Props = {
   onCustomerSelect?: (customer: PosCustomer | null) => void;
   paymentAccountId?: string;
   onPaymentAccountIdChange?: (id: string) => void;
+  margin?: CartMarginSummary | null;
+  listMargin?: CartMarginSummary | null;
 };
 
 export function PosCartPanel({
@@ -82,6 +86,8 @@ export function PosCartPanel({
   onCustomerSelect,
   paymentAccountId = "",
   onPaymentAccountIdChange,
+  margin = null,
+  listMargin = null,
 }: Props) {
   const itemCount = lines.reduce((s, l) => s + l.quantity, 0);
   const chargeAmount = Number(chargeTotal);
@@ -254,6 +260,19 @@ export function PosCartPanel({
               : `Overcharge ${formatTzs(-adjustment)} vs calculated`}
           </p>
         )}
+
+        {margin ? (
+          <PosCartMargin
+            margin={margin}
+            listMargin={listMargin}
+            showListComparison={adjustment !== 0}
+          />
+        ) : lines.length > 0 ? (
+          <p className="form-hint text-[10px] leading-snug">
+            Set buying prices in inventory to see estimated margin.
+          </p>
+        ) : null}
+
         <div className="flex items-baseline justify-between">
           <span className="text-xs text-muted-foreground">Charge</span>
           <span className="font-money text-lg font-bold tabular-nums text-primary">

@@ -15,6 +15,8 @@ export type CartLine = {
   unitPrice: number;
   discountPct: number;
   availableStock: number;
+  /** Outlet stock cost per base unit (for margin estimate). */
+  baseCostPrice: number;
   pricingMode?: PosPricingMode;
 };
 
@@ -41,6 +43,7 @@ type CartState = {
   syncLinePrices: (
     prices: Map<string, { unitPrice: number; pricingMode: PosPricingMode }>
   ) => number;
+  syncLineCosts: (costs: Map<string, number>) => number;
   clear: () => void;
 };
 
@@ -75,6 +78,7 @@ export const useCartStore = create<CartState>((set, get) => ({
                 unitPrice: product.unitPrice,
                 pricingMode: product.pricingMode,
                 availableStock: product.availableStock,
+                baseCostPrice: product.baseCostPrice,
               }
             : l
         ),
@@ -96,6 +100,7 @@ export const useCartStore = create<CartState>((set, get) => ({
           lineKey,
           quantity: qty,
           discountPct: 0,
+          baseCostPrice: product.baseCostPrice ?? 0,
         },
       ],
     });
@@ -153,6 +158,20 @@ export const useCartStore = create<CartState>((set, get) => ({
         unitPrice: next.unitPrice,
         pricingMode: next.pricingMode,
       };
+    });
+    if (updated > 0) {
+      set({ lines: nextLines });
+    }
+    return updated;
+  },
+  syncLineCosts: (costs) => {
+    const s = get();
+    let updated = 0;
+    const nextLines = s.lines.map((l) => {
+      const nextCost = costs.get(l.productId);
+      if (nextCost == null || nextCost === l.baseCostPrice) return l;
+      updated += 1;
+      return { ...l, baseCostPrice: nextCost };
     });
     if (updated > 0) {
       set({ lines: nextLines });

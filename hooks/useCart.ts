@@ -16,6 +16,7 @@ export function useCart(taxRate = 18, cartDiscountAmount = 0) {
   const setDiscountPct = useCartStore((s) => s.setDiscountPct);
   const clear = useCartStore((s) => s.clear);
   const syncLinePrices = useCartStore((s) => s.syncLinePrices);
+  const syncLineCosts = useCartStore((s) => s.syncLineCosts);
 
   const totals = useMemo(() => {
     const lineTotals = lines.map((l: CartLine) =>
@@ -39,6 +40,7 @@ export function useCart(taxRate = 18, cartDiscountAmount = 0) {
     setDiscountPct,
     clear,
     syncLinePrices,
+    syncLineCosts,
     ...totals,
   };
 }

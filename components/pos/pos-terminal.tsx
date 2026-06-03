@@ -44,7 +44,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useCart } from "@/hooks/useCart";
-import { useTaxRate } from "@/hooks/useTaxRate";
+import { useTaxRate, useVatEnabled } from "@/hooks/useTaxRate";
 import { usePersistedCart } from "@/hooks/usePersistedCart";
 import {
   usePosProducts,
@@ -61,6 +61,7 @@ import {
 } from "@/lib/products/units";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
+import { computeCartMargin } from "@/lib/utils/cart-margin";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
@@ -106,6 +107,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const [chargeTotal, setChargeTotal] = useState("");
   const [chargeLocked, setChargeLocked] = useState(false);
   const taxRate = useTaxRate();
+  const vatEnabled = useVatEnabled();
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [cartSheetOpen, setCartSheetOpen] = useState(false);
   const [cashflowSheetOpen, setCashflowSheetOpen] = useState(false);
@@ -149,6 +151,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     removeLine,
     clear,
     syncLinePrices,
+    syncLineCosts,
     subtotal,
     taxAmount,
     total: calculatedTotal,
@@ -159,6 +162,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     chargeTotal.trim() && Number.isFinite(chargeAmount) && chargeAmount >= 0
       ? Math.round(chargeAmount)
       : Math.round(calculatedTotal);
+  const adjustment = Math.round(calculatedTotal - effectiveTotal);
 
   useEffect(() => {
     if (lines.length === 0) {
@@ -222,6 +226,46 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     }
   }, [pricingMode, cartCatalogPriceKey, syncLinePrices]);
 
+  useEffect(() => {
+    if (!lines.length || !products.length) return;
+    const costs = new Map<string, number>();
+    for (const line of lines) {
+      const p = products.find((x) => x.id === line.productId);
+      if (p && p.costPrice > 0) {
+        costs.set(p.id, p.costPrice);
+      }
+    }
+    if (costs.size > 0) {
+      syncLineCosts(costs);
+    }
+  }, [lines, products, syncLineCosts]);
+
+  const cartMargin = useMemo(
+    () =>
+      computeCartMargin(
+        lines,
+        subtotal,
+        effectiveTotal,
+        taxRate,
+        vatEnabled
+      ),
+    [lines, subtotal, effectiveTotal, taxRate, vatEnabled]
+  );
+
+  const listMargin = useMemo(
+    () =>
+      adjustment !== 0
+        ? computeCartMargin(
+            lines,
+            subtotal,
+            Math.round(calculatedTotal),
+            taxRate,
+            vatEnabled
+          )
+        : null,
+    [lines, subtotal, calculatedTotal, taxRate, vatEnabled, adjustment]
+  );
+
   const cartQtyByProduct = useMemo(() => {
     const map = new Map<string, number>();
     for (const line of lines) {
@@ -284,6 +328,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
           unitsPerBase: unit.unitsPerBase,
           unitPrice,
           availableStock: p.stockQty,
+          baseCostPrice: p.costPrice,
           pricingMode,
         },
         quantity
@@ -547,6 +592,8 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     onCustomerSelect: handleCustomerSelect,
     paymentAccountId,
     onPaymentAccountIdChange: setPaymentAccountId,
+    margin: cartMargin,
+    listMargin,
   };
 
   if (outlets.length === 0) {

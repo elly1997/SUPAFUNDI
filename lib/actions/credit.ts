@@ -12,6 +12,7 @@ import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
 import { listCustomerOpenInvoices } from "@/lib/actions/party-statements";
+import type { CustomerOpenInvoice } from "@/lib/actions/party-statements";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
@@ -19,6 +20,143 @@ function paymentsDb(supabase: Supabase) {
   return supabase as unknown as {
     from: (table: string) => ReturnType<Supabase["from"]>;
   };
+}
+
+type CreditSlice = { saleId: string; amount: number; invoiceNo: string };
+
+function buildFifoCreditSlices(
+  openInvoices: CustomerOpenInvoice[],
+  amount: number
+): CreditSlice[] {
+  const slices: CreditSlice[] = [];
+  let remaining = amount;
+  for (const inv of openInvoices) {
+    if (remaining <= 0) break;
+    const slice = roundMoney(Math.min(remaining, inv.balanceDue));
+    if (slice > 0) {
+      slices.push({
+        saleId: inv.saleId,
+        amount: slice,
+        invoiceNo: inv.invoiceNo,
+      });
+      remaining = roundMoney(remaining - slice);
+    }
+  }
+  return slices;
+}
+
+/** Reduce customer AR by amount — FIFO on open invoices when available. */
+export async function applyAmountToCustomerCredit(
+  supabase: Supabase,
+  ctx: Awaited<ReturnType<typeof requireOrgContext>>,
+  params: {
+    customerId: string;
+    customerName: string;
+    amount: number;
+    currentOutstanding: number;
+    entryDate: string;
+    paymentTs?: string;
+    outletId?: string;
+    ledgerReferenceType: string;
+    ledgerDescription: string;
+    paymentMethod?: "cash" | "mpesa" | "bank_transfer";
+    paymentReference?: string;
+  }
+): Promise<
+  | { ok: true; applied: number; newOutstanding: number; ledgerId: string }
+  | { ok: false; message: string }
+> {
+  const applied = roundMoney(
+    Math.min(params.amount, params.currentOutstanding)
+  );
+  if (applied <= 0) {
+    return {
+      ok: true,
+      applied: 0,
+      newOutstanding: roundMoney(params.currentOutstanding),
+      ledgerId: "",
+    };
+  }
+
+  const openInvoices = await listCustomerOpenInvoices(params.customerId);
+  const slices = buildFifoCreditSlices(openInvoices, applied);
+  const paymentTs =
+    params.paymentTs ?? `${params.entryDate}T12:00:00.000Z`;
+
+  for (const slice of slices) {
+    const { data: sale } = await supabase
+      .from("sales")
+      .select("id, amount_paid, balance_due, invoice_no")
+      .eq("id", slice.saleId)
+      .eq("customer_id", params.customerId)
+      .maybeSingle();
+    if (!sale) {
+      return { ok: false, message: "Sale not found." };
+    }
+    const newPaid = roundMoney(Number(sale.amount_paid) + slice.amount);
+    const newDue = roundMoney(Number(sale.balance_due) - slice.amount);
+    const { error: saleErr } = await supabase
+      .from("sales")
+      .update({
+        amount_paid: newPaid,
+        balance_due: Math.max(0, newDue),
+      } as { amount_paid: number; balance_due: number })
+      .eq("id", slice.saleId);
+    if (saleErr) return { ok: false, message: saleErr.message };
+
+    if (params.paymentMethod) {
+      await paymentsDb(supabase).from("payments").insert({
+        organization_id: ctx.organizationId,
+        outlet_id: params.outletId ?? ctx.outletId,
+        sale_id: slice.saleId,
+        payment_method: params.paymentMethod,
+        amount: slice.amount,
+        reference_no:
+          params.paymentReference?.trim() ||
+          `AR-${sale.invoice_no}`,
+        status: "completed",
+        payment_date: paymentTs,
+        received_by: ctx.userId,
+        customer_id: params.customerId,
+      });
+    }
+  }
+
+  const newOutstanding = roundMoney(params.currentOutstanding - applied);
+
+  const { data: ledger, error: ledgerErr } = await paymentsDb(supabase)
+    .from("credit_ledger")
+    .insert({
+      organization_id: ctx.organizationId,
+      customer_id: params.customerId,
+      entry_type: "payment",
+      reference_type: params.ledgerReferenceType,
+      debit: 0,
+      credit: applied,
+      balance: newOutstanding,
+      description: params.ledgerDescription,
+      entry_date: params.entryDate,
+      created_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+  if (ledgerErr || !ledger) {
+    return {
+      ok: false,
+      message: ledgerErr?.message ?? "Ledger insert failed",
+    };
+  }
+
+  const { error: custErr } = await supabase
+    .from("customers")
+    .update({ outstanding_balance: newOutstanding })
+    .eq("id", params.customerId);
+  if (custErr) {
+    await supabase.from("credit_ledger").delete().eq("id", ledger.id);
+    return { ok: false, message: custErr.message };
+  }
+
+  return { ok: true, applied, newOutstanding, ledgerId: ledger.id };
 }
 
 export type CustomerBalanceRow = {
@@ -100,33 +238,7 @@ export async function applyCustomerDepositToCredit(
     }
 
     const openInvoices = await listCustomerOpenInvoices(customerId);
-    const openTotal = roundMoney(
-      openInvoices.reduce((s, i) => s + i.balanceDue, 0)
-    );
-    if (openTotal <= 0) {
-      return { ok: true, applied: 0 };
-    }
-
-    const toApply = roundMoney(Math.min(applyAmount, openTotal));
-    const slices: { saleId: string; amount: number; invoiceNo: string }[] = [];
-    let remaining = toApply;
-    for (const inv of openInvoices) {
-      if (remaining <= 0) break;
-      const slice = roundMoney(Math.min(remaining, inv.balanceDue));
-      if (slice > 0) {
-        slices.push({
-          saleId: inv.saleId,
-          amount: slice,
-          invoiceNo: inv.invoiceNo,
-        });
-        remaining = roundMoney(remaining - slice);
-      }
-    }
-
-    const allocated = roundMoney(toApply - remaining);
-    if (allocated <= 0) {
-      return { ok: true, applied: 0 };
-    }
+    const slices = buildFifoCreditSlices(openInvoices, applyAmount);
 
     for (const slice of slices) {
       const { data: sale } = await supabase
@@ -150,8 +262,8 @@ export async function applyCustomerDepositToCredit(
       if (saleErr) return { ok: false, message: saleErr.message };
     }
 
-    const newOutstanding = roundMoney(outstanding - allocated);
-    const newDeposit = roundMoney(deposit - allocated);
+    const newOutstanding = roundMoney(outstanding - applyAmount);
+    const newDeposit = roundMoney(deposit - applyAmount);
 
     const { data: ledger, error: ledgerErr } = await paymentsDb(supabase)
       .from("credit_ledger")
@@ -161,7 +273,7 @@ export async function applyCustomerDepositToCredit(
         entry_type: "payment",
         reference_type: "deposit_applied",
         debit: 0,
-        credit: allocated,
+        credit: applyAmount,
         balance: newOutstanding,
         description: "Deposit applied to credit balance",
         entry_date: entryDate,
@@ -194,7 +306,7 @@ export async function applyCustomerDepositToCredit(
       sourceId: ledger.id,
       outletId: options?.outletId ?? ctx.outletId ?? undefined,
       entryDate,
-      lines: buildDepositAppliedToCreditJournalLines(allocated),
+      lines: buildDepositAppliedToCreditJournalLines(applyAmount),
     });
     if (!journal.ok) {
       await supabase
@@ -211,7 +323,7 @@ export async function applyCustomerDepositToCredit(
     revalidatePath("/customers");
     revalidatePath(`/customers/${customerId}`);
     revalidatePath("/finance/credit");
-    return { ok: true, applied: allocated };
+    return { ok: true, applied: applyAmount };
   } catch (e) {
     return {
       ok: false,

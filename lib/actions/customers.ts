@@ -2,8 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { applyCustomerDepositToCredit } from "@/lib/actions/credit";
-import { buildCustomerDepositJournalLines } from "@/lib/accounting/posting-rules";
+import { applyAmountToCustomerCredit, applyCustomerDepositToCredit } from "@/lib/actions/credit";
+import { buildCustomerDepositReceiptJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
 import { requireManagerContext } from "@/lib/server/require-manager";
@@ -116,7 +116,7 @@ export async function recordCustomerDeposit(
     const supabase = await createServerSupabaseClient();
     const { data: customer } = await supabase
       .from("customers")
-      .select("deposit_balance, name")
+      .select("deposit_balance, outstanding_balance, name")
       .eq("id", input.customerId)
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
@@ -125,15 +125,14 @@ export async function recordCustomerDeposit(
     const paymentDate =
       input.paymentDate ?? new Date().toISOString().slice(0, 10);
     const paymentTs = `${paymentDate}T12:00:00.000Z`;
+    const referenceNo = input.notes?.trim() || `DEP-${customer.name}`;
 
-    const newBalance = roundMoney(
-      Number(customer.deposit_balance ?? 0) + input.amount
-    );
-    const { error: updErr } = await supabase
-      .from("customers")
-      .update({ deposit_balance: newBalance })
-      .eq("id", input.customerId);
-    if (updErr) return { ok: false, message: updErr.message };
+    const outstanding = roundMoney(Number(customer.outstanding_balance ?? 0));
+    const prevDeposit = roundMoney(Number(customer.deposit_balance ?? 0));
+    /** When customer owes credit, deposit pays down AR first (same as a payment). */
+    const toCredit = roundMoney(Math.min(input.amount, outstanding));
+    const toDeposit = roundMoney(input.amount - toCredit);
+    const newDepositBalance = roundMoney(prevDeposit + toDeposit);
 
     const { data: payment, error: payErr } = await paymentsDb(supabase)
       .from("payments")
@@ -142,7 +141,7 @@ export async function recordCustomerDeposit(
         outlet_id: input.outletId,
         payment_method: input.paymentMethod,
         amount: input.amount,
-        reference_no: input.notes?.trim() || `DEP-${customer.name}`,
+        reference_no: referenceNo,
         status: "completed",
         payment_date: paymentTs,
         received_by: ctx.userId,
@@ -151,30 +150,27 @@ export async function recordCustomerDeposit(
       .select("id")
       .single();
     if (payErr) {
-      await supabase
-        .from("customers")
-        .update({ deposit_balance: Number(customer.deposit_balance ?? 0) })
-        .eq("id", input.customerId);
       return { ok: false, message: payErr.message };
     }
 
     const journal = await postJournalEntry({
-      description: `Customer deposit — ${customer.name}`,
+      description:
+        toCredit > 0 && toDeposit <= 0
+          ? `Customer deposit — credit payment — ${customer.name}`
+          : `Customer deposit — ${customer.name}`,
       sourceType: "payment",
       sourceId: payment?.id,
       outletId: input.outletId,
       entryDate: paymentDate,
-      lines: buildCustomerDepositJournalLines(
+      lines: buildCustomerDepositReceiptJournalLines(
         input.amount,
+        toCredit,
+        toDeposit,
         input.paymentMethod
       ),
     });
     if (!journal.ok) {
       await supabase.from("payments").delete().eq("id", payment?.id);
-      await supabase
-        .from("customers")
-        .update({ deposit_balance: Number(customer.deposit_balance ?? 0) })
-        .eq("id", input.customerId);
       return { ok: false, message: journal.message };
     }
 
@@ -187,29 +183,62 @@ export async function recordCustomerDeposit(
         input.bankAccountId,
         input.amount,
         payment!.id,
-        `DEP-${customer.name}`,
+        referenceNo,
         paymentDate
       );
       if (!bank.ok) {
         await supabase.from("payments").delete().eq("id", payment?.id);
-        await supabase
-          .from("customers")
-          .update({ deposit_balance: Number(customer.deposit_balance ?? 0) })
-          .eq("id", input.customerId);
         return bank;
       }
     }
+
+    if (toDeposit > 0) {
+      const { error: depErr } = await supabase
+        .from("customers")
+        .update({ deposit_balance: newDepositBalance })
+        .eq("id", input.customerId);
+      if (depErr) {
+        await supabase.from("payments").delete().eq("id", payment?.id);
+        return { ok: false, message: depErr.message };
+      }
+    }
+
+    if (toCredit > 0) {
+      const credit = await applyAmountToCustomerCredit(supabase, ctx, {
+        customerId: input.customerId,
+        customerName: customer.name,
+        amount: toCredit,
+        currentOutstanding: outstanding,
+        entryDate: paymentDate,
+        paymentTs,
+        outletId: input.outletId,
+        ledgerReferenceType: "deposit_to_credit",
+        ledgerDescription: "Deposit applied to credit balance",
+        paymentMethod: input.paymentMethod,
+        paymentReference: referenceNo,
+      });
+      if (!credit.ok) {
+        await supabase.from("payments").delete().eq("id", payment?.id);
+        if (toDeposit > 0) {
+          await supabase
+            .from("customers")
+            .update({ deposit_balance: prevDeposit })
+            .eq("id", input.customerId);
+        }
+        return credit;
+      }
+    }
+
+    await applyCustomerDepositToCredit(input.customerId, {
+      outletId: input.outletId,
+      entryDate: paymentDate,
+    });
 
     revalidatePath("/customers");
     revalidatePath(`/customers/${input.customerId}`);
     revalidatePath("/finance/credit");
     revalidatePath("/finance/banking");
     revalidatePath("/daily-closing");
-
-    await applyCustomerDepositToCredit(input.customerId, {
-      outletId: input.outletId,
-      entryDate: paymentDate,
-    });
 
     return { ok: true };
   } catch (e) {
