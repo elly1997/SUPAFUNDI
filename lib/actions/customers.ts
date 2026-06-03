@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { applyCustomerDepositToCredit } from "@/lib/actions/credit";
 import { buildCustomerDepositJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
@@ -61,6 +62,17 @@ export type CustomerListRow = {
 export async function listCustomers(): Promise<CustomerListRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+
+  const { data: needsApply } = await supabase
+    .from("customers")
+    .select("id")
+    .eq("organization_id", ctx.organizationId)
+    .gt("outstanding_balance", 0)
+    .gt("deposit_balance", 0);
+  for (const c of needsApply ?? []) {
+    await applyCustomerDepositToCredit(c.id);
+  }
+
   const { data, error } = await supabase
     .from("customers")
     .select(
@@ -193,6 +205,12 @@ export async function recordCustomerDeposit(
     revalidatePath("/finance/credit");
     revalidatePath("/finance/banking");
     revalidatePath("/daily-closing");
+
+    await applyCustomerDepositToCredit(input.customerId, {
+      outletId: input.outletId,
+      entryDate: paymentDate,
+    });
+
     return { ok: true };
   } catch (e) {
     return {
@@ -416,6 +434,21 @@ export async function getCustomerById(
 ): Promise<CustomerDetail | null> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+
+  const { data: snapshot } = await supabase
+    .from("customers")
+    .select("outstanding_balance, deposit_balance")
+    .eq("id", id)
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+  if (
+    snapshot &&
+    Number(snapshot.outstanding_balance) > 0 &&
+    Number(snapshot.deposit_balance ?? 0) > 0
+  ) {
+    await applyCustomerDepositToCredit(id);
+  }
+
   const { data: c, error } = await supabase
     .from("customers")
     .select(

@@ -105,6 +105,9 @@ export async function getCustomerStatement(
   customerId: string,
   limit = 120
 ): Promise<PartyStatementLine[]> {
+  const { applyCustomerDepositToCredit } = await import("@/lib/actions/credit");
+  await applyCustomerDepositToCredit(customerId);
+
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
 
@@ -167,11 +170,13 @@ export async function getCustomerStatement(
   for (const e of ledger ?? []) {
     const debit = Number(e.debit);
     const credit = Number(e.credit);
+    const isDepositApplied = e.reference_type === "deposit_applied";
     raw.push({
       id: `led-${e.id}`,
       date: String(e.entry_date ?? e.created_at).slice(0, 10),
-      type:
-        e.entry_type === "payment"
+      type: isDepositApplied
+        ? "Deposit applied"
+        : e.entry_type === "payment"
           ? "Payment (credit)"
           : e.entry_type === "invoice"
             ? "Credit sale"
@@ -179,7 +184,7 @@ export async function getCustomerStatement(
       reference: String(e.description ?? "—").slice(0, 60),
       debit,
       credit,
-      payment_method: null,
+      payment_method: isDepositApplied ? "deposit" : null,
     });
   }
 
@@ -187,10 +192,10 @@ export async function getCustomerStatement(
     raw.push({
       id: `dep-${d.id}`,
       date: String(d.payment_date ?? d.created_at).slice(0, 10),
-      type: "Deposit received",
-      reference: String(d.reference_no ?? "Deposit"),
+      type: "Deposit on account",
+      reference: `${String(d.reference_no ?? "Deposit")} — ${Number(d.amount).toLocaleString("en-TZ")}`,
       debit: 0,
-      credit: Number(d.amount),
+      credit: 0,
       payment_method: String(d.payment_method),
     });
   }

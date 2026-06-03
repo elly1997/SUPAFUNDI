@@ -8,6 +8,7 @@ import {
   type JournalLineInput,
 } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { applyCustomerDepositToCredit } from "@/lib/actions/credit";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { requireOrgContext } from "@/lib/server/org-context";
@@ -593,6 +594,13 @@ export async function completeSale(
     revalidatePath("/sales");
     revalidatePath("/invoices");
     revalidatePath("/inventory/stock");
+
+    if (input.customerId) {
+      await applyCustomerDepositToCredit(input.customerId, {
+        outletId: input.outletId,
+        entryDate: input.businessDate,
+      });
+    }
 
     return {
       ok: true,

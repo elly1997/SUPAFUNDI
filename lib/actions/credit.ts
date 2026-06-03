@@ -2,7 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { buildCustomerPaymentJournalLines } from "@/lib/accounting/posting-rules";
+import {
+  buildCustomerPaymentJournalLines,
+  buildDepositAppliedToCreditJournalLines,
+} from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
 import { requireOrgContext } from "@/lib/server/org-context";
@@ -65,6 +68,157 @@ const paymentInput = z.object({
   payAll: z.boolean().optional(),
   allocations: z.array(allocationSchema).optional(),
 });
+
+/** Net deposit balance against open credit when both exist (FIFO invoice allocation). */
+export async function applyCustomerDepositToCredit(
+  customerId: string,
+  options?: { outletId?: string; entryDate?: string }
+): Promise<
+  { ok: true; applied: number } | { ok: false; message: string }
+> {
+  try {
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const entryDate =
+      options?.entryDate ?? new Date().toISOString().slice(0, 10);
+
+    const { data: customer } = await supabase
+      .from("customers")
+      .select("id, name, outstanding_balance, deposit_balance")
+      .eq("id", customerId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!customer) {
+      return { ok: false, message: "Customer not found." };
+    }
+
+    const outstanding = roundMoney(Number(customer.outstanding_balance ?? 0));
+    const deposit = roundMoney(Number(customer.deposit_balance ?? 0));
+    const applyAmount = roundMoney(Math.min(outstanding, deposit));
+    if (applyAmount <= 0) {
+      return { ok: true, applied: 0 };
+    }
+
+    const openInvoices = await listCustomerOpenInvoices(customerId);
+    const openTotal = roundMoney(
+      openInvoices.reduce((s, i) => s + i.balanceDue, 0)
+    );
+    if (openTotal <= 0) {
+      return { ok: true, applied: 0 };
+    }
+
+    const toApply = roundMoney(Math.min(applyAmount, openTotal));
+    const slices: { saleId: string; amount: number; invoiceNo: string }[] = [];
+    let remaining = toApply;
+    for (const inv of openInvoices) {
+      if (remaining <= 0) break;
+      const slice = roundMoney(Math.min(remaining, inv.balanceDue));
+      if (slice > 0) {
+        slices.push({
+          saleId: inv.saleId,
+          amount: slice,
+          invoiceNo: inv.invoiceNo,
+        });
+        remaining = roundMoney(remaining - slice);
+      }
+    }
+
+    const allocated = roundMoney(toApply - remaining);
+    if (allocated <= 0) {
+      return { ok: true, applied: 0 };
+    }
+
+    for (const slice of slices) {
+      const { data: sale } = await supabase
+        .from("sales")
+        .select("id, amount_paid, balance_due, invoice_no")
+        .eq("id", slice.saleId)
+        .eq("customer_id", customerId)
+        .maybeSingle();
+      if (!sale) {
+        return { ok: false, message: "Sale not found." };
+      }
+      const newPaid = roundMoney(Number(sale.amount_paid) + slice.amount);
+      const newDue = roundMoney(Number(sale.balance_due) - slice.amount);
+      const { error: saleErr } = await supabase
+        .from("sales")
+        .update({
+          amount_paid: newPaid,
+          balance_due: Math.max(0, newDue),
+        } as { amount_paid: number; balance_due: number })
+        .eq("id", slice.saleId);
+      if (saleErr) return { ok: false, message: saleErr.message };
+    }
+
+    const newOutstanding = roundMoney(outstanding - allocated);
+    const newDeposit = roundMoney(deposit - allocated);
+
+    const { data: ledger, error: ledgerErr } = await paymentsDb(supabase)
+      .from("credit_ledger")
+      .insert({
+        organization_id: ctx.organizationId,
+        customer_id: customerId,
+        entry_type: "payment",
+        reference_type: "deposit_applied",
+        debit: 0,
+        credit: allocated,
+        balance: newOutstanding,
+        description: "Deposit applied to credit balance",
+        entry_date: entryDate,
+        created_by: ctx.userId,
+      })
+      .select("id")
+      .single();
+    if (ledgerErr || !ledger) {
+      return {
+        ok: false,
+        message: ledgerErr?.message ?? "Ledger insert failed",
+      };
+    }
+
+    const { error: custErr } = await supabase
+      .from("customers")
+      .update({
+        outstanding_balance: newOutstanding,
+        deposit_balance: newDeposit,
+      })
+      .eq("id", customerId);
+    if (custErr) {
+      await supabase.from("credit_ledger").delete().eq("id", ledger.id);
+      return { ok: false, message: custErr.message };
+    }
+
+    const journal = await postJournalEntry({
+      description: `Deposit applied to credit — ${customer.name}`,
+      sourceType: "payment",
+      sourceId: ledger.id,
+      outletId: options?.outletId ?? ctx.outletId ?? undefined,
+      entryDate,
+      lines: buildDepositAppliedToCreditJournalLines(allocated),
+    });
+    if (!journal.ok) {
+      await supabase
+        .from("customers")
+        .update({
+          outstanding_balance: outstanding,
+          deposit_balance: deposit,
+        })
+        .eq("id", customerId);
+      await supabase.from("credit_ledger").delete().eq("id", ledger.id);
+      return { ok: false, message: journal.message };
+    }
+
+    revalidatePath("/customers");
+    revalidatePath(`/customers/${customerId}`);
+    revalidatePath("/finance/credit");
+    return { ok: true, applied: allocated };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Deposit apply failed",
+    };
+  }
+}
 
 export async function recordCustomerPayment(
   raw: z.infer<typeof paymentInput>

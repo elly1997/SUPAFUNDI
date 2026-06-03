@@ -357,6 +357,26 @@ export function buildSupplierPaymentJournalLines(
   ];
 }
 
+/** Apply customer deposit liability against open AR (no cash movement). */
+export function buildDepositAppliedToCreditJournalLines(
+  amount: number
+): JournalLineInput[] {
+  return [
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.customerDeposits,
+      debit: amount,
+      credit: 0,
+      memo: "Customer deposit applied to AR",
+    },
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.ar,
+      debit: 0,
+      credit: amount,
+      memo: "Reduce accounts receivable",
+    },
+  ];
+}
+
 /** Customer pays down AR balance. */
 export function buildCustomerPaymentJournalLines(
   amount: number,
