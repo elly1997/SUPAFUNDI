@@ -2,13 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import {
+  computeDayCashSummary,
+  getPreviousReconciledClosing,
+  getReconciledDatesInRange,
+} from "@/lib/actions/daily-closing";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { getReconciledDatesInRange } from "@/lib/actions/daily-closing";
 import { roundMoney } from "@/lib/utils/calculations";
 import {
   businessDateFromTimestamptz,
-  businessDayBounds,
   isoDateToTimestamptz,
   resolveBusinessDate,
 } from "@/lib/utils/iso-date";
@@ -16,6 +19,7 @@ import {
 export type CashSessionRow = {
   id: string;
   outlet_id: string | null;
+  business_date: string;
   opening_balance: number;
   closing_balance: number | null;
   expected_balance: number | null;
@@ -25,6 +29,115 @@ export type CashSessionRow = {
   closed_at: string | null;
 };
 
+export type DrawerStatus = {
+  session: CashSessionRow | null;
+  /** Business date the UI is working on. */
+  workingDate: string;
+  /** Open session is for a different day than workingDate. */
+  dateMismatch: boolean;
+  /** Live expected cash in drawer (full daily-closing formula). */
+  liveExpectedCash: number;
+  /** Opening float from prior reconciled day — default for open drawer. */
+  suggestedOpening: number;
+  reconciled: boolean;
+  reconciledClosing: number | null;
+};
+
+function mapSessionRow(data: {
+  id: string;
+  outlet_id: string | null;
+  business_date?: string | null;
+  opened_at: string;
+  opening_balance: number;
+  closing_balance: number | null;
+  expected_balance: number | null;
+  variance: number | null;
+  status: string;
+  closed_at: string | null;
+}): CashSessionRow {
+  return {
+    id: data.id,
+    outlet_id: data.outlet_id,
+    business_date:
+      data.business_date ?? businessDateFromTimestamptz(data.opened_at),
+    opening_balance: Number(data.opening_balance),
+    closing_balance: data.closing_balance ? Number(data.closing_balance) : null,
+    expected_balance: data.expected_balance
+      ? Number(data.expected_balance)
+      : null,
+    variance: data.variance != null ? Number(data.variance) : null,
+    status: data.status,
+    opened_at: data.opened_at,
+    closed_at: data.closed_at,
+  };
+}
+
+const sessionSelect =
+  "id, outlet_id, business_date, opening_balance, closing_balance, expected_balance, variance, status, opened_at, closed_at";
+
+export async function getSuggestedOpeningBalance(
+  outletId: string,
+  businessDate: string
+): Promise<number> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  return getPreviousReconciledClosing(
+    supabase,
+    ctx.organizationId,
+    outletId,
+    businessDate
+  );
+}
+
+/** Drawer state for POS / catch-up — live expected cash matches daily closing. */
+export async function getDrawerStatus(
+  outletId: string,
+  workingDate?: string
+): Promise<DrawerStatus> {
+  const date = resolveBusinessDate(workingDate);
+  const session = await getOpenCashSession(outletId);
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+
+  const suggestedOpening = await getPreviousReconciledClosing(
+    supabase,
+    ctx.organizationId,
+    outletId,
+    date
+  );
+
+  const { data: closing } = await supabase
+    .from("daily_closings")
+    .select("status, closing_balance")
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", outletId)
+    .eq("business_date", date)
+    .maybeSingle();
+
+  const reconciled = closing?.status === "reconciled";
+  const reconciledClosing =
+    reconciled && closing?.closing_balance != null
+      ? Number(closing.closing_balance)
+      : null;
+
+  const sessionDate = session?.business_date ?? null;
+  const dateMismatch = !!session && sessionDate !== date;
+
+  const cashDate =
+    session && !dateMismatch ? session.business_date : date;
+  const summary = await computeDayCashSummary(outletId, cashDate);
+
+  return {
+    session,
+    workingDate: date,
+    dateMismatch,
+    liveExpectedCash: summary.expectedCash,
+    suggestedOpening: roundMoney(suggestedOpening),
+    reconciled,
+    reconciledClosing,
+  };
+}
+
 export async function listCashSessionHistory(
   outletId?: string | null,
   limit = 30
@@ -33,29 +146,16 @@ export async function listCashSessionHistory(
   const supabase = await createServerSupabaseClient();
   let q = supabase
     .from("cash_sessions")
-    .select(
-      "id, outlet_id, opening_balance, closing_balance, expected_balance, variance, status, opened_at, closed_at"
-    )
+    .select(sessionSelect)
     .eq("organization_id", ctx.organizationId)
+    .order("business_date", { ascending: false })
     .order("opened_at", { ascending: false })
     .limit(limit);
   const filterOutlet = outletId ?? ctx.outletId;
   if (filterOutlet) q = q.eq("outlet_id", filterOutlet);
   const { data, error } = await q;
   if (error) throw new Error(error.message);
-  return (data ?? []).map((row) => ({
-    id: row.id,
-    outlet_id: row.outlet_id,
-    opening_balance: Number(row.opening_balance),
-    closing_balance: row.closing_balance ? Number(row.closing_balance) : null,
-    expected_balance: row.expected_balance
-      ? Number(row.expected_balance)
-      : null,
-    variance: row.variance ? Number(row.variance) : null,
-    status: row.status,
-    opened_at: row.opened_at,
-    closed_at: row.closed_at,
-  }));
+  return (data ?? []).map(mapSessionRow);
 }
 
 export async function getOpenCashSession(
@@ -65,9 +165,7 @@ export async function getOpenCashSession(
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from("cash_sessions")
-    .select(
-      "id, outlet_id, opening_balance, closing_balance, expected_balance, variance, status, opened_at, closed_at"
-    )
+    .select(sessionSelect)
     .eq("organization_id", ctx.organizationId)
     .eq("outlet_id", outletId)
     .eq("status", "open")
@@ -76,24 +174,12 @@ export async function getOpenCashSession(
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) return null;
-  return {
-    id: data.id,
-    outlet_id: data.outlet_id,
-    opening_balance: Number(data.opening_balance),
-    closing_balance: data.closing_balance ? Number(data.closing_balance) : null,
-    expected_balance: data.expected_balance
-      ? Number(data.expected_balance)
-      : null,
-    variance: data.variance ? Number(data.variance) : null,
-    status: data.status,
-    opened_at: data.opened_at,
-    closed_at: data.closed_at,
-  };
+  return mapSessionRow(data);
 }
 
 const openSessionInput = z.object({
   outletId: z.string().uuid(),
-  openingBalance: z.coerce.number().nonnegative(),
+  openingBalance: z.coerce.number().nonnegative().optional(),
   businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   notes: z.string().max(500).optional(),
 });
@@ -105,13 +191,22 @@ export async function openCashSession(
     const input = openSessionInput.parse(raw);
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
+    const businessDate = resolveBusinessDate(input.businessDate);
 
     const existing = await getOpenCashSession(input.outletId);
     if (existing) {
-      return { ok: false, message: "A cash session is already open for this outlet." };
+      if (existing.business_date !== businessDate) {
+        return {
+          ok: false,
+          message: `Close the drawer for ${existing.business_date} before opening ${businessDate}.`,
+        };
+      }
+      return {
+        ok: false,
+        message: "A cash session is already open for this outlet.",
+      };
     }
 
-    const businessDate = resolveBusinessDate(input.businessDate);
     const reconciled = await getReconciledDatesInRange(
       businessDate,
       businessDate,
@@ -125,13 +220,24 @@ export async function openCashSession(
       };
     }
 
+    const suggested = await getPreviousReconciledClosing(
+      supabase,
+      ctx.organizationId,
+      input.outletId,
+      businessDate
+    );
+    const openingBalance = roundMoney(
+      input.openingBalance ?? suggested
+    );
+
     const { data, error } = await supabase
       .from("cash_sessions")
       .insert({
         organization_id: ctx.organizationId,
         outlet_id: input.outletId,
         cashier_id: ctx.userId,
-        opening_balance: input.openingBalance,
+        business_date: businessDate,
+        opening_balance: openingBalance,
         status: "open",
         opened_at: isoDateToTimestamptz(businessDate),
         notes: input.notes?.trim() || null,
@@ -143,6 +249,8 @@ export async function openCashSession(
     }
     revalidatePath("/pos");
     revalidatePath("/finance/cash-sessions");
+    revalidatePath("/inventory/catch-up");
+    revalidatePath("/daily-closing");
     return { ok: true, sessionId: data.id };
   } catch (e) {
     return {
@@ -161,7 +269,16 @@ const closeSessionInput = z.object({
 
 export async function closeCashSession(
   raw: z.infer<typeof closeSessionInput>
-): Promise<{ ok: true; variance: number } | { ok: false; message: string }> {
+): Promise<
+  | {
+      ok: true;
+      variance: number;
+      expected: number;
+      businessDate: string;
+      needsReconcile: boolean;
+    }
+  | { ok: false; message: string }
+> {
   try {
     const input = closeSessionInput.parse(raw);
     const ctx = await requireOrgContext();
@@ -169,34 +286,26 @@ export async function closeCashSession(
 
     const { data: session } = await supabase
       .from("cash_sessions")
-      .select("id, outlet_id, opening_balance, opened_at, status")
+      .select("id, outlet_id, opening_balance, business_date, opened_at, status")
       .eq("id", input.sessionId)
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
     if (!session || session.status !== "open") {
       return { ok: false, message: "Session not found or already closed." };
     }
-
-    const sessionBusinessDate = businessDateFromTimestamptz(session.opened_at);
-    const { from, to } = businessDayBounds(sessionBusinessDate);
-    let cashQuery = supabase
-      .from("payments")
-      .select("amount")
-      .eq("organization_id", ctx.organizationId)
-      .eq("payment_method", "cash")
-      .eq("status", "completed")
-      .gte("payment_date", from)
-      .lte("payment_date", to);
-    if (session.outlet_id) {
-      cashQuery = cashQuery.eq("outlet_id", session.outlet_id);
+    if (!session.outlet_id) {
+      return { ok: false, message: "Session has no outlet." };
     }
-    const { data: cashPayments } = await cashQuery;
-    const cashSales = roundMoney(
-      (cashPayments ?? []).reduce((s, p) => s + Number(p.amount), 0)
+
+    const sessionBusinessDate =
+      session.business_date ??
+      businessDateFromTimestamptz(session.opened_at);
+
+    const summary = await computeDayCashSummary(
+      session.outlet_id,
+      sessionBusinessDate
     );
-    const expected = roundMoney(
-      Number(session.opening_balance) + cashSales
-    );
+    const expected = summary.expectedCash;
     const variance = roundMoney(input.closingBalance - expected);
 
     const { error } = await supabase
@@ -215,9 +324,19 @@ export async function closeCashSession(
     if (error) {
       return { ok: false, message: error.message };
     }
+
     revalidatePath("/pos");
     revalidatePath("/finance/cash-sessions");
-    return { ok: true, variance };
+    revalidatePath("/inventory/catch-up");
+    revalidatePath("/daily-closing");
+
+    return {
+      ok: true,
+      variance,
+      expected,
+      businessDate: sessionBusinessDate,
+      needsReconcile: true,
+    };
   } catch (e) {
     return {
       ok: false,

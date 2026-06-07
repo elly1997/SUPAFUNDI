@@ -5,10 +5,11 @@ import { AlertTriangle, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CashSessionBar } from "@/components/pos/cash-session-bar";
 import { canBypassCashSession } from "@/lib/auth/roles";
-import { fetchOpenCashSession } from "@/lib/api/cash-session-fetch";
+import { fetchDrawerStatus } from "@/lib/api/cash-session-fetch";
 import { useClientMounted } from "@/hooks/useClientMounted";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 type Props = {
   outletId: string;
@@ -31,13 +32,15 @@ export function PosSessionGate({
   const role = useAuthStore((s) => s.session?.role ?? null);
   const canBypass = canBypassCashSession(role);
 
-  const { data: session, isLoading } = useQuery({
-    queryKey: ["cash-session", outletId],
-    queryFn: () => fetchOpenCashSession(outletId),
-    enabled: mounted,
+  const workingDate = useBusinessDateStore((s) => s.businessDate);
+
+  const { data: drawer, isLoading } = useQuery({
+    queryKey: ["drawer-status", outletId, workingDate],
+    queryFn: () => fetchDrawerStatus(outletId, workingDate),
+    enabled: mounted && !!outletId,
   });
 
-  const sessionOpen = !!session;
+  const sessionOpen = !!drawer?.session && !drawer.dateMismatch;
   const canSell =
     mounted && (sessionOpen || canBypass || sessionOverride);
 

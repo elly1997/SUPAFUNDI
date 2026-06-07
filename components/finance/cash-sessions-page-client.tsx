@@ -16,7 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { formatDateEAT, formatTzs } from "@/lib/utils/currency";
+import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
 
 export function CashSessionsPageClient() {
@@ -72,7 +72,7 @@ export function CashSessionsPageClient() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Opened</TableHead>
+                  <TableHead>Business date</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Opening</TableHead>
                   <TableHead className="text-right">Expected</TableHead>
@@ -83,8 +83,8 @@ export function CashSessionsPageClient() {
               <TableBody>
                 {sessions.map((s) => (
                   <TableRow key={s.id}>
-                    <TableCell className="text-xs">
-                      {formatDateEAT(s.opened_at)}
+                    <TableCell className="text-xs font-medium">
+                      {s.business_date}
                     </TableCell>
                     <TableCell className="capitalize">{s.status}</TableCell>
                     <TableCell className="text-right font-money">

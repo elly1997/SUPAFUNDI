@@ -7,7 +7,8 @@ import {
   Printer,
   Scale,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,6 +48,7 @@ type Props = {
 
 export function DailyClosingClient({ outlets }: Props) {
   const queryClient = useQueryClient();
+  const searchParams = useSearchParams();
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const setBusinessDate = useBusinessDateStore((s) => s.setBusinessDate);
   const activeOutletId = useAuthStore((s) => s.activeOutletId);
@@ -62,6 +64,13 @@ export function DailyClosingClient({ outlets }: Props) {
   const [countedClosing, setCountedClosing] = useState("");
   const [openingOverride, setOpeningOverride] = useState("");
   const [notes, setNotes] = useState("");
+
+  useEffect(() => {
+    const date = searchParams.get("date");
+    const counted = searchParams.get("counted");
+    if (date) setBusinessDate(date);
+    if (counted) setCountedClosing(counted);
+  }, [searchParams, setBusinessDate]);
 
   const effectiveOutlet =
     outletId || resolveDefaultOutletId(outlets) || undefined;
@@ -126,6 +135,8 @@ export function DailyClosingClient({ outlets }: Props) {
         void queryClient.invalidateQueries({
           queryKey: ["reconciled-business-dates"],
         });
+        void queryClient.invalidateQueries({ queryKey: ["drawer-status"] });
+        void queryClient.invalidateQueries({ queryKey: ["catch-up-days"] });
         void queryClient.invalidateQueries({ queryKey: ["reports"] });
       } else toast.error(r.message);
     },

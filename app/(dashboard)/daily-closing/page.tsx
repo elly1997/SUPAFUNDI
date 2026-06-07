@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { DailyClosingClient } from "@/components/daily-closing/daily-closing-client";
 import { PageHeader } from "@/components/ui/page-header";
@@ -29,7 +30,9 @@ export default async function DailyClosingPage() {
           Add an outlet in Settings before reconciling.
         </p>
       ) : (
-        <DailyClosingClient outlets={outlets} />
+        <Suspense fallback={<p className="text-sm text-muted-foreground">Loading…</p>}>
+          <DailyClosingClient outlets={outlets} />
+        </Suspense>
       )}
     </div>
   );

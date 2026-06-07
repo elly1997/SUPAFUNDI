@@ -921,6 +921,8 @@ export type Database = {
           id: string;
           organization_id: string;
           outlet_id: string | null;
+          cashier_id: string | null;
+          business_date: string;
           opening_balance: number;
           closing_balance: number | null;
           expected_balance: number | null;
@@ -928,18 +930,21 @@ export type Database = {
           status: string;
           opened_at: string;
           closed_at: string | null;
+          notes: string | null;
         };
         Insert: {
           id?: string;
           organization_id: string;
           outlet_id?: string | null;
           cashier_id?: string | null;
+          business_date: string;
           opening_balance: number;
           status?: string;
           opened_at?: string;
           notes?: string | null;
         };
         Update: {
+          business_date?: string;
           closing_balance?: number;
           expected_balance?: number;
           variance?: number;

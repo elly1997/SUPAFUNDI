@@ -13,6 +13,7 @@ import {
 import { buildCashVarianceJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { getOrganizationSettings } from "@/lib/actions/settings";
+import { isoDateToTimestamptz } from "@/lib/utils/iso-date";
 
 export type DayCashSummary = {
   businessDate: string;
@@ -50,7 +51,7 @@ function apDb(supabase: SupabaseClient) {
   };
 }
 
-async function getPreviousReconciledClosing(
+export async function getPreviousReconciledClosing(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   organizationId: string,
   outletId: string,
@@ -339,6 +340,27 @@ export async function reconcileDailyClosing(
     });
     if (error) return { ok: false, message: error.message };
 
+    const { data: openSession } = await supabase
+      .from("cash_sessions")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", input.outletId)
+      .eq("business_date", input.businessDate)
+      .eq("status", "open")
+      .maybeSingle();
+    if (openSession) {
+      await supabase
+        .from("cash_sessions")
+        .update({
+          closing_balance: input.countedClosing,
+          expected_balance: expected,
+          variance,
+          status: "closed",
+          closed_at: isoDateToTimestamptz(input.businessDate),
+        })
+        .eq("id", openSession.id);
+    }
+
     if (variance !== 0) {
       const varianceLines = buildCashVarianceJournalLines(variance);
       const journal = await postJournalEntry({
@@ -360,6 +382,8 @@ export async function reconcileDailyClosing(
     revalidatePath("/daily-closing");
     revalidatePath("/reports");
     revalidatePath("/pos");
+    revalidatePath("/finance/cash-sessions");
+    revalidatePath("/inventory/catch-up");
     return { ok: true };
   } catch (e) {
     return {

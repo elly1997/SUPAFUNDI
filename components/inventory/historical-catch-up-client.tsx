@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { format, subDays } from "date-fns";
 import {
+  Banknote,
   CheckCircle2,
   Circle,
   Loader2,
@@ -27,6 +28,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { CatchUpDayRow, CatchUpDayStatus } from "@/lib/actions/catch-up";
+import { CashSessionBar } from "@/components/pos/cash-session-bar";
 import { fetchCatchUpDays } from "@/lib/api/catch-up-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
@@ -168,8 +170,13 @@ export function HistoricalCatchUpClient() {
               Compare system sales total to your Z-report (optional fields).
             </li>
             <li>
-              <strong className="text-foreground">Reconcile</strong> when the day
-              is complete.
+              <strong className="text-foreground">Open drawer</strong> with prior
+              day&apos;s reconciled closing as opening float.
+            </li>
+            <li>
+              <strong className="text-foreground">Close drawer</strong> then{" "}
+              <strong className="text-foreground">reconcile</strong> — same
+              numbers as daily closing / director report.
             </li>
           </ol>
         </CardContent>
@@ -304,10 +311,54 @@ export function HistoricalCatchUpClient() {
                   href="/pos"
                 />
                 <CatchUpStep
+                  done={
+                    selected.drawerStatus === "closed" || selected.reconciled
+                  }
+                  label={`Close drawer (expected ${formatTzs(selected.expectedCash)})`}
+                  href="/pos"
+                />
+                <CatchUpStep
                   done={selected.reconciled}
                   label="Daily reconcile"
                   href="/daily-closing"
                 />
+
+                <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
+                    <Banknote className="size-3.5" />
+                    Cash drawer
+                  </p>
+                  <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                    <dt className="text-muted-foreground">Suggested open</dt>
+                    <dd className="text-right font-money">
+                      {formatTzs(selected.suggestedOpening)}
+                    </dd>
+                    <dt className="text-muted-foreground">Live expected</dt>
+                    <dd className="text-right font-money text-inflow">
+                      {formatTzs(selected.expectedCash)}
+                    </dd>
+                    {selected.reconciledClosing != null ? (
+                      <>
+                        <dt className="text-muted-foreground">Reconciled close</dt>
+                        <dd className="text-right font-money">
+                          {formatTzs(selected.reconciledClosing)}
+                        </dd>
+                      </>
+                    ) : null}
+                    {selected.sessionVariance != null &&
+                    selected.sessionVariance !== 0 ? (
+                      <>
+                        <dt className="text-muted-foreground">Session variance</dt>
+                        <dd className="text-right font-money text-warning">
+                          {formatTzs(selected.sessionVariance)}
+                        </dd>
+                      </>
+                    ) : null}
+                  </dl>
+                  {outletId ? (
+                    <CashSessionBar outletId={outletId} variant="inline" />
+                  ) : null}
+                </div>
 
                 <div className="space-y-2 border-t border-border pt-4">
                   <p className="text-xs font-semibold uppercase text-muted-foreground">

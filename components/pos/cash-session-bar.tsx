@@ -2,10 +2,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Banknote, Loader2 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -17,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   closeCashSessionApi,
-  fetchOpenCashSession,
+  fetchDrawerStatus,
   openCashSessionApi,
 } from "@/lib/api/cash-session-fetch";
 import { cn } from "@/lib/utils";
@@ -27,7 +28,6 @@ import { useBusinessDateStore } from "@/stores/businessDateStore";
 type Props = {
   outletId: string;
   variant?: "bar" | "inline";
-  /** After opening, navigate here (e.g. from finance cash-sessions page). */
   redirectAfterOpen?: string;
 };
 
@@ -39,16 +39,43 @@ export function CashSessionBar({
   const router = useRouter();
   const [openDialog, setOpenDialog] = useState(false);
   const [closeDialog, setCloseDialog] = useState(false);
-  const [opening, setOpening] = useState("0");
+  const [opening, setOpening] = useState("");
   const [closing, setClosing] = useState("");
   const queryClient = useQueryClient();
-  const businessDate = useBusinessDateStore((s) => s.businessDate);
+  const workingDate = useBusinessDateStore((s) => s.businessDate);
 
-  const { data: session, isLoading } = useQuery({
-    queryKey: ["cash-session", outletId],
-    queryFn: () => fetchOpenCashSession(outletId),
+  const { data: drawer, isLoading } = useQuery({
+    queryKey: ["drawer-status", outletId, workingDate],
+    queryFn: () => fetchDrawerStatus(outletId, workingDate),
     enabled: !!outletId,
+    refetchInterval: 20_000,
+    refetchOnWindowFocus: true,
   });
+
+  const session = drawer?.session ?? null;
+
+  useEffect(() => {
+    if (openDialog && drawer) {
+      setOpening(String(Math.round(drawer.suggestedOpening)));
+    }
+  }, [openDialog, drawer]);
+
+  useEffect(() => {
+    if (closeDialog && drawer) {
+      setClosing(String(Math.round(drawer.liveExpectedCash)));
+    }
+  }, [closeDialog, drawer]);
+
+  const invalidateDrawer = async () => {
+    await queryClient.invalidateQueries({
+      queryKey: ["drawer-status", outletId],
+    });
+    await queryClient.invalidateQueries({
+      queryKey: ["cash-sessions-history"],
+    });
+    await queryClient.invalidateQueries({ queryKey: ["catch-up-days"] });
+    await queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
+  };
 
   const openMut = useMutation({
     mutationFn: openCashSessionApi,
@@ -56,11 +83,8 @@ export function CashSessionBar({
       if (r.ok) {
         toast.success("Cash drawer opened");
         setOpenDialog(false);
-        await queryClient.invalidateQueries({ queryKey: ["cash-session", outletId] });
-        await queryClient.invalidateQueries({ queryKey: ["cash-sessions-history"] });
-        if (redirectAfterOpen) {
-          router.push(redirectAfterOpen);
-        }
+        await invalidateDrawer();
+        if (redirectAfterOpen) router.push(redirectAfterOpen);
       } else {
         toast.error(r.message);
       }
@@ -74,11 +98,25 @@ export function CashSessionBar({
     mutationFn: closeCashSessionApi,
     onSuccess: async (r) => {
       if (r.ok) {
-        toast.success(`Drawer closed. Variance: ${formatTzs(r.variance)}`);
+        const varianceMsg =
+          r.variance === 0
+            ? "Drawer closed — matches expected cash"
+            : `Drawer closed · variance ${formatTzs(r.variance)}`;
+        toast.success(varianceMsg);
         setCloseDialog(false);
         setClosing("");
-        await queryClient.invalidateQueries({ queryKey: ["cash-session", outletId] });
-        await queryClient.invalidateQueries({ queryKey: ["cash-sessions-history"] });
+        await invalidateDrawer();
+        if (r.needsReconcile) {
+          toast.message("Reconcile this day to lock reports and notify directors", {
+            action: {
+              label: "Reconcile",
+              onClick: () =>
+                router.push(
+                  `/daily-closing?date=${r.businessDate}&counted=${Math.round(Number(closing) || r.expected)}`
+                ),
+            },
+          });
+        }
       } else {
         toast.error(r.message);
       }
@@ -98,30 +136,60 @@ export function CashSessionBar({
       toast.error("Select an active outlet first");
       return;
     }
-    openMut.mutate({ outletId, openingBalance, businessDate });
+    openMut.mutate({
+      outletId,
+      openingBalance,
+      businessDate: workingDate,
+    });
   };
 
   const statusPill = (
     <span
       className={cn(
-        "inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold touch-manipulation",
-        session
+        "inline-flex min-h-11 max-w-full flex-col items-start gap-0.5 rounded-full px-3 py-2 text-xs font-semibold touch-manipulation sm:flex-row sm:items-center sm:gap-1.5",
+        session && !drawer?.dateMismatch
           ? "bg-inflow-muted text-inflow"
-          : "bg-warning-muted text-warning"
+          : drawer?.dateMismatch
+            ? "bg-warning-muted text-warning"
+            : "bg-warning-muted text-warning"
       )}
+      title={
+        drawer?.dateMismatch
+          ? `Drawer open for ${session?.business_date} — close it before working on ${workingDate}`
+          : undefined
+      }
     >
-      <Banknote className="size-3.5 shrink-0" />
-      {isLoading ? (
-        <Loader2 className="size-3.5 animate-spin" />
-      ) : session ? (
-        <>Open · {formatTzs(session.opening_balance)}</>
-      ) : (
-        "Drawer closed"
-      )}
+      <span className="inline-flex items-center gap-1.5">
+        <Banknote className="size-3.5 shrink-0" />
+        {isLoading ? (
+          <Loader2 className="size-3.5 animate-spin" />
+        ) : session && !drawer?.dateMismatch ? (
+          <>Drawer · {formatTzs(drawer?.liveExpectedCash ?? 0)}</>
+        ) : drawer?.dateMismatch ? (
+          <>Stale · {session?.business_date}</>
+        ) : (
+          "Drawer closed"
+        )}
+      </span>
+      {session && !drawer?.dateMismatch && drawer ? (
+        <span className="font-normal opacity-80 sm:ml-1">
+          open {formatTzs(session.opening_balance)}
+        </span>
+      ) : null}
     </span>
   );
 
-  const actionButton = session ? (
+  const actionButton = drawer?.dateMismatch ? (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      className="min-h-11 shrink-0 rounded-full px-4"
+      onClick={() => setCloseDialog(true)}
+    >
+      Close {session?.business_date}
+    </Button>
+  ) : session ? (
     <Button
       type="button"
       size="sm"
@@ -137,6 +205,7 @@ export function CashSessionBar({
       size="sm"
       className="min-h-11 shrink-0 rounded-full px-4"
       onClick={() => setOpenDialog(true)}
+      disabled={drawer?.reconciled}
     >
       Open drawer
     </Button>
@@ -161,7 +230,8 @@ export function CashSessionBar({
           <DialogHeader>
             <DialogTitle>Open cash drawer</DialogTitle>
             <p className="text-sm text-muted-foreground">
-              Business date: <span className="font-medium text-foreground">{businessDate}</span>
+              Business date:{" "}
+              <span className="font-medium text-foreground">{workingDate}</span>
             </p>
           </DialogHeader>
           <form
@@ -171,6 +241,14 @@ export function CashSessionBar({
               handleOpen();
             }}
           >
+            {drawer ? (
+              <p className="form-hint text-xs">
+                Suggested opening (prior reconciled closing):{" "}
+                <span className="font-money font-semibold text-foreground">
+                  {formatTzs(drawer.suggestedOpening)}
+                </span>
+              </p>
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="opening-float">Opening float (TZS)</Label>
               <Input
@@ -213,6 +291,14 @@ export function CashSessionBar({
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>Close cash drawer</DialogTitle>
+            {drawer && session ? (
+              <p className="text-sm text-muted-foreground">
+                Expected in drawer:{" "}
+                <span className="font-money font-semibold text-foreground">
+                  {formatTzs(drawer.liveExpectedCash)}
+                </span>
+              </p>
+            ) : null}
           </DialogHeader>
           <form
             className="space-y-4"
@@ -227,7 +313,7 @@ export function CashSessionBar({
               closeMut.mutate({
                 sessionId: session.id,
                 closingBalance,
-                businessDate,
+                businessDate: session.business_date,
               });
             }}
           >
@@ -244,15 +330,21 @@ export function CashSessionBar({
                 autoFocus
               />
             </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-11 rounded-xl"
+            <p className="form-hint text-xs leading-snug">
+              After closing, reconcile the day so variance appears on the director
+              report and WhatsApp.
+            </p>
+            <DialogFooter className="flex-col gap-2 sm:flex-row">
+              <Link
+                href="/daily-closing"
+                className={cn(
+                  buttonVariants({ variant: "outline", size: "sm" }),
+                  "h-11 rounded-xl"
+                )}
                 onClick={() => setCloseDialog(false)}
               >
-                Cancel
-              </Button>
+                Reconcile
+              </Link>
               <Button
                 type="submit"
                 className="h-11 flex-1 rounded-xl"
