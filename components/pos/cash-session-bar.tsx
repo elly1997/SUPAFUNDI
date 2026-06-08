@@ -2,11 +2,10 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Banknote, Loader2 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +20,10 @@ import {
   fetchDrawerStatus,
   openCashSessionApi,
 } from "@/lib/api/cash-session-fetch";
+import {
+  buildClosingWhatsAppApi,
+  reconcileDailyClosingApi,
+} from "@/lib/api/daily-ops-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
@@ -31,6 +34,15 @@ type Props = {
   redirectAfterOpen?: string;
 };
 
+type EodStep = "count" | "reconcile" | "done";
+
+type CloseResult = {
+  variance: number;
+  expected: number;
+  businessDate: string;
+  counted: number;
+};
+
 export function CashSessionBar({
   outletId,
   variant = "bar",
@@ -39,6 +51,10 @@ export function CashSessionBar({
   const router = useRouter();
   const [openDialog, setOpenDialog] = useState(false);
   const [closeDialog, setCloseDialog] = useState(false);
+  const [eodStep, setEodStep] = useState<EodStep>("count");
+  const [closeResult, setCloseResult] = useState<CloseResult | null>(null);
+  const [eodNotes, setEodNotes] = useState("");
+  const [eodBusy, setEodBusy] = useState(false);
   const [opening, setOpening] = useState("");
   const [closing, setClosing] = useState("");
   const queryClient = useQueryClient();
@@ -61,10 +77,25 @@ export function CashSessionBar({
   }, [openDialog, drawer]);
 
   useEffect(() => {
-    if (closeDialog && drawer) {
+    if (closeDialog && drawer && eodStep === "count") {
       setClosing(String(Math.round(drawer.liveExpectedCash)));
     }
-  }, [closeDialog, drawer]);
+  }, [closeDialog, drawer, eodStep]);
+
+  const resetEodDialog = () => {
+    setCloseDialog(false);
+    setEodStep("count");
+    setCloseResult(null);
+    setEodNotes("");
+    setClosing("");
+  };
+
+  const openCloseWizard = () => {
+    setEodStep("count");
+    setCloseResult(null);
+    setEodNotes("");
+    setCloseDialog(true);
+  };
 
   const invalidateDrawer = async () => {
     await queryClient.invalidateQueries({
@@ -98,24 +129,18 @@ export function CashSessionBar({
     mutationFn: closeCashSessionApi,
     onSuccess: async (r) => {
       if (r.ok) {
-        const varianceMsg =
-          r.variance === 0
-            ? "Drawer closed — matches expected cash"
-            : `Drawer closed · variance ${formatTzs(r.variance)}`;
-        toast.success(varianceMsg);
-        setCloseDialog(false);
-        setClosing("");
         await invalidateDrawer();
-        if (r.needsReconcile) {
-          toast.message("Reconcile this day to lock reports and notify directors", {
-            action: {
-              label: "Reconcile",
-              onClick: () =>
-                router.push(
-                  `/daily-closing?date=${r.businessDate}&counted=${Math.round(Number(closing) || r.expected)}`
-                ),
-            },
-          });
+        setCloseResult({
+          variance: r.variance,
+          expected: r.expected,
+          businessDate: r.businessDate,
+          counted: Math.round(Number(closing) || r.expected),
+        });
+        setEodStep("reconcile");
+        if (r.variance === 0) {
+          toast.success("Drawer closed — matches expected");
+        } else {
+          toast.message(`Drawer closed · variance ${formatTzs(r.variance)}`);
         }
       } else {
         toast.error(r.message);
@@ -125,6 +150,133 @@ export function CashSessionBar({
       toast.error(e instanceof Error ? e.message : "Could not close drawer");
     },
   });
+
+  const reconcileMut = useMutation({
+    mutationFn: reconcileDailyClosingApi,
+    onSuccess: async (r) => {
+      if (r.ok) {
+        toast.success("Day locked — reports updated");
+        await invalidateDrawer();
+        void queryClient.invalidateQueries({
+          queryKey: ["reconciled-business-dates"],
+        });
+        setEodStep("done");
+      } else {
+        toast.error(r.message);
+      }
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Reconcile failed");
+    },
+  });
+
+  const whatsappMut = useMutation({
+    mutationFn: ({
+      outletId: oid,
+      businessDate: date,
+    }: {
+      outletId: string;
+      businessDate: string;
+    }) => buildClosingWhatsAppApi(oid, date),
+    onSuccess: async (r) => {
+      if (!r.ok) {
+        toast.error(r.message);
+        return;
+      }
+      if (r.whatsappUrl) {
+        window.open(r.whatsappUrl, "_blank", "noopener,noreferrer");
+        toast.success("Opening WhatsApp for director");
+      } else {
+        try {
+          await navigator.clipboard.writeText(r.message);
+          toast.message("Report copied — add director phone in Settings");
+        } catch {
+          toast.message(r.message.slice(0, 120) + "…");
+        }
+      }
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "WhatsApp failed");
+    },
+  });
+
+  const handleCloseDrawer = () => {
+    if (!session) return;
+    const closingBalance = Number(closing);
+    if (!Number.isFinite(closingBalance) || closingBalance < 0) {
+      toast.error("Enter counted cash in drawer");
+      return;
+    }
+    closeMut.mutate({
+      sessionId: session.id,
+      closingBalance,
+      businessDate: session.business_date,
+    });
+  };
+
+  const handleLockDay = () => {
+    if (!closeResult || !outletId) return;
+    reconcileMut.mutate({
+      outletId,
+      businessDate: closeResult.businessDate,
+      countedClosing: closeResult.counted,
+      notes: eodNotes.trim() || undefined,
+    });
+  };
+
+  const handleCloseAndLock = async () => {
+    if (!session) return;
+    const closingBalance = Number(closing);
+    if (!Number.isFinite(closingBalance) || closingBalance < 0) {
+      toast.error("Enter counted cash in drawer");
+      return;
+    }
+    setEodBusy(true);
+    try {
+      const closed = await closeCashSessionApi({
+        sessionId: session.id,
+        closingBalance,
+        businessDate: session.business_date,
+      });
+      if (!closed.ok) {
+        toast.error(closed.message);
+        return;
+      }
+      await invalidateDrawer();
+      const reconciled = await reconcileDailyClosingApi({
+        outletId,
+        businessDate: closed.businessDate,
+        countedClosing: closingBalance,
+        notes: eodNotes.trim() || undefined,
+      });
+      if (!reconciled.ok) {
+        setCloseResult({
+          variance: closed.variance,
+          expected: closed.expected,
+          businessDate: closed.businessDate,
+          counted: closingBalance,
+        });
+        setEodStep("reconcile");
+        toast.error(reconciled.message);
+        return;
+      }
+      void queryClient.invalidateQueries({
+        queryKey: ["reconciled-business-dates"],
+      });
+      setCloseResult({
+        variance: closed.variance,
+        expected: closed.expected,
+        businessDate: closed.businessDate,
+        counted: closingBalance,
+      });
+      setEodStep("done");
+      toast.success("Drawer closed and day locked");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "End of day failed");
+    } finally {
+      setEodBusy(false);
+    }
+  };
 
   const handleOpen = () => {
     const openingBalance = Number(opening);
@@ -185,7 +337,7 @@ export function CashSessionBar({
       size="sm"
       variant="outline"
       className="min-h-11 shrink-0 rounded-full px-4"
-      onClick={() => setCloseDialog(true)}
+      onClick={openCloseWizard}
     >
       Close {session?.business_date}
     </Button>
@@ -195,7 +347,7 @@ export function CashSessionBar({
       size="sm"
       variant="outline"
       className="min-h-11 shrink-0 rounded-full px-4"
-      onClick={() => setCloseDialog(true)}
+      onClick={openCloseWizard}
     >
       Close
     </Button>
@@ -287,73 +439,204 @@ export function CashSessionBar({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={closeDialog} onOpenChange={setCloseDialog}>
-        <DialogContent className="sm:max-w-sm">
+      <Dialog
+        open={closeDialog}
+        onOpenChange={(open) => {
+          if (!open) resetEodDialog();
+          else openCloseWizard();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Close cash drawer</DialogTitle>
-            {drawer && session ? (
+            <DialogTitle>
+              {eodStep === "count"
+                ? "End of day — count cash"
+                : eodStep === "reconcile"
+                  ? "End of day — lock day"
+                  : "Day complete"}
+            </DialogTitle>
+            {eodStep === "count" && drawer && session ? (
               <p className="text-sm text-muted-foreground">
                 Expected in drawer:{" "}
                 <span className="font-money font-semibold text-foreground">
                   {formatTzs(drawer.liveExpectedCash)}
                 </span>
               </p>
+            ) : closeResult ? (
+              <p className="text-sm text-muted-foreground">
+                {closeResult.businessDate} · counted{" "}
+                <span className="font-money font-semibold text-foreground">
+                  {formatTzs(closeResult.counted)}
+                </span>
+              </p>
             ) : null}
           </DialogHeader>
-          <form
-            className="space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!session) return;
-              const closingBalance = Number(closing);
-              if (!Number.isFinite(closingBalance) || closingBalance < 0) {
-                toast.error("Enter counted cash in drawer");
-                return;
-              }
-              closeMut.mutate({
-                sessionId: session.id,
-                closingBalance,
-                businessDate: session.business_date,
-              });
-            }}
-          >
-            <div className="space-y-2">
-              <Label htmlFor="closing-count">Counted cash in drawer (TZS)</Label>
-              <Input
-                id="closing-count"
-                type="number"
-                min={0}
-                step={1}
-                className="h-11 rounded-xl font-money"
-                value={closing}
-                onChange={(e) => setClosing(e.target.value)}
-                autoFocus
-              />
+
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 font-semibold",
+                eodStep === "count" ? "bg-primary/20 text-primary" : "bg-muted"
+              )}
+            >
+              1 Count
+            </span>
+            <span>→</span>
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 font-semibold",
+                eodStep === "reconcile"
+                  ? "bg-primary/20 text-primary"
+                  : eodStep === "done"
+                    ? "bg-inflow/20 text-inflow"
+                    : "bg-muted"
+              )}
+            >
+              2 Lock day
+            </span>
+          </div>
+
+          {eodStep === "count" ? (
+            <form
+              className="space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleCloseDrawer();
+              }}
+            >
+              <div className="space-y-2">
+                <Label htmlFor="closing-count">Counted cash in drawer (TZS)</Label>
+                <Input
+                  id="closing-count"
+                  type="number"
+                  min={0}
+                  step={1}
+                  className="h-11 rounded-xl font-money"
+                  value={closing}
+                  onChange={(e) => setClosing(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="eod-notes">Notes (optional)</Label>
+                <Input
+                  id="eod-notes"
+                  value={eodNotes}
+                  onChange={(e) => setEodNotes(e.target.value)}
+                  placeholder="Variance reason, handover…"
+                />
+              </div>
+              <DialogFooter className="flex-col gap-2 sm:flex-col">
+                <Button
+                  type="button"
+                  className="h-11 w-full rounded-xl btn-reconcile"
+                  disabled={closeMut.isPending || eodBusy || !session}
+                  onClick={() => void handleCloseAndLock()}
+                >
+                  {closeMut.isPending || eodBusy
+                    ? "Finishing…"
+                    : "Close drawer & lock day"}
+                </Button>
+                <Button
+                  type="submit"
+                  variant="outline"
+                  className="h-11 w-full rounded-xl"
+                  disabled={closeMut.isPending || !session}
+                >
+                  {closeMut.isPending ? "Closing…" : "Close drawer only"}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+
+          {eodStep === "reconcile" && closeResult ? (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm">
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Expected</span>
+                  <span className="font-money">{formatTzs(closeResult.expected)}</span>
+                </div>
+                <div className="mt-1 flex justify-between gap-2">
+                  <span className="text-muted-foreground">Counted</span>
+                  <span className="font-money">{formatTzs(closeResult.counted)}</span>
+                </div>
+                <div className="mt-2 flex justify-between gap-2 border-t border-border/60 pt-2 font-semibold">
+                  <span>Variance</span>
+                  <span
+                    className={cn(
+                      "font-money",
+                      closeResult.variance === 0
+                        ? "text-inflow"
+                        : closeResult.variance > 0
+                          ? "text-inflow"
+                          : "text-destructive"
+                    )}
+                  >
+                    {formatTzs(closeResult.variance)}
+                  </span>
+                </div>
+              </div>
+              <p className="form-hint text-xs">
+                Lock the day so reports and director WhatsApp use these figures.
+                You cannot add sales to this date after locking.
+              </p>
+              <DialogFooter className="flex-col gap-2 sm:flex-col">
+                <Button
+                  type="button"
+                  className="h-11 w-full rounded-xl btn-reconcile"
+                  disabled={reconcileMut.isPending}
+                  onClick={handleLockDay}
+                >
+                  {reconcileMut.isPending ? "Locking…" : "Lock day"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 w-full rounded-xl"
+                  onClick={() => {
+                    toast.message(
+                      "Day not locked — reconcile from header when ready"
+                    );
+                    resetEodDialog();
+                  }}
+                >
+                  Skip for now
+                </Button>
+              </DialogFooter>
             </div>
-            <p className="form-hint text-xs leading-snug">
-              After closing, reconcile the day so variance appears on the director
-              report and WhatsApp.
-            </p>
-            <DialogFooter className="flex-col gap-2 sm:flex-row">
-              <Link
-                href="/daily-closing"
-                className={cn(
-                  buttonVariants({ variant: "outline", size: "sm" }),
-                  "h-11 rounded-xl"
-                )}
-                onClick={() => setCloseDialog(false)}
-              >
-                Reconcile
-              </Link>
-              <Button
-                type="submit"
-                className="h-11 flex-1 rounded-xl"
-                disabled={closeMut.isPending || !session}
-              >
-                {closeMut.isPending ? "Closing…" : "Close drawer"}
-              </Button>
-            </DialogFooter>
-          </form>
+          ) : null}
+
+          {eodStep === "done" && closeResult ? (
+            <div className="space-y-4">
+              <p className="text-sm text-inflow">
+                {closeResult.businessDate} is reconciled. Variance{" "}
+                {formatTzs(closeResult.variance)}.
+              </p>
+              <DialogFooter className="flex-col gap-2 sm:flex-col">
+                <Button
+                  type="button"
+                  className="h-11 w-full rounded-xl"
+                  disabled={whatsappMut.isPending}
+                  onClick={() =>
+                    whatsappMut.mutate({
+                      outletId,
+                      businessDate: closeResult.businessDate,
+                    })
+                  }
+                >
+                  {whatsappMut.isPending ? "Preparing…" : "Send WhatsApp report"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 w-full rounded-xl"
+                  onClick={resetEodDialog}
+                >
+                  Done
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </>
