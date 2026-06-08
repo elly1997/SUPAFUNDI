@@ -6,6 +6,9 @@ import {
   fetchByInChunks,
 } from "@/lib/supabase/query-chunks";
 import { listCategoriesForOrg } from "@/lib/actions/inventory";
+import { listProductUnitsMap } from "@/lib/actions/product-units";
+import type { ProductUnitOption } from "@/lib/products/units";
+import { defaultUnitsForProduct } from "@/lib/products/units";
 
 export type PosCategory = { id: string; name: string };
 
@@ -34,6 +37,8 @@ export type PosCatalogRow = {
   costPrice: number;
   recentSoldQty: number;
   avgDailySold: number;
+  /** All sell units (pcs, box, kg, …) when configured in inventory. */
+  units: ProductUnitOption[];
 };
 
 export type PosCatalogInput = {
@@ -111,7 +116,7 @@ export async function listPosCatalogProducts(
 
   const ids = products.map((p) => p.id);
 
-  const [priceRows, stockRows] = await Promise.all([
+  const [priceRows, stockRows, unitsMap] = await Promise.all([
     fetchByInChunks(ids, async (chunk) => {
       const { data, error } = await supabase
         .from("product_prices")
@@ -130,6 +135,7 @@ export async function listPosCatalogProducts(
         .in("product_id", chunk);
       return { data, error };
     }),
+    listProductUnitsMap(ids),
   ]);
 
   const retailMap = new Map<string, number>();
@@ -166,6 +172,15 @@ export async function listPosCatalogProducts(
         costPrice: stock?.cost ?? 0,
         recentSoldQty,
         avgDailySold: Math.round((recentSoldQty / 30) * 10) / 10,
+        units:
+          unitsMap[p.id]?.length
+            ? unitsMap[p.id]!
+            : defaultUnitsForProduct(
+                p.id,
+                p.unit,
+                retailPrice,
+                wholesalePrice
+              ),
       };
     })
     .filter((p) => p.stockQty > 0 || p.retailPrice > 0 || p.wholesalePrice > 0)

@@ -182,49 +182,39 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     refetch: refetchProducts,
   } = usePosProducts(effectiveOutletId, pricingMode, deferredSearch, categoryId);
 
-  const cartCatalogPriceKey = useMemo(() => {
-    if (!lines.length || !products.length) return "";
-    const parts: string[] = [];
-    for (const line of lines) {
-      const p = products.find((x) => x.id === line.productId);
-      if (!p) continue;
-      const unit =
-        p.units.find((u) => u.unitLabel === line.unit) ?? p.units[0];
-      if (!unit) continue;
-      parts.push(
-        `${line.lineKey}:${resolveUnitPrice(
-          unit,
-          p.retailPrice,
-          p.wholesalePrice,
-          pricingMode
-        )}`
-      );
-    }
-    return parts.sort().join("|");
-  }, [lines, products, pricingMode]);
-
+  /** Re-price cart lines when retail/wholesale mode changes. */
   useEffect(() => {
     const modeChanged = prevPricingModeRef.current !== pricingMode;
     prevPricingModeRef.current = pricingMode;
-    if (!cartCatalogPriceKey) return;
+    if (!modeChanged || !lines.length || !products.length) return;
 
     const map = new Map<
       string,
       { unitPrice: number; pricingMode: PosPricingMode }
     >();
-    for (const part of cartCatalogPriceKey.split("|")) {
-      const sep = part.lastIndexOf(":");
-      if (sep <= 0) continue;
-      const lineKey = part.slice(0, sep);
-      const unitPrice = Number(part.slice(sep + 1));
-      if (!lineKey || !Number.isFinite(unitPrice)) continue;
-      map.set(lineKey, { unitPrice, pricingMode });
+    for (const line of lines) {
+      const p = products.find((x) => x.id === line.productId);
+      if (!p) continue;
+
+      const unit = p.units.find((u) => u.unitLabel === line.unit);
+      if (!unit) continue;
+
+      map.set(line.lineKey, {
+        unitPrice: resolveUnitPrice(
+          unit,
+          p.retailPrice,
+          p.wholesalePrice,
+          pricingMode
+        ),
+        pricingMode,
+      });
     }
+
     const updated = syncLinePrices(map);
-    if (updated > 0 && modeChanged) {
+    if (updated > 0) {
       toast.message(`Updated ${updated} cart line price(s)`);
     }
-  }, [pricingMode, cartCatalogPriceKey, syncLinePrices]);
+  }, [pricingMode, lines, products, syncLinePrices]);
 
   useEffect(() => {
     if (!lines.length || !products.length) return;

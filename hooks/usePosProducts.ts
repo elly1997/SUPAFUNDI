@@ -6,8 +6,7 @@ import { fetchPosCatalog } from "@/lib/api/pos-products-fetch";
 import { getPublicSupabaseEnv } from "@/lib/env/public";
 import type { PosCatalogRow } from "@/lib/actions/pos";
 import {
-  defaultUnitsForProduct,
-  enrichUnitsWithConversion,
+  resolveCatalogProductUnits,
   type ProductUnitOption,
 } from "@/lib/products/units";
 
@@ -30,7 +29,7 @@ export type PosProductRow = {
   units: ProductUnitOption[];
 };
 
-const POS_CATALOG_CACHE_PREFIX = "supafundi_pos_catalog";
+const POS_CATALOG_CACHE_PREFIX = "supafundi_pos_catalog_v2";
 const POS_CATALOG_LIMIT = 120;
 
 function catalogCacheKey(outletId: string, search: string, categoryId: string | null) {
@@ -77,17 +76,13 @@ function mapCatalogProducts(
   return catalog.map((p) => {
     const displayPrice =
       pricingMode === "wholesale" ? p.wholesalePrice : p.retailPrice;
-    const rawUnits = defaultUnitsForProduct(
+    const units = resolveCatalogProductUnits(
       p.id,
       p.unit,
       p.retailPrice,
-      p.wholesalePrice
-    );
-    const units = enrichUnitsWithConversion(
-      rawUnits,
-      p.retailPrice,
       p.wholesalePrice,
-      pricingMode
+      pricingMode,
+      p.units
     );
     return {
       id: p.id,

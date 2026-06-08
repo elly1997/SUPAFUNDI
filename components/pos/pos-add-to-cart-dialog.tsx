@@ -66,8 +66,14 @@ export function PosAddToCartDialog({
 
   const units = useMemo(() => {
     if (!product) return [];
+    const fromCatalog = product.units ?? [];
     const loaded = unitsByProduct[product.id];
-    const rawUnits = loaded?.length ? loaded : product.units;
+    const rawUnits =
+      loaded?.length && loaded.length >= fromCatalog.length
+        ? loaded
+        : fromCatalog.length
+          ? fromCatalog
+          : loaded ?? [];
     return enrichUnitsWithConversion(
       rawUnits,
       product.retailPrice,

@@ -259,6 +259,32 @@ export function defaultUnitsForProduct(
   ];
 }
 
+/** POS/catalog: DB units when configured, else synthetic base unit, then conversion hints. */
+export function resolveCatalogProductUnits(
+  productId: string,
+  baseUnitLabel: string,
+  retailPrice: number,
+  wholesalePrice: number,
+  pricingMode: "retail" | "wholesale" = "retail",
+  unitsFromDb?: ProductUnitOption[] | null
+): ProductUnitOption[] {
+  const raw =
+    unitsFromDb && unitsFromDb.length > 0
+      ? unitsFromDb
+      : defaultUnitsForProduct(
+          productId,
+          baseUnitLabel,
+          retailPrice,
+          wholesalePrice
+        );
+  return enrichUnitsWithConversion(
+    raw,
+    retailPrice,
+    wholesalePrice,
+    pricingMode
+  );
+}
+
 export function maxSellFromCartFields(
   availableStock: number,
   factorToBase: number,
