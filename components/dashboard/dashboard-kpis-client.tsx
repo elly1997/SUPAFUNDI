@@ -44,23 +44,23 @@ export function DashboardKpisClient({ fallbackOutletId }: Props) {
       </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
-          title="Sales today"
+          title="Sales"
           value={formatTzs(kpis.salesToday)}
-          subtitle={`${kpis.salesCountToday} transactions`}
+          subtitle={`${kpis.salesCountToday} tx · ${businessDate}`}
           variant="inflow"
           className="glass-card"
         />
         <KpiCard
-          title="Expenses today"
+          title="Expenses"
           value={formatTzs(kpis.expensesToday)}
-          subtitle="Recorded cash out"
+          subtitle={`Cash out · ${businessDate}`}
           variant="outflow"
           className="glass-card"
         />
         <KpiCard
-          title="Net today"
+          title="Net"
           value={formatTzs(kpis.netToday)}
-          subtitle="Sales minus expenses"
+          subtitle={`Sales − expenses · ${businessDate}`}
           variant={kpis.netToday >= 0 ? "inflow" : "outflow"}
           className="glass-card"
         />

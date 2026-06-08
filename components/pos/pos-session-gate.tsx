@@ -40,13 +40,29 @@ export function PosSessionGate({
     enabled: mounted && !!outletId,
   });
 
+  const dayReconciled = !!drawer?.reconciled;
   const sessionOpen = !!drawer?.session && !drawer.dateMismatch;
   const canSell =
-    mounted && (sessionOpen || canBypass || sessionOverride);
+    mounted &&
+    !dayReconciled &&
+    (sessionOpen || canBypass || sessionOverride);
 
   return (
     <>
-      {mounted && !sessionOpen && !isLoading && (
+      {mounted && dayReconciled && !isLoading && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-destructive/10 px-4 py-2.5">
+          <div className="flex min-w-0 items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">Day reconciled</p>
+              <p className="text-xs text-muted-foreground">
+                Change the business date in the header to record new sales.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+      {mounted && !dayReconciled && !sessionOpen && !isLoading && (
         <div
           className={cn(
             "flex flex-wrap items-center justify-between gap-3 border-b px-4 py-2.5",

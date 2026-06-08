@@ -48,6 +48,7 @@ import {
 import type { CustomerListRow } from "@/lib/actions/customers";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
+import { customerBalanceView } from "@/lib/utils/customer-balance";
 import { useAuthStore } from "@/stores/authStore";
 
 type FormValues = {
@@ -209,13 +210,17 @@ export function CustomersPageClient() {
                   <TableHead>Phone</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead className="text-right">Credit limit</TableHead>
-                  <TableHead className="text-right">Credit due</TableHead>
-                  <TableHead className="text-right">Deposit</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {customers.map((c) => (
+                {customers.map((c) => {
+                  const balance = customerBalanceView(
+                    c.outstanding_balance,
+                    c.deposit_balance
+                  );
+                  return (
                   <TableRow key={c.id}>
                     <TableCell>
                       <Link
@@ -231,18 +236,17 @@ export function CustomersPageClient() {
                       {formatTzs(c.credit_limit)}
                     </TableCell>
                     <TableCell className="text-right font-money">
-                      {c.outstanding_balance > 0 ? (
-                        <span className="text-warning">
-                          {formatTzs(c.outstanding_balance)}
+                      {balance.netDue > 0 ? (
+                        <span className="text-warning" title="Amount due">
+                          Due {formatTzs(balance.netDue)}
+                        </span>
+                      ) : balance.depositHeld > 0 ? (
+                        <span className="text-inflow" title="Deposit on account">
+                          Dep {formatTzs(balance.depositHeld)}
                         </span>
                       ) : (
                         "—"
                       )}
-                    </TableCell>
-                    <TableCell className="text-right font-money text-inflow">
-                      {c.deposit_balance > 0
-                        ? formatTzs(c.deposit_balance)
-                        : "—"}
                     </TableCell>
                     <TableCell>
                       <div className="flex justify-end gap-1">
@@ -308,7 +312,8 @@ export function CustomersPageClient() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                );
+                })}
               </TableBody>
             </Table>
           )}

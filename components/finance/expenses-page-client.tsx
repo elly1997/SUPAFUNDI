@@ -35,8 +35,12 @@ import { ExpenseVoidActions } from "@/components/finance/expense-void-actions";
 import { fetchExpenses, recordExpenseApi } from "@/lib/api/daily-ops-fetch";
 import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { formatTzs } from "@/lib/utils/currency";
+import { useAuthStore } from "@/stores/authStore";
+import { useBusinessDateStore } from "@/stores/businessDateStore";
 
 export function ExpensesPageClient() {
+  const businessDate = useBusinessDateStore((s) => s.businessDate);
+  const outletId = useAuthStore((s) => s.activeOutletId);
   const [open, setOpen] = useState(false);
   const [category, setCategory] = useState("misc");
   const [description, setDescription] = useState("");
@@ -161,6 +165,10 @@ export function ExpensesPageClient() {
           <DialogHeader>
             <DialogTitle>Record expense</DialogTitle>
           </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Business date: <span className="font-medium text-foreground">{businessDate}</span>
+            {outletId ? null : " · Select an outlet in the header"}
+          </p>
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Category</Label>
@@ -201,6 +209,8 @@ export function ExpensesPageClient() {
                   description,
                   amount: Number(amount),
                   paidFromCash: paidCash,
+                  expenseDate: businessDate,
+                  outletId: outletId ?? undefined,
                 })
               }
               disabled={recordMut.isPending || !amount}

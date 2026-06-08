@@ -11,6 +11,7 @@ import { postJournalEntry } from "@/lib/actions/accounting";
 import { applyCustomerDepositToCredit } from "@/lib/actions/credit";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
 import { requireManagerContext } from "@/lib/server/require-manager";
+import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
@@ -213,6 +214,10 @@ export async function completeSale(
       return { ok: false, message: "Invalid outlet for your organization." };
     }
 
+    const businessDate = resolveBusinessDate(input.businessDate);
+    const dayCheck = await checkBusinessDayMutable(input.outletId, businessDate);
+    if (!dayCheck.ok) return dayCheck;
+
     const productIds = input.lines.map((l) => l.productId);
     const { data: stockRows, error: stockErr } = await supabase
       .from("stock")
@@ -331,7 +336,6 @@ export async function completeSale(
       }
     }
 
-    const businessDate = resolveBusinessDate(input.businessDate);
     const saleTimestamp = isoDateToTimestamptz(businessDate);
 
     const invoiceNo = await generateInvoiceNo(
@@ -1082,9 +1086,23 @@ export async function voidSale(
 export async function listCustomersForPos(): Promise<PosCustomer[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+
+  const { data: needsApply } = await supabase
+    .from("customers")
+    .select("id")
+    .eq("organization_id", ctx.organizationId)
+    .gt("outstanding_balance", 0)
+    .gt("deposit_balance", 0);
+  for (const c of needsApply ?? []) {
+    const { applyCustomerDepositToCredit } = await import("@/lib/actions/credit");
+    await applyCustomerDepositToCredit(c.id);
+  }
+
   const { data, error } = await supabase
     .from("customers")
-    .select("id, name, phone, outstanding_balance, credit_limit, price_type")
+    .select(
+      "id, name, phone, outstanding_balance, deposit_balance, credit_limit, price_type"
+    )
     .eq("organization_id", ctx.organizationId)
     .eq("is_active", true)
     .order("name")
@@ -1097,6 +1115,7 @@ export async function listCustomersForPos(): Promise<PosCustomer[]> {
     name: c.name,
     phone: c.phone,
     outstanding_balance: Number(c.outstanding_balance),
+    deposit_balance: Number(c.deposit_balance ?? 0),
     credit_limit: Number(c.credit_limit),
     price_type: c.price_type ?? "retail",
   }));

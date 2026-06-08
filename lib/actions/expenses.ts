@@ -10,6 +10,7 @@ import {
 } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { requireManagerContext } from "@/lib/server/require-manager";
+import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { resolveBusinessDate } from "@/lib/utils/iso-date";
@@ -198,18 +199,22 @@ export async function recordExpense(
     }
 
     const accountCode = await resolveExpenseAccountCode(input.category);
+    const expenseDate = resolveBusinessDate(input.expenseDate);
+    const outletId = input.outletId ?? ctx.outletId;
+    const dayCheck = await checkBusinessDayMutable(outletId, expenseDate);
+    if (!dayCheck.ok) return dayCheck;
 
     const { data: expense, error: expErr } = await supabase
       .from("expenses")
       .insert({
         organization_id: ctx.organizationId,
-        outlet_id: input.outletId ?? ctx.outletId,
+        outlet_id: outletId,
         category: input.category.trim(),
         description: input.description?.trim() || null,
         amount: input.amount,
         payment_method: input.paymentMethod ?? (input.paidFromCash ? "cash" : "credit"),
         reference_no: input.referenceNo?.trim() || null,
-        expense_date: resolveBusinessDate(input.expenseDate),
+        expense_date: expenseDate,
         created_by: ctx.userId,
       })
       .select("id")
@@ -222,8 +227,8 @@ export async function recordExpense(
       description: `Expense: ${input.category} — ${input.description ?? ""}`.trim(),
       sourceType: "expense",
       sourceId: expense.id,
-      outletId: input.outletId ?? ctx.outletId ?? undefined,
-      entryDate: resolveBusinessDate(input.expenseDate),
+      outletId: outletId ?? undefined,
+      entryDate: expenseDate,
       lines: buildExpenseJournalLines({
         amount: input.amount,
         paidFromCash: input.paidFromCash,

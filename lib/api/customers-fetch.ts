@@ -6,6 +6,7 @@ export type PosCustomer = {
   name: string;
   phone: string | null;
   outstanding_balance: number;
+  deposit_balance: number;
   credit_limit: number;
   price_type: string;
 };

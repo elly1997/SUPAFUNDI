@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { AppBrandHeader } from "@/components/layout/app-brand-header";
+import { BusinessDateBanner } from "@/components/layout/business-date-banner";
 import { cn } from "@/lib/utils";
 
 type DashboardShellProps = {
@@ -16,6 +17,7 @@ export function DashboardShell({ outlets, children }: DashboardShellProps) {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <AppBrandHeader outlets={outlets} />
+      <BusinessDateBanner />
       <main
         className={cn(
           "min-h-0 flex-1",

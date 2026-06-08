@@ -6,6 +6,7 @@ import { buildGrnJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { createSupplierBillFromGrn } from "@/lib/actions/payables";
 import { paySupplier } from "@/lib/actions/suppliers";
+import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -454,6 +455,10 @@ export async function receiveFromPurchaseOrder(
       return { ok: false, message: "PO has no delivery outlet." };
     }
 
+    const receivedDate = resolveBusinessDate(input.businessDate);
+    const dayCheck = await checkBusinessDayMutable(po.outlet_id, receivedDate);
+    if (!dayCheck.ok) return dayCheck;
+
     const receiveLines: { productId: string; quantity: number; unitCost: number; poItemId: string }[] = [];
     for (const line of input.lines) {
       const item = po.items.find((i) => i.product_id === line.productId);
@@ -479,7 +484,6 @@ export async function receiveFromPurchaseOrder(
     );
     const taxAmount = computeTaxAmount(inventoryValue, vatConfig, taxRate);
     const totalAmount = roundMoney(inventoryValue + taxAmount);
-    const receivedDate = resolveBusinessDate(input.businessDate);
     const movementAt = isoDateToTimestamptz(receivedDate);
 
     const { data: grn, error: grnErr } = await supabase

@@ -7,6 +7,7 @@ import { buildCustomerDepositReceiptJournalLines } from "@/lib/accounting/postin
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
 import { requireManagerContext } from "@/lib/server/require-manager";
+import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
@@ -114,6 +115,11 @@ export async function recordCustomerDeposit(
     const input = depositInput.parse(raw);
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
+    const paymentDate =
+      input.paymentDate ?? new Date().toISOString().slice(0, 10);
+    const dayCheck = await checkBusinessDayMutable(input.outletId, paymentDate);
+    if (!dayCheck.ok) return dayCheck;
+
     const { data: customer } = await supabase
       .from("customers")
       .select("deposit_balance, outstanding_balance, name")
@@ -122,8 +128,6 @@ export async function recordCustomerDeposit(
       .maybeSingle();
     if (!customer) return { ok: false, message: "Customer not found." };
 
-    const paymentDate =
-      input.paymentDate ?? new Date().toISOString().slice(0, 10);
     const paymentTs = `${paymentDate}T12:00:00.000Z`;
     const referenceNo = input.notes?.trim() || `DEP-${customer.name}`;
 

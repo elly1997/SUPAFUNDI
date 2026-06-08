@@ -28,6 +28,7 @@ import {
   type PosCustomer,
 } from "@/lib/api/customers-fetch";
 import { formatTzs } from "@/lib/utils/currency";
+import { customerBalanceView } from "@/lib/utils/customer-balance";
 
 type Props = {
   customerId: string;
@@ -80,6 +81,7 @@ export function PosCartCustomer({
         name,
         phone,
         outstanding_balance: 0,
+        deposit_balance: 0,
         credit_limit: 0,
         price_type: "retail",
       });
@@ -117,14 +119,24 @@ export function PosCartCustomer({
                 Loading…
               </SelectItem>
             ) : (
-              customers.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name}
-                  {c.outstanding_balance > 0
-                    ? ` · ${formatTzs(c.outstanding_balance)}`
-                    : ""}
-                </SelectItem>
-              ))
+              customers.map((c) => {
+                const balance = customerBalanceView(
+                  c.outstanding_balance,
+                  c.deposit_balance ?? 0
+                );
+                const hint =
+                  balance.netDue > 0
+                    ? ` · due ${formatTzs(balance.netDue)}`
+                    : balance.depositHeld > 0
+                      ? ` · dep ${formatTzs(balance.depositHeld)}`
+                      : "";
+                return (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
+                    {hint}
+                  </SelectItem>
+                );
+              })
             )}
           </SelectContent>
         </Select>

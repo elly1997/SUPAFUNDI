@@ -8,6 +8,7 @@ import {
 } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
+import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
@@ -341,6 +342,8 @@ export async function recordCustomerPayment(
     const supabase = await createServerSupabaseClient();
     const paymentDate =
       input.paymentDate ?? new Date().toISOString().slice(0, 10);
+    const dayCheck = await checkBusinessDayMutable(ctx.outletId, paymentDate);
+    if (!dayCheck.ok) return dayCheck;
     const paymentTs = `${paymentDate}T12:00:00.000Z`;
 
     const { data: customer } = await supabase
