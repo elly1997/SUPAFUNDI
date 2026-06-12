@@ -35,7 +35,10 @@ import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { PoPayDialog } from "@/components/procurement/po-pay-dialog";
 import { PoStatusBadges } from "@/components/procurement/po-status-badges";
+import { PricingRecommendationHint } from "@/components/inventory/pricing-recommendation-hint";
 import { createPurchaseOrderApi } from "@/lib/api/daily-ops-fetch";
+import { fetchProductPricingRecommendation } from "@/lib/api/pricing-insights-fetch";
+import { patchCatalogField } from "@/lib/api/inventory-catalog-fetch";
 import { fetchPurchaseOrders } from "@/lib/api/procurement-fetch";
 import {
   createSupplierApi,
@@ -93,6 +96,25 @@ export function PurchaseOrdersPageClient() {
     queryFn: fetchSupplierOptions,
   });
   const { data: products = [] } = usePosProducts(outletId || null);
+  const [applyingPrice, setApplyingPrice] = useState(false);
+
+  const effectiveUnitCost = useMemo(() => {
+    if (unitCost > 0) return unitCost;
+    const p = products.find((x) => x.id === pickProduct);
+    return p?.costPrice ?? 0;
+  }, [unitCost, pickProduct, products]);
+
+  const { data: priceRec, isLoading: priceRecLoading } = useQuery({
+    queryKey: ["product-price-rec", "po", outletId, pickProduct, effectiveUnitCost],
+    queryFn: () =>
+      fetchProductPricingRecommendation({
+        outletId,
+        productId: pickProduct,
+        unitCost: effectiveUnitCost > 0 ? effectiveUnitCost : undefined,
+      }),
+    enabled: open && !!outletId && !!pickProduct,
+    staleTime: 30_000,
+  });
 
   const outletLabel = useMemo(
     () => outlets.find((o) => o.id === outletId)?.name,
@@ -393,7 +415,11 @@ export function PurchaseOrdersPageClient() {
                   <Label className="text-xs text-muted-foreground">Product</Label>
                   <Select
                     value={pickProduct || undefined}
-                    onValueChange={(v) => setPickProduct(v ?? "")}
+                    onValueChange={(v) => {
+                      setPickProduct(v ?? "");
+                      const p = products.find((x) => x.id === v);
+                      if (p) setUnitCost(p.costPrice);
+                    }}
                     disabled={!outletId}
                   >
                     <SelectTrigger className={selectFieldClass}>
@@ -444,6 +470,35 @@ export function PurchaseOrdersPageClient() {
                   </Button>
                 </div>
               </div>
+
+              {pickProduct && outletId ? (
+                <PricingRecommendationHint
+                  recommendation={priceRec}
+                  isLoading={priceRecLoading}
+                  applying={applyingPrice}
+                  onApplyPrice={async (price) => {
+                    setApplyingPrice(true);
+                    try {
+                      await patchCatalogField({
+                        productId: pickProduct,
+                        outletId,
+                        field: "retailPrice",
+                        value: price,
+                      });
+                      toast.success(`Selling price set to ${formatTzs(price)}`);
+                      void queryClient.invalidateQueries({
+                        queryKey: ["pos-products"],
+                      });
+                    } catch (e) {
+                      toast.error(
+                        e instanceof Error ? e.message : "Could not update price"
+                      );
+                    } finally {
+                      setApplyingPrice(false);
+                    }
+                  }}
+                />
+              ) : null}
 
               {lines.length > 0 && (
                 <ul className="mt-2 divide-y divide-border rounded-lg border border-border">

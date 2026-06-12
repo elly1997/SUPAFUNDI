@@ -1,20 +1,13 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { format, parseISO } from "date-fns";
 import { Boxes, Loader2, Package, TrendingDown, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import {
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { StockValueTrendChart } from "@/components/reports/report-charts";
+import { BundleInsightsPanel } from "@/components/reports/bundle-insights-panel";
+import { SeasonalInsightsPanel } from "@/components/reports/seasonal-insights-panel";
+import { fetchPricingInsights } from "@/lib/api/pricing-insights-fetch";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { KpiCard } from "@/components/ui/kpi-card";
@@ -117,14 +110,12 @@ export function InventoryReportPanel({ enabled = true }: InventoryReportPanelPro
     staleTime: 120_000,
   });
 
-  const chartData = useMemo(
-    () =>
-      (data?.stockValueSeries ?? []).map((p) => ({
-        ...p,
-        label: format(parseISO(p.date), "d MMM"),
-      })),
-    [data?.stockValueSeries]
-  );
+  const { data: pricingData } = useQuery({
+    queryKey: ["pricing-insights", "inventory", outletId],
+    queryFn: () => fetchPricingInsights({ outletId }),
+    enabled: enabled && !!outletId,
+    staleTime: 120_000,
+  });
 
   if (!outletId) {
     return (
@@ -214,6 +205,19 @@ export function InventoryReportPanel({ enabled = true }: InventoryReportPanelPro
             </Card>
           </div>
 
+          <SeasonalInsightsPanel
+            seasonal={data.seasonal}
+            categoryTrends={data.categorySeasonalTrends}
+            insights={data.seasonalInsights}
+            title="Inventory & seasonal insights"
+            subtitle="When to buy, what to stock, and how inventory ties to sales rhythms."
+          />
+
+          <BundleInsightsPanel
+            bundles={pricingData?.bundles ?? []}
+            priceAdjustments={pricingData?.recommendations ?? []}
+          />
+
           <Card className="glass-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
@@ -226,69 +230,12 @@ export function InventoryReportPanel({ enabled = true }: InventoryReportPanelPro
               </p>
             </CardHeader>
             <CardContent>
-              {chartData.length === 0 ? (
+              {data.stockValueSeries.length === 0 ? (
                 <p className="py-12 text-center text-sm text-muted-foreground">
                   No movement history in this range yet.
                 </p>
               ) : (
-                <div className="h-72 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart
-                      data={chartData}
-                      margin={{ top: 8, right: 12, left: 4, bottom: 0 }}
-                    >
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        stroke="hsl(var(--border))"
-                        opacity={0.4}
-                      />
-                      <XAxis
-                        dataKey="label"
-                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
-                        interval="preserveStartEnd"
-                      />
-                      <YAxis
-                        tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
-                        tickFormatter={(v) =>
-                          v >= 1_000_000
-                            ? `${(v / 1_000_000).toFixed(1)}M`
-                            : String(v)
-                        }
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          background: "hsl(var(--card))",
-                          border: "1px solid hsl(var(--border))",
-                          borderRadius: 8,
-                        }}
-                        formatter={(value, name) => [
-                          formatTzs(Number(value ?? 0)),
-                          String(name) === "value" ? "At cost" : "At retail",
-                        ]}
-                        labelFormatter={(label) => label}
-                      />
-                      <Legend />
-                      <Line
-                        type="monotone"
-                        dataKey="value"
-                        name="At cost"
-                        stroke="hsl(var(--primary))"
-                        strokeWidth={2.5}
-                        dot={false}
-                        activeDot={{ r: 4 }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="retailValue"
-                        name="At retail"
-                        stroke="hsl(var(--warning))"
-                        strokeWidth={2}
-                        dot={false}
-                        strokeDasharray="4 4"
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
+                <StockValueTrendChart data={data.stockValueSeries} height={300} />
               )}
             </CardContent>
           </Card>

@@ -1,6 +1,9 @@
 "use server";
 
+import { eachDayOfInterval, format, parseISO, subDays } from "date-fns";
 import { getReconciledDatesInRange } from "@/lib/actions/daily-closing";
+import { computeSalesSeasonalAnalysis } from "@/lib/actions/seasonal-analytics";
+import type { SeasonalAnalysis } from "@/lib/analytics/seasonal-insights";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { fetchByInChunks } from "@/lib/supabase/query-chunks";
@@ -427,7 +430,27 @@ export type OperationalReports = {
     revenue: number;
   }[];
   salesByDay: { date: string; total: number; count: number }[];
+  /** Daily sales, expenses, and net for trend charts (all days in range). */
+  trendByDay: { date: string; sales: number; expenses: number; net: number }[];
   paymentMix: { method: string; total: number; count: number }[];
+  performance: {
+    avgDailySales: number;
+    daysWithSales: number;
+    salesChangePct: number | null;
+    netProfitChangePct: number | null;
+    priorSalesTotal: number;
+    priorNetProfit: number;
+    peakDay: { date: string; total: number } | null;
+    quietDay: { date: string; total: number } | null;
+    capitalGuidance: {
+      severity: "neutral" | "positive" | "warning";
+      title: string;
+      body: string;
+      bullets: string[];
+    };
+  };
+  /** Weekday / month-part / calendar-month patterns (90-day lookback). */
+  seasonal: SeasonalAnalysis;
 };
 
 function todayIso() {
@@ -490,7 +513,7 @@ export async function getOperationalReports(
   if (creditRes.error) throw new Error(creditRes.error.message);
 
   const sales = salesRes.data ?? [];
-  return buildOperationalResult(
+  const result = await buildOperationalResult(
     from,
     to,
     sales,
@@ -498,6 +521,15 @@ export async function getOperationalReports(
     creditRes.data ?? [],
     stockRes.data,
     sales.map((s) => s.id),
+    supabase,
+    ctx.organizationId
+  );
+  return enrichOperationalWithPerformance(
+    result,
+    from,
+    to,
+    outletId,
+    false,
     supabase,
     ctx.organizationId
   );
@@ -660,7 +692,7 @@ export async function getOperationalReportsByRange(
     expenses = expenses.filter((e) => reconciled.has(e.expense_date));
   }
 
-  return buildOperationalResult(
+  const result = await buildOperationalResult(
     fromDate,
     toDate,
     sales,
@@ -671,13 +703,184 @@ export async function getOperationalReportsByRange(
     supabase,
     ctx.organizationId
   );
+
+  return enrichOperationalWithPerformance(
+    result,
+    fromDate,
+    toDate,
+    outletId,
+    reconciledDaysOnly,
+    supabase,
+    ctx.organizationId
+  );
+}
+
+async function enrichOperationalWithPerformance(
+  result: OperationalReports,
+  fromDate: string,
+  toDate: string,
+  outletId: string | null | undefined,
+  reconciledDaysOnly: boolean,
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  organizationId: string
+): Promise<OperationalReports> {
+  const daySpan = result.salesByDay.length || 1;
+  const priorTo = format(subDays(parseISO(fromDate), 1), "yyyy-MM-dd");
+  const priorFrom = format(subDays(parseISO(fromDate), daySpan), "yyyy-MM-dd");
+
+  const [priorPl, currentPl, priorSalesTotal, seasonal] = await Promise.all([
+    getProfitLossStatement(priorFrom, priorTo, outletId, reconciledDaysOnly),
+    getProfitLossStatement(fromDate, toDate, outletId, reconciledDaysOnly),
+    sumSalesInRange(
+      supabase,
+      organizationId,
+      priorFrom,
+      priorTo,
+      outletId,
+      reconciledDaysOnly
+    ),
+    computeSalesSeasonalAnalysis(
+      organizationId,
+      toDate,
+      outletId,
+      reconciledDaysOnly
+    ),
+  ]);
+
+  result.performance = buildPerformanceInsights(
+    result,
+    currentPl,
+    priorSalesTotal,
+    priorPl.netProfit
+  );
+  result.seasonal = seasonal;
+  return result;
+}
+
+async function sumSalesInRange(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
+  organizationId: string,
+  fromDate: string,
+  toDate: string,
+  outletId?: string | null,
+  reconciledDaysOnly = false
+): Promise<number> {
+  const { from, to } = reportPeriodBounds(fromDate, toDate);
+  let q = supabase
+    .from("sales")
+    .select("total_amount, sale_date")
+    .eq("organization_id", organizationId)
+    .eq("status", "completed")
+    .gte("sale_date", from)
+    .lte("sale_date", to);
+  if (outletId) q = q.eq("outlet_id", outletId);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  let rows = data ?? [];
+  if (reconciledDaysOnly) {
+    const reconciled = new Set(
+      await getReconciledDatesInRange(fromDate, toDate, outletId)
+    );
+    rows = rows.filter((s) =>
+      reconciled.has(businessDateFromTimestamptz(String(s.sale_date)))
+    );
+  }
+  return roundMoney(rows.reduce((s, r) => s + Number(r.total_amount), 0));
+}
+
+function buildPerformanceInsights(
+  data: OperationalReports,
+  pl: ProfitLossStatement,
+  priorSalesTotal: number,
+  priorNetProfit: number
+): OperationalReports["performance"] {
+  const salesChangePct =
+    priorSalesTotal > 0
+      ? roundMoney(
+          ((data.salesTotal - priorSalesTotal) / priorSalesTotal) * 100
+        )
+      : null;
+  const netProfitChangePct =
+    priorNetProfit !== 0
+      ? roundMoney(((pl.netProfit - priorNetProfit) / Math.abs(priorNetProfit)) * 100)
+      : pl.netProfit > 0
+        ? 100
+        : null;
+
+  const withSales = data.salesByDay.filter((d) => d.total > 0);
+  const daysWithSales = withSales.length;
+  const daySpan = data.salesByDay.length || 1;
+  const avgDailySales = roundMoney(data.salesTotal / daySpan);
+
+  const peakDay =
+    withSales.length > 0
+      ? withSales.reduce((best, d) => (d.total > best.total ? d : best))
+      : null;
+  const quietDay =
+    withSales.length > 0
+      ? withSales.reduce((best, d) => (d.total < best.total ? d : best))
+      : null;
+
+  const bullets: string[] = [];
+  let severity: "neutral" | "positive" | "warning" = "neutral";
+  let title = "Capital planning";
+  let body = "";
+
+  if (pl.netProfit > 0) {
+    severity = "positive";
+    title = "Period generated profit";
+    body = `Net profit ${formatTzsShort(pl.netProfit)} in this range. Treat rent, salaries, and large purchases as commitments only after reserving cash for stock replenishment and supplier payables.`;
+    bullets.push(
+      `Gross profit ${formatTzsShort(pl.grossProfit)} — margin before shop expenses.`,
+      `Operating expenses ${formatTzsShort(pl.operatingExpenses)} — compare to fixed costs (rent, wages).`,
+      `Average daily sales ${formatTzsShort(avgDailySales)} — use quiet weeks to slow purchasing.`
+    );
+  } else if (pl.netProfit < 0) {
+    severity = "warning";
+    title = "Period shows a loss";
+    body = `Net loss ${formatTzsShort(Math.abs(pl.netProfit))}. Delay non-essential purchases, review slow-moving stock, and reconcile daily closings before increasing fixed costs.`;
+    bullets.push(
+      `Sales ${formatTzsShort(data.salesTotal)} vs expenses ${formatTzsShort(data.expensesTotal)}.`,
+      `${data.lowStockCount} SKU(s) need replenishment — prioritise fast movers only.`,
+      `Customer credit outstanding ${formatTzsShort(data.creditOutstanding)} — collect before extending more credit.`
+    );
+  } else {
+    body = `Break-even period. Track daily sales in Sales Analysis and stock build-up under Inventory before committing to rent or salary increases.`;
+    bullets.push(`Reconcile each business day so reports reflect true cash position.`);
+  }
+
+  if (salesChangePct != null && salesChangePct < -15) {
+    bullets.push(
+      `Sales down ${Math.abs(salesChangePct)}% vs the previous ${daySpan}-day window — review seasonality and promotions.`
+    );
+  } else if (salesChangePct != null && salesChangePct > 15) {
+    bullets.push(
+      `Sales up ${salesChangePct}% vs prior period — increase stock on fast movers before peak days.`
+    );
+  }
+
+  return {
+    avgDailySales,
+    daysWithSales,
+    salesChangePct,
+    netProfitChangePct,
+    priorSalesTotal,
+    priorNetProfit,
+    peakDay,
+    quietDay,
+    capitalGuidance: { severity, title, body, bullets },
+  };
+}
+
+function formatTzsShort(n: number) {
+  return `TZS ${Math.round(n).toLocaleString("en-TZ")}`;
 }
 
 async function buildOperationalResult(
   from: string,
   to: string,
   sales: { id: string; total_amount: number; sale_date?: string }[],
-  expenses: { amount: number }[],
+  expenses: { amount: number; expense_date: string }[],
   creditRows: { outstanding_balance: number }[],
   stockData: { quantity: number; products: unknown }[] | null,
   saleIds: string[],
@@ -693,24 +896,48 @@ async function buildOperationalResult(
   );
   const expensesCount = expenses.length;
 
-  const byDay = new Map<string, { total: number; count: number }>();
+  const salesByDayMap = new Map<string, { total: number; count: number }>();
   for (const s of sales) {
     const d = s.sale_date
       ? businessDateFromTimestamptz(s.sale_date)
       : to;
-    const prev = byDay.get(d) ?? { total: 0, count: 0 };
-    byDay.set(d, {
+    const prev = salesByDayMap.get(d) ?? { total: 0, count: 0 };
+    salesByDayMap.set(d, {
       total: prev.total + Number(s.total_amount),
       count: prev.count + 1,
     });
   }
-  const salesByDay = Array.from(byDay.entries())
-    .map(([date, v]) => ({
+
+  const expensesByDayMap = new Map<string, number>();
+  for (const e of expenses) {
+    const d = e.expense_date;
+    expensesByDayMap.set(d, (expensesByDayMap.get(d) ?? 0) + Number(e.amount));
+  }
+
+  const allDays = eachDayOfInterval({
+    start: parseISO(from),
+    end: parseISO(to),
+  }).map((d) => format(d, "yyyy-MM-dd"));
+
+  const salesByDay = allDays.map((date) => {
+    const v = salesByDayMap.get(date) ?? { total: 0, count: 0 };
+    return {
       date,
       total: roundMoney(v.total),
       count: v.count,
-    }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+    };
+  });
+
+  const trendByDay = allDays.map((date) => {
+    const salesAmt = salesByDayMap.get(date)?.total ?? 0;
+    const expAmt = expensesByDayMap.get(date) ?? 0;
+    return {
+      date,
+      sales: roundMoney(salesAmt),
+      expenses: roundMoney(expAmt),
+      net: roundMoney(salesAmt - expAmt),
+    };
+  });
 
   let topProducts: OperationalReports["topProducts"] = [];
   let paymentMix: OperationalReports["paymentMix"] = [];
@@ -839,12 +1066,7 @@ async function buildOperationalResult(
     }).length;
   }
 
-  const daySpan = Math.max(
-    1,
-    Math.ceil(
-      (new Date(to).getTime() - new Date(from).getTime()) / 86400000
-    ) + 1
-  );
+  const daySpan = allDays.length || 1;
 
   return buildOperationalPayload(
     from,
@@ -858,8 +1080,45 @@ async function buildOperationalResult(
     lowStockCount,
     topProducts,
     salesByDay,
+    trendByDay,
     paymentMix
   );
+}
+
+function emptySeasonal(): SeasonalAnalysis {
+  return {
+    hasEnoughData: false,
+    lookbackDays: 0,
+    overallAvgDaily: 0,
+    weekdayPattern: [],
+    strongestWeekday: null,
+    quietestWeekday: null,
+    weekendVsWeekdayPct: null,
+    monthPartPattern: [],
+    calendarMonthPattern: [],
+    strongestMonth: null,
+    quietestMonth: null,
+    insights: [],
+  };
+}
+
+function emptyPerformance(): OperationalReports["performance"] {
+  return {
+    avgDailySales: 0,
+    daysWithSales: 0,
+    salesChangePct: null,
+    netProfitChangePct: null,
+    priorSalesTotal: 0,
+    priorNetProfit: 0,
+    peakDay: null,
+    quietDay: null,
+    capitalGuidance: {
+      severity: "neutral",
+      title: "Capital planning",
+      body: "Select a date range and reconcile daily closings for actionable insights.",
+      bullets: [],
+    },
+  };
 }
 
 function buildOperationalPayload(
@@ -874,6 +1133,7 @@ function buildOperationalPayload(
   lowStockCount: number,
   topProducts: OperationalReports["topProducts"],
   salesByDay: OperationalReports["salesByDay"],
+  trendByDay: OperationalReports["trendByDay"],
   paymentMix: OperationalReports["paymentMix"]
 ): OperationalReports {
   return {
@@ -892,7 +1152,10 @@ function buildOperationalPayload(
     lowStockCount,
     topProducts,
     salesByDay,
+    trendByDay,
     paymentMix,
+    performance: emptyPerformance(),
+    seasonal: emptySeasonal(),
   };
 }
 

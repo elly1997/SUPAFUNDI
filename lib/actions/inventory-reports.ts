@@ -13,6 +13,16 @@ import {
   fetchByInChunks,
 } from "@/lib/supabase/query-chunks";
 import { roundMoney } from "@/lib/utils/calculations";
+import {
+  buildInventorySeasonalInsights,
+  type CategorySeasonalTrend,
+  type SeasonalAnalysis,
+  type SeasonalInsight,
+} from "@/lib/analytics/seasonal-insights";
+import {
+  computeCategorySeasonalTrends,
+  computeSalesSeasonalAnalysis,
+} from "@/lib/actions/seasonal-analytics";
 
 export type { InventoryReportPreset } from "@/lib/inventory/report-range";
 
@@ -66,6 +76,9 @@ export type InventoryAnalyticsReport = {
   fastMovingProducts: FastMovingProductRow[];
   purchaseHints: PurchaseAllocationHint[];
   lowStockCount: number;
+  seasonal: SeasonalAnalysis;
+  categorySeasonalTrends: CategorySeasonalTrend[];
+  seasonalInsights: SeasonalInsight[];
 };
 
 const IN_MOVEMENTS = new Set([
@@ -112,6 +125,22 @@ export async function getInventoryAnalyticsReport(
     fastMovingProducts: [],
     purchaseHints: [],
     lowStockCount: 0,
+    seasonal: {
+      hasEnoughData: false,
+      lookbackDays: 0,
+      overallAvgDaily: 0,
+      weekdayPattern: [],
+      strongestWeekday: null,
+      quietestWeekday: null,
+      weekendVsWeekdayPct: null,
+      monthPartPattern: [],
+      calendarMonthPattern: [],
+      strongestMonth: null,
+      quietestMonth: null,
+      insights: [],
+    },
+    categorySeasonalTrends: [],
+    seasonalInsights: [],
   };
 
   if (!filterOutlet) return empty;
@@ -148,69 +177,64 @@ export async function getInventoryAnalyticsReport(
   }
 
   const fromIso = `${from}T00:00:00.000Z`;
+  const toEndIso = `${to}T23:59:59.999Z`;
+
+  /** All movements through period end — needed to open the period with correct qty. */
   const movements = await fetchAllPaginated(async (fromIdx, toIdx) => {
     const { data, error } = await supabase
       .from("stock_movements")
       .select("product_id, movement_type, quantity, created_at")
       .eq("organization_id", ctx.organizationId)
       .eq("outlet_id", filterOutlet)
-      .gte("created_at", fromIso)
+      .lte("created_at", toEndIso)
       .order("created_at", { ascending: true })
       .range(fromIdx, toIdx);
     return { data, error };
   });
 
-  let dayEnds = eachDayOfInterval({
+  const fromMs = parseISO(from).getTime();
+
+  const openingQty = new Map<string, number>();
+  for (const id of productIds) openingQty.set(id, 0);
+  for (const m of movements) {
+    if (!m.product_id) continue;
+    if (new Date(m.created_at).getTime() < fromMs) {
+      const prev = openingQty.get(m.product_id) ?? 0;
+      openingQty.set(
+        m.product_id,
+        Math.max(0, prev + movementDelta(m.movement_type, Number(m.quantity)))
+      );
+    }
+  }
+
+  const dayEnds = eachDayOfInterval({
     start: parseISO(from),
     end: parseISO(to),
   }).map((d) => endOfDay(d));
-  if (dayEnds.length > 62) {
-    const sampled: Date[] = [];
-    for (let i = 0; i < dayEnds.length; i += 7) {
-      sampled.push(dayEnds[i]);
-    }
-    const last = dayEnds[dayEnds.length - 1];
-    if (sampled[sampled.length - 1]?.getTime() !== last.getTime()) {
-      sampled.push(last);
-    }
-    dayEnds = sampled;
-  }
 
-  const movementsByProduct = new Map<
-    string,
-    { at: number; delta: number }[]
-  >();
-  for (const m of movements) {
-    if (!m.product_id) continue;
-    const list = movementsByProduct.get(m.product_id) ?? [];
-    list.push({
-      at: new Date(m.created_at).getTime(),
-      delta: movementDelta(m.movement_type, Number(m.quantity)),
-    });
-    movementsByProduct.set(m.product_id, list);
-  }
-
-  function qtyAtEndOfDay(productId: string, endMs: number): number {
-    const current = qtyNow.get(productId) ?? 0;
-    const list = movementsByProduct.get(productId);
-    if (!list?.length) return current;
-    let after = 0;
-    for (const m of list) {
-      if (m.at > endMs) after += m.delta;
-    }
-    return Math.max(0, current - after);
-  }
-
+  const runningQty = new Map(openingQty);
+  let moveIdx = 0;
   const stockValueSeries: StockValuePoint[] = dayEnds.map((dayEnd) => {
     const endMs = dayEnd.getTime();
+    while (moveIdx < movements.length) {
+      const m = movements[moveIdx];
+      const at = new Date(m.created_at).getTime();
+      if (at > endMs) break;
+      if (m.product_id) {
+        const prev = runningQty.get(m.product_id) ?? 0;
+        runningQty.set(
+          m.product_id,
+          Math.max(0, prev + movementDelta(m.movement_type, Number(m.quantity)))
+        );
+      }
+      moveIdx += 1;
+    }
     let value = 0;
     let retailValue = 0;
     for (const id of productIds) {
-      const qty = qtyAtEndOfDay(id, endMs);
-      const cost = costByProduct.get(id) ?? 0;
-      const retail = retailByProduct.get(id) ?? 0;
-      value += qty * cost;
-      retailValue += qty * retail;
+      const qty = runningQty.get(id) ?? 0;
+      value += qty * (costByProduct.get(id) ?? 0);
+      retailValue += qty * (retailByProduct.get(id) ?? 0);
     }
     return {
       date: format(dayEnd, "yyyy-MM-dd"),
@@ -457,6 +481,22 @@ export async function getInventoryAnalyticsReport(
     lowStockCount
   );
 
+  const [seasonal, categorySeasonalTrends] = await Promise.all([
+    computeSalesSeasonalAnalysis(
+      ctx.organizationId,
+      to,
+      filterOutlet,
+      false
+    ),
+    computeCategorySeasonalTrends(ctx.organizationId, filterOutlet, to),
+  ]);
+
+  const seasonalInsights = buildInventorySeasonalInsights(
+    seasonal,
+    categorySeasonalTrends,
+    stockValueChangePct
+  );
+
   return {
     preset,
     from,
@@ -472,6 +512,9 @@ export async function getInventoryAnalyticsReport(
     fastMovingProducts,
     purchaseHints,
     lowStockCount,
+    seasonal,
+    categorySeasonalTrends,
+    seasonalInsights,
   };
 }
 

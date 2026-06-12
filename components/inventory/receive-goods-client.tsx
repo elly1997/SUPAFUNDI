@@ -41,6 +41,9 @@ import {
 import { useTaxRate } from "@/hooks/useTaxRate";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { cn } from "@/lib/utils";
+import { PricingRecommendationHint } from "@/components/inventory/pricing-recommendation-hint";
+import { fetchProductPricingRecommendation } from "@/lib/api/pricing-insights-fetch";
+import { patchCatalogField } from "@/lib/api/inventory-catalog-fetch";
 import { retailPriceFromCost } from "@/lib/utils/calculations";
 import { formatTzs } from "@/lib/utils/currency";
 import { useOrgSettingsStore } from "@/stores/orgSettingsStore";
@@ -220,6 +223,31 @@ export function ReceiveGoodsClient() {
       })),
     [products]
   );
+
+  const effectiveUnitCost = useMemo(() => {
+    if (unitCost > 0) return unitCost;
+    const p = products.find((x) => x.id === pickProduct);
+    return p?.costPrice ?? 0;
+  }, [unitCost, pickProduct, products]);
+
+  const { data: priceRec, isLoading: priceRecLoading } = useQuery({
+    queryKey: [
+      "product-price-rec",
+      outletId,
+      pickProduct,
+      effectiveUnitCost,
+    ],
+    queryFn: () =>
+      fetchProductPricingRecommendation({
+        outletId,
+        productId: pickProduct,
+        unitCost: effectiveUnitCost > 0 ? effectiveUnitCost : undefined,
+      }),
+    enabled: !!outletId && !!pickProduct,
+    staleTime: 30_000,
+  });
+
+  const [applyingPrice, setApplyingPrice] = useState(false);
 
   const pickDisplayLabel = useMemo(() => {
     if (!pickProduct) return undefined;
@@ -668,6 +696,36 @@ export function ReceiveGoodsClient() {
                     }
                   />
                 </div>
+                {pickProduct ? (
+                  <div className="w-full basis-full">
+                    <PricingRecommendationHint
+                      recommendation={priceRec}
+                      isLoading={priceRecLoading}
+                      applying={applyingPrice}
+                      onApplyPrice={async (price) => {
+                        setApplyingPrice(true);
+                        try {
+                          await patchCatalogField({
+                            productId: pickProduct,
+                            outletId,
+                            field: "retailPrice",
+                            value: price,
+                          });
+                          toast.success(`Selling price set to ${formatTzs(price)}`);
+                          void queryClient.invalidateQueries({
+                            queryKey: ["product-price-catalog"],
+                          });
+                        } catch (e) {
+                          toast.error(
+                            e instanceof Error ? e.message : "Could not update price"
+                          );
+                        } finally {
+                          setApplyingPrice(false);
+                        }
+                      }}
+                    />
+                  </div>
+                ) : null}
                 <Button
                   type="button"
                   variant="secondary"

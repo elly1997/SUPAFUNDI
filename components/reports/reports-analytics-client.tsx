@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { format, parseISO, subMonths } from "date-fns";
+import { format, subMonths } from "date-fns";
 import {
   BarChart3,
   Boxes,
@@ -13,10 +13,16 @@ import {
   TrendingUp,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { FinancialReports } from "@/components/reports/financial-reports";
 import { InventoryReportPanel } from "@/components/reports/inventory-report-panel";
+import { PerformanceInsightsPanel } from "@/components/reports/performance-insights-panel";
+import { SeasonalInsightsPanel } from "@/components/reports/seasonal-insights-panel";
+import {
+  DailySalesChart,
+  SalesExpenseTrendChart,
+} from "@/components/reports/report-charts";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
@@ -251,11 +257,6 @@ export function ReportsAnalyticsClient() {
     }
   }, [fromDate, toDate, outletId, reconciledOnly]);
 
-  const chartMax = useMemo(
-    () => Math.max(...(operational?.salesByDay.map((d) => d.total) ?? [0]), 1),
-    [operational?.salesByDay]
-  );
-
   const renderOverview = () => {
     if (opLoading && !operational) {
       return (
@@ -296,6 +297,22 @@ export function ReportsAnalyticsClient() {
             className="glass-card"
           />
         </div>
+        <PerformanceInsightsPanel operational={operational} pl={pl ?? undefined} />
+        <SeasonalInsightsPanel seasonal={operational.seasonal} />
+        {operational.trendByDay.length > 0 ? (
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle className="text-base">Sales vs expenses</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Daily cash in vs shop expenses — use quiet stretches to protect
+                capital for rent and payroll.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <SalesExpenseTrendChart data={operational.trendByDay} />
+            </CardContent>
+          </Card>
+        ) : null}
         <ProfitLossPanel data={pl} isLoading={plLoading} />
       </div>
     );
@@ -303,14 +320,19 @@ export function ReportsAnalyticsClient() {
 
   const renderSalesAnalysis = () => {
     if (!operational) return null;
+    const hasSales = operational.salesByDay.some((d) => d.total > 0);
     return (
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="space-y-4">
         <Card className="glass-card">
           <CardHeader>
-            <CardTitle className="text-base">Daily sales</CardTitle>
+            <CardTitle className="text-base">Daily sales trend</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Every day in the selected range — zero days included so peaks and
+              slow periods are easy to compare.
+            </p>
           </CardHeader>
           <CardContent>
-            {operational.salesByDay.length === 0 ? (
+            {!hasSales ? (
               <p className="py-8 text-center text-sm text-muted-foreground">
                 No sales in this period.
                 {reconciledOnly ? (
@@ -322,26 +344,22 @@ export function ReportsAnalyticsClient() {
                 ) : null}
               </p>
             ) : (
-              <div className="flex h-44 items-end gap-2">
-                {operational.salesByDay.map((d) => (
-                  <div
-                    key={d.date}
-                    className="flex min-w-0 flex-1 flex-col items-center gap-1"
-                  >
-                    <div
-                      className="w-full rounded-t-md bg-gradient-to-t from-primary/80 to-primary"
-                      style={{
-                        height: `${Math.max(8, (d.total / chartMax) * 100)}%`,
-                      }}
-                      title={formatTzs(d.total)}
-                    />
-                    <span className="text-[10px] text-muted-foreground">
-                      {format(parseISO(d.date), "d MMM")}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              <DailySalesChart data={operational.salesByDay} height={300} />
             )}
+          </CardContent>
+        </Card>
+        <SeasonalInsightsPanel
+          seasonal={operational.seasonal}
+          title="Sales seasonality"
+          subtitle="Weekly and monthly rhythms in your selected range and 90-day lookback."
+        />
+        <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="glass-card lg:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base">Sales vs expenses</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SalesExpenseTrendChart data={operational.trendByDay} height={280} />
           </CardContent>
         </Card>
         <Card className="glass-card">
@@ -380,6 +398,7 @@ export function ReportsAnalyticsClient() {
             )}
           </CardContent>
         </Card>
+        </div>
       </div>
     );
   };

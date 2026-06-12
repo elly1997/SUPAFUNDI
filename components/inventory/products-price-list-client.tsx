@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Sparkles, Trash2 } from "lucide-react";
+import { Loader2, Sparkles, Tag, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -27,7 +27,13 @@ import {
 } from "@/lib/api/inventory-catalog-fetch";
 import { useOrgSettingsStore } from "@/stores/orgSettingsStore";
 import { groupCatalogByCategory } from "@/lib/products/catalog-grouping";
+import { fetchPricingInsights } from "@/lib/api/pricing-insights-fetch";
+import {
+  needsPriceAdjustment,
+  type PriceRecommendation,
+} from "@/lib/analytics/pricing-insights";
 import { invalidatePriceDependentQueries } from "@/lib/query/invalidate-price-queries";
+import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
 
 type Props = {
@@ -80,6 +86,26 @@ export function ProductsPriceListClient({
   });
   const rows = useMemo(() => data?.products ?? [], [data?.products]);
   const total = data?.total ?? 0;
+  const rowIds = useMemo(() => rows.map((r) => r.id), [rows]);
+
+  const { data: pricingInsights } = useQuery({
+    queryKey: ["pricing-insights", outletId, rowIds.join(",")],
+    queryFn: () =>
+      fetchPricingInsights({
+        outletId,
+        productIds: rowIds,
+      }),
+    enabled: !!outletId && rowIds.length > 0,
+    staleTime: 60_000,
+  });
+
+  const recByProduct = useMemo(() => {
+    const map = new Map<string, PriceRecommendation>();
+    for (const r of pricingInsights?.recommendations ?? []) {
+      map.set(r.productId, r);
+    }
+    return map;
+  }, [pricingInsights?.recommendations]);
 
   useEffect(() => {
     onTotalChange?.(total);
@@ -178,6 +204,13 @@ export function ProductsPriceListClient({
               {missingRetailCount > 0 ? ` · ${missingRetailCount} on this page` : ""}
             </Button>
           )}
+          {(pricingInsights?.adjustmentCount ?? 0) > 0 ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2.5 py-1 text-xs font-medium text-warning">
+              <Tag className="size-3.5" />
+              {pricingInsights?.adjustmentCount} price suggestion
+              {(pricingInsights?.adjustmentCount ?? 0) === 1 ? "" : "s"} on page
+            </span>
+          ) : null}
         {canManage && onClearAll && (
           <Button
             type="button"
@@ -212,12 +245,13 @@ export function ProductsPriceListClient({
                   <TableHead>Unit</TableHead>
                   <TableHead className="text-right">Buying</TableHead>
                   <TableHead className="text-right">Selling</TableHead>
+                  <TableHead className="text-right">Suggested</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-muted-foreground">
+                    <TableCell colSpan={6} className="text-muted-foreground">
                       {total === 0
                         ? "No products yet. Import on Stock or add one manually."
                         : "No products match your filters."}
@@ -229,7 +263,7 @@ export function ProductsPriceListClient({
                       <CatalogCategoryTableHeader
                         categoryName={section.categoryName}
                         itemCount={section.rows.length}
-                        colSpan={5}
+                        colSpan={6}
                         avgMarginPct={priceListSectionMargin(section.rows)}
                       />
                       {section.rows.map((r) => (
@@ -239,6 +273,7 @@ export function ProductsPriceListClient({
                           saving={savingId?.startsWith(r.id) ?? false}
                           onSave={saveField}
                           onEdit={onEditProduct}
+                          recommendation={recByProduct.get(r.id)}
                         />
                       ))}
                     </Fragment>
@@ -285,6 +320,7 @@ function PriceListRow({
   saving,
   onSave,
   onEdit,
+  recommendation,
 }: {
   row: ProductPriceCatalogRow;
   saving: boolean;
@@ -294,6 +330,7 @@ function PriceListRow({
     value: string | number
   ) => void;
   onEdit?: (productId: string) => void;
+  recommendation?: PriceRecommendation;
 }) {
   const [code, setCode] = useState(row.code ?? "");
   const [cost, setCost] = useState(String(row.costPrice || ""));
@@ -385,6 +422,37 @@ function PriceListRow({
             </span>
           ) : null}
         </div>
+      </TableCell>
+      <TableCell className="text-right align-top">
+        {recommendation && needsPriceAdjustment(recommendation) ? (
+          <div className="flex flex-col items-end gap-1">
+            <span
+              className="font-money text-sm font-semibold tabular-nums text-primary"
+              title={recommendation.summary}
+            >
+              {formatTzs(recommendation.recommendedRetail)}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-primary"
+              disabled={saving}
+              onClick={() =>
+                onSave(row, "retailPrice", recommendation.recommendedRetail)
+              }
+            >
+              Apply
+            </Button>
+            <span className="max-w-[140px] text-right text-[10px] leading-snug text-muted-foreground">
+              {recommendation.summary}
+            </span>
+          </div>
+        ) : recommendation ? (
+          <span className="text-xs text-muted-foreground">OK</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        )}
       </TableCell>
     </TableRow>
   );
