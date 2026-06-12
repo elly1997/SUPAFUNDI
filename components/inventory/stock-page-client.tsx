@@ -115,7 +115,7 @@ export function StockPageClient() {
     setPage(1);
   }, [deferredSearch, categoryFilter, statusFilter, outletId]);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching } = useQuery({
     queryKey: [
       "stock-levels",
       "page",
@@ -135,6 +135,9 @@ export function StockPageClient() {
         categoryId: categoryFilter,
         status: statusFilter,
       }),
+    enabled: !!outletId,
+    staleTime: 90_000,
+    placeholderData: (prev) => prev,
   });
   const rows = useMemo(() => data?.rows ?? [], [data?.rows]);
   const summary = data?.summary;
@@ -329,7 +332,12 @@ export function StockPageClient() {
 
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle>Stock on hand</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            Stock on hand
+            {isFetching && !isLoading ? (
+              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+            ) : null}
+          </CardTitle>
           <div className="flex flex-wrap gap-2">
             <Link
               href="/inventory/transfers"
@@ -347,7 +355,7 @@ export function StockPageClient() {
           </div>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoading && !data ? (
             <div className="flex justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
@@ -455,7 +463,7 @@ export function StockPageClient() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={page <= 1 || isLoading}
+                  disabled={page <= 1 || isFetching}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                 >
                   Previous
@@ -464,7 +472,7 @@ export function StockPageClient() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={!data?.hasMore || isLoading}
+                  disabled={!data?.hasMore || isFetching}
                   onClick={() => setPage((p) => p + 1)}
                 >
                   Next

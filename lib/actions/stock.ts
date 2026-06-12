@@ -2,10 +2,35 @@
 
 import { revalidatePath } from "next/cache";
 import { listProductPriceCatalog } from "@/lib/actions/inventory";
+import { resolveCategoryName } from "@/lib/products/catalog-grouping";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { fetchByInChunks } from "@/lib/supabase/query-chunks";
+import {
+  fetchAllPaginated,
+  fetchByInChunks,
+} from "@/lib/supabase/query-chunks";
 import { roundMoney } from "@/lib/utils/calculations";
+
+type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
+
+type ProductLite = {
+  id: string;
+  name: string;
+  code: string | null;
+  unit: string;
+  category_id: string | null;
+  reorder_point: number;
+};
+
+function escapeLikePattern(value: string) {
+  return value.replace(/[%_]/g, (m) => `\\${m}`);
+}
+
+function pricesDb(supabase: Supabase) {
+  return supabase as unknown as {
+    from: (table: "product_prices") => ReturnType<Supabase["from"]>;
+  };
+}
 
 export type StockStatus = "out_of_stock" | "low" | "ok";
 
@@ -63,6 +88,257 @@ function stockStatus(qty: number, reorder: number): StockStatus {
   if (qty <= 0) return "out_of_stock";
   if (reorder > 0 && qty <= reorder) return "low";
   return "ok";
+}
+
+async function fetchOutletStockMap(
+  supabase: Supabase,
+  organizationId: string,
+  outletId: string
+) {
+  const rows = await fetchAllPaginated(async (from, to) => {
+    const { data, error } = await supabase
+      .from("stock")
+      .select("product_id, quantity, cost_price")
+      .eq("organization_id", organizationId)
+      .eq("outlet_id", outletId)
+      .range(from, to);
+    return { data, error };
+  });
+  const map = new Map<string, { quantity: number; cost_price: number }>();
+  for (const row of rows) {
+    map.set(row.product_id, {
+      quantity: Number(row.quantity),
+      cost_price: Number(row.cost_price),
+    });
+  }
+  return map;
+}
+
+async function fetchRetailPriceMap(
+  supabase: Supabase,
+  productIds: string[]
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (!productIds.length) return map;
+  const prices = await fetchByInChunks(productIds, async (chunk) => {
+    const { data, error } = await pricesDb(supabase)
+      .from("product_prices")
+      .select("product_id, price")
+      .in("product_id", chunk)
+      .eq("price_type", "retail")
+      .is("effective_to", null);
+    return { data, error };
+  });
+  for (const p of prices as { product_id: string; price: number }[]) {
+    if (!map.has(p.product_id)) {
+      map.set(p.product_id, Number(p.price));
+    }
+  }
+  return map;
+}
+
+async function fetchVelocityMap(
+  supabase: Supabase,
+  outletId: string,
+  onlyProductIds?: Set<string>
+) {
+  const velocity = new Map<string, number>();
+  const { data: velocityRows, error: velErr } = await (
+    supabase as unknown as {
+      rpc: (
+        fn: "get_product_sales_velocity",
+        args: { p_outlet_id: string; p_days: number }
+      ) => Promise<{
+        data: { product_id: string; qty: number }[] | null;
+        error: { message: string } | null;
+      }>;
+    }
+  ).rpc("get_product_sales_velocity", {
+    p_outlet_id: outletId,
+    p_days: 30,
+  });
+  if (velErr) throw new Error(velErr.message);
+  for (const row of velocityRows ?? []) {
+    const pid = row.product_id as string;
+    if (onlyProductIds && !onlyProductIds.has(pid)) continue;
+    velocity.set(pid, Number(row.qty) || 0);
+  }
+  return velocity;
+}
+
+function toStockLevelRow(
+  product: ProductLite,
+  outletId: string,
+  outletName: string,
+  categoryNameById: Map<string, string>,
+  stockMap: Map<string, { quantity: number; cost_price: number }>,
+  retailMap: Map<string, number>,
+  velocity: Map<string, number>
+): StockLevelRow {
+  const stock = stockMap.get(product.id);
+  const qty = stock?.quantity ?? 0;
+  const cost = stock?.cost_price ?? 0;
+  const retail = retailMap.get(product.id) ?? 0;
+  const reorder = Number(product.reorder_point ?? 0);
+  const sold30 = velocity.get(product.id) ?? 0;
+  const avgDaily = roundMoney(sold30 / 30);
+  const daysOfCover =
+    avgDaily > 0 ? Math.round((qty / avgDaily) * 10) / 10 : null;
+  const targetQty = Math.max(reorder * 2, reorder);
+  const suggested = Math.max(0, roundMoney(targetQty - qty));
+
+  return {
+    outlet_id: outletId,
+    outlet_name: outletName,
+    product_id: product.id,
+    code: product.code,
+    product_name: product.name,
+    category_id: product.category_id,
+    category_name: resolveCategoryName(product.category_id, categoryNameById),
+    unit: product.unit,
+    quantity: qty,
+    cost_price: cost,
+    retail_price: retail,
+    stock_value: roundMoney(qty * cost),
+    retail_stock_value: roundMoney(qty * retail),
+    reorder_point: reorder,
+    needs_reorder: qty <= reorder,
+    stock_status: stockStatus(qty, reorder),
+    avg_daily_sales: avgDaily,
+    days_of_cover: daysOfCover,
+    suggested_order_qty: suggested,
+  };
+}
+
+async function enrichStockLevelRows(
+  supabase: Supabase,
+  products: ProductLite[],
+  outletId: string,
+  outletName: string,
+  categoryNameById: Map<string, string>,
+  stockMap: Map<string, { quantity: number; cost_price: number }>
+): Promise<StockLevelRow[]> {
+  if (!products.length) return [];
+  const ids = products.map((p) => p.id);
+  const idSet = new Set(ids);
+  const [retailMap, velocity] = await Promise.all([
+    fetchRetailPriceMap(supabase, ids),
+    fetchVelocityMap(supabase, outletId, idSet),
+  ]);
+  return products.map((p) =>
+    toStockLevelRow(
+      p,
+      outletId,
+      outletName,
+      categoryNameById,
+      stockMap,
+      retailMap,
+      velocity
+    )
+  );
+}
+
+async function computeStockLevelsSummaryFast(
+  supabase: Supabase,
+  organizationId: string,
+  outletId: string,
+  stockMap: Map<string, { quantity: number; cost_price: number }>
+): Promise<StockLevelsSummary> {
+  const products = await fetchAllPaginated(async (from, to) => {
+    const { data, error } = await supabase
+      .from("products")
+      .select("id, reorder_point")
+      .eq("organization_id", organizationId)
+      .eq("is_active", true)
+      .range(from, to);
+    return { data, error };
+  });
+
+  let totalValue = 0;
+  let skusWithQty = 0;
+  const idsWithQty: string[] = [];
+  for (const [, stock] of Array.from(stockMap.entries())) {
+    if (stock.quantity > 0) {
+      totalValue += stock.quantity * stock.cost_price;
+      skusWithQty += 1;
+    }
+  }
+  totalValue = roundMoney(totalValue);
+
+  let lowStockCount = 0;
+  let outOfStockCount = 0;
+  for (const p of products) {
+    const qty = stockMap.get(p.id)?.quantity ?? 0;
+    const reorder = Number(p.reorder_point ?? 0);
+    if (stockStatus(qty, reorder) === "low") lowStockCount += 1;
+    if (qty <= 0 && reorder > 0) outOfStockCount += 1;
+    if (qty > 0) idsWithQty.push(p.id);
+  }
+
+  const retailMap = await fetchRetailPriceMap(supabase, idsWithQty);
+  let totalRetailValue = 0;
+  for (const [productId, stock] of Array.from(stockMap.entries())) {
+    if (stock.quantity > 0) {
+      totalRetailValue += stock.quantity * (retailMap.get(productId) ?? 0);
+    }
+  }
+
+  return {
+    totalValue,
+    totalRetailValue: roundMoney(totalRetailValue),
+    lineCount: products.length,
+    skusWithQty,
+    lowStockCount,
+    outOfStockCount,
+  };
+}
+
+async function fetchFilteredProductLites(
+  supabase: Supabase,
+  organizationId: string,
+  search: string,
+  categoryId: string | null,
+  categoryNameById: Map<string, string>
+): Promise<ProductLite[]> {
+  let matchingCategoryIds: string[] = [];
+  if (search) {
+    const needle = search.toLowerCase();
+    matchingCategoryIds = Array.from(categoryNameById.entries())
+      .filter(([, name]) => name.toLowerCase().includes(needle))
+      .map(([id]) => id);
+  }
+
+  const rows = await fetchAllPaginated(async (from, to) => {
+    let query = supabase
+      .from("products")
+      .select("id, name, code, unit, category_id, reorder_point")
+      .eq("organization_id", organizationId)
+      .eq("is_active", true);
+
+    if (categoryId) query = query.eq("category_id", categoryId);
+    if (search) {
+      const like = `%${escapeLikePattern(search)}%`;
+      const clauses = [`name.ilike.${like}`, `code.ilike.${like}`];
+      if (matchingCategoryIds.length > 0) {
+        clauses.push(`category_id.in.(${matchingCategoryIds.join(",")})`);
+      }
+      query = query.or(clauses.join(","));
+    }
+
+    const { data, error } = await query
+      .order("name", { ascending: true })
+      .range(from, to);
+    return { data, error };
+  });
+
+  return rows.map((p) => ({
+    id: p.id,
+    name: p.name,
+    code: p.code,
+    unit: p.unit,
+    category_id: p.category_id as string | null,
+    reorder_point: Number(p.reorder_point ?? 0),
+  }));
 }
 
 /** Stock on hand uses the same product + price rows as Products → Price list. */
@@ -182,66 +458,150 @@ function normalizePageSize(input?: number) {
   return Math.min(100, Math.max(10, n));
 }
 
-function stockSummary(rows: StockLevelRow[]): StockLevelsSummary {
-  const withQty = rows.filter((r) => r.quantity > 0);
-  return {
-    totalValue: roundMoney(rows.reduce((s, r) => s + r.stock_value, 0)),
-    totalRetailValue: roundMoney(
-      rows.reduce((s, r) => s + r.retail_stock_value, 0)
-    ),
-    lineCount: rows.length,
-    skusWithQty: withQty.length,
-    lowStockCount: rows.filter((r) => r.stock_status === "low").length,
-    outOfStockCount: rows.filter(
-      (r) => r.quantity <= 0 && r.reorder_point > 0
-    ).length,
-  };
-}
-
 export async function listStockLevelsPage(
   input: StockLevelsPageInput = {}
 ): Promise<StockLevelsPage> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const filterOutlet = input.outletId ?? ctx.outletId;
   const page = normalizePage(input.page);
   const pageSize = normalizePageSize(input.pageSize);
-  const rows = await listStockLevels(input.outletId);
-  const summary = stockSummary(rows);
-  const categories = Array.from(
-    new Map(
-      rows.map((r) => [
-        r.category_id ?? "general",
-        { id: r.category_id ?? "general", name: r.category_name },
-      ])
-    ).values()
-  ).sort((a, b) => a.name.localeCompare(b.name));
-
-  const search = input.search?.trim().toLowerCase() ?? "";
+  const search = input.search?.trim() ?? "";
   const categoryId =
     input.categoryId && input.categoryId !== "all" ? input.categoryId : null;
-  const status = input.status && input.status !== "all" ? input.status : null;
-  const filtered = rows.filter((r) => {
-    if (categoryId) {
-      const rowCategory = r.category_id ?? "general";
-      if (rowCategory !== categoryId) return false;
-    }
-    if (status && r.stock_status !== status) return false;
-    if (!search) return true;
-    return (
-      r.product_name.toLowerCase().includes(search) ||
-      (r.code ?? "").toLowerCase().includes(search) ||
-      r.category_name.toLowerCase().includes(search)
-    );
-  });
+  const status =
+    input.status && input.status !== "all" ? input.status : null;
 
-  const from = (page - 1) * pageSize;
-  const pageRows = filtered.slice(from, from + pageSize);
-  return {
-    rows: pageRows,
+  const empty: StockLevelsPage = {
+    rows: [],
     page,
     pageSize,
-    total: filtered.length,
-    hasMore: page * pageSize < filtered.length,
+    total: 0,
+    hasMore: false,
+    summary: {
+      totalValue: 0,
+      totalRetailValue: 0,
+      lineCount: 0,
+      skusWithQty: 0,
+      lowStockCount: 0,
+      outOfStockCount: 0,
+    },
+    categories: [],
+  };
+
+  if (!filterOutlet) return empty;
+
+  const [{ data: categories, error: catErr }, outletRow, stockMap] =
+    await Promise.all([
+      supabase
+        .from("categories")
+        .select("id, name")
+        .eq("organization_id", ctx.organizationId),
+      supabase
+        .from("outlets")
+        .select("id, name")
+        .eq("id", filterOutlet)
+        .maybeSingle(),
+      fetchOutletStockMap(supabase, ctx.organizationId, filterOutlet),
+    ]);
+  if (catErr) throw new Error(catErr.message);
+
+  const categoryNameById = new Map(
+    (categories ?? []).map((c) => [c.id, c.name as string])
+  );
+  const categoryOptions = (categories ?? [])
+    .map((c) => ({ id: c.id, name: c.name as string }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const outletName = outletRow.data?.name ?? "—";
+
+  const summary = await computeStockLevelsSummaryFast(
+    supabase,
+    ctx.organizationId,
+    filterOutlet,
+    stockMap
+  );
+
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  let pageProducts: ProductLite[] = [];
+  let total = 0;
+
+  if (status) {
+    const allMatching = await fetchFilteredProductLites(
+      supabase,
+      ctx.organizationId,
+      search,
+      categoryId,
+      categoryNameById
+    );
+    const filtered = allMatching.filter((p) => {
+      const qty = stockMap.get(p.id)?.quantity ?? 0;
+      return stockStatus(qty, p.reorder_point) === status;
+    });
+    total = filtered.length;
+    pageProducts = filtered.slice(from, from + pageSize);
+  } else {
+    let matchingCategoryIds: string[] = [];
+    if (search) {
+      const needle = search.toLowerCase();
+      matchingCategoryIds = Array.from(categoryNameById.entries())
+        .filter(([, name]) => name.toLowerCase().includes(needle))
+        .map(([id]) => id);
+    }
+
+    let query = supabase
+      .from("products")
+      .select(
+        "id, name, code, unit, category_id, reorder_point",
+        { count: "exact" }
+      )
+      .eq("organization_id", ctx.organizationId)
+      .eq("is_active", true);
+
+    if (categoryId) query = query.eq("category_id", categoryId);
+    if (search) {
+      const like = `%${escapeLikePattern(search)}%`;
+      const clauses = [`name.ilike.${like}`, `code.ilike.${like}`];
+      if (matchingCategoryIds.length > 0) {
+        clauses.push(`category_id.in.(${matchingCategoryIds.join(",")})`);
+      }
+      query = query.or(clauses.join(","));
+    }
+
+    const { data: products, error, count } = await query
+      .order("name", { ascending: true })
+      .range(from, to);
+    if (error) throw new Error(error.message);
+
+    pageProducts = (products ?? []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      code: p.code,
+      unit: p.unit,
+      category_id: p.category_id as string | null,
+      reorder_point: Number(p.reorder_point ?? 0),
+    }));
+    total = count ?? 0;
+  }
+
+  const rows = await enrichStockLevelRows(
+    supabase,
+    pageProducts,
+    filterOutlet,
+    outletName,
+    categoryNameById,
+    stockMap
+  );
+
+  return {
+    rows,
+    page,
+    pageSize,
+    total,
+    hasMore: page * pageSize < total,
     summary,
-    categories,
+    categories: categoryOptions,
   };
 }
 
@@ -255,14 +615,33 @@ export type StockValuationSummary = {
 export async function getStockValuationSummary(
   outletId?: string | null
 ): Promise<StockValuationSummary> {
-  const rows = await listStockLevels(outletId);
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const filterOutlet = outletId ?? ctx.outletId;
+  if (!filterOutlet) {
+    return {
+      totalValue: 0,
+      lineCount: 0,
+      lowStockCount: 0,
+      outOfStockCount: 0,
+    };
+  }
+  const stockMap = await fetchOutletStockMap(
+    supabase,
+    ctx.organizationId,
+    filterOutlet
+  );
+  const summary = await computeStockLevelsSummaryFast(
+    supabase,
+    ctx.organizationId,
+    filterOutlet,
+    stockMap
+  );
   return {
-    totalValue: roundMoney(rows.reduce((s, r) => s + r.stock_value, 0)),
-    lineCount: rows.length,
-    lowStockCount: rows.filter((r) => r.stock_status === "low").length,
-    outOfStockCount: rows.filter(
-      (r) => r.quantity <= 0 && r.reorder_point > 0
-    ).length,
+    totalValue: summary.totalValue,
+    lineCount: summary.lineCount,
+    lowStockCount: summary.lowStockCount,
+    outOfStockCount: summary.outOfStockCount,
   };
 }
 
