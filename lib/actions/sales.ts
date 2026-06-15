@@ -835,6 +835,8 @@ export type SaleDetail = {
   notes: string | null;
   customer_id: string | null;
   customer_name: string | null;
+  customer_phone: string | null;
+  customer_email: string | null;
   items: {
     product_id: string | null;
     product_name: string;
@@ -842,6 +844,7 @@ export type SaleDetail = {
     unit_price: number;
     discount_pct: number;
     total_price: number;
+    unit: string | null;
   }[];
 };
 
@@ -866,13 +869,17 @@ export async function getSaleById(saleId: string): Promise<SaleDetail | null> {
     )
     .eq("sale_id", saleId);
   let customerName: string | null = null;
+  let customerPhone: string | null = null;
+  let customerEmail: string | null = null;
   if (sale.customer_id) {
     const { data: customer } = await supabase
       .from("customers")
-      .select("name")
+      .select("name, phone, email")
       .eq("id", sale.customer_id)
       .maybeSingle();
     customerName = customer?.name ?? null;
+    customerPhone = customer?.phone ?? null;
+    customerEmail = customer?.email ?? null;
   }
   return {
     id: sale.id,
@@ -891,15 +898,30 @@ export async function getSaleById(saleId: string): Promise<SaleDetail | null> {
     notes: sale.notes,
     customer_id: sale.customer_id,
     customer_name: customerName,
-    items: (items ?? []).map((i) => ({
-      product_id: i.product_id,
-      product_name: i.product_name,
-      quantity: Number(i.quantity),
-      unit_price: Number(i.unit_price),
-      discount_pct: Number(i.discount_pct),
-      total_price: Number(i.total_price),
-    })),
+    customer_phone: customerPhone,
+    customer_email: customerEmail,
+    items: (items ?? []).map((i) => {
+      const parsed = parseSaleLineUnit(i.product_name);
+      return {
+        product_id: i.product_id,
+        product_name: parsed.name,
+        quantity: Number(i.quantity),
+        unit_price: Number(i.unit_price),
+        discount_pct: Number(i.discount_pct),
+        total_price: Number(i.total_price),
+        unit: parsed.unit,
+      };
+    }),
   };
+}
+
+function parseSaleLineUnit(productName: string): {
+  name: string;
+  unit: string | null;
+} {
+  const m = productName.match(/^(.+?)\s+\(([^)]+)\)\s*$/);
+  if (m) return { name: m[1]!.trim(), unit: m[2]!.trim() };
+  return { name: productName, unit: null };
 }
 
 export type { PosCustomer };

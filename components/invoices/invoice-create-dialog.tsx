@@ -1,7 +1,7 @@
 "use client";
 
-import { useMutation } from "@tanstack/react-query";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Loader2, Plus, Trash2, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -34,14 +34,31 @@ import {
 import type { SaleDocumentType } from "@/lib/constants/sale-documents";
 import { saleTypeLabel } from "@/lib/constants/sale-documents";
 import { createDraftSaleDocument } from "@/lib/actions/invoices";
-import { fetchPosCustomers } from "@/lib/api/customers-fetch";
+import {
+  createCustomerApi,
+  fetchPosCustomers,
+  invalidateCustomerQueries,
+} from "@/lib/api/customers-fetch";
 import { fetchProductPriceCatalog } from "@/lib/api/inventory-catalog-fetch";
+import { fetchProductUnitsMap } from "@/lib/api/product-units-fetch";
 import { fetchPaymentAccounts } from "@/lib/api/banking-fetch";
+import {
+  formatAccountDetails,
+  paymentAccountTypeLabel,
+} from "@/lib/constants/payment-accounts";
+import {
+  enrichUnitsWithConversion,
+  hasMultipleUnits,
+  pickDefaultSellUnit,
+  resolveUnitPrice,
+  unitConversionHint,
+  type ProductUnitOption,
+} from "@/lib/products/units";
 import { useTaxRate } from "@/hooks/useTaxRate";
 import { computeLineTotal } from "@/lib/utils/calculations";
 import { formatTzs } from "@/lib/utils/currency";
+import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
-import { useQuery } from "@tanstack/react-query";
 
 type Props = {
   open: boolean;
@@ -70,12 +87,17 @@ export function InvoiceCreateDialog({
   onCreated,
 }: Props) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const taxRate = useTaxRate();
   const outletId = useAuthStore((s) => s.activeOutletId);
   const [customerId, setCustomerId] = useState("");
+  const [addCustomerOpen, setAddCustomerOpen] = useState(false);
+  const [newCustomerName, setNewCustomerName] = useState("");
+  const [newCustomerPhone, setNewCustomerPhone] = useState("");
   const [validUntil, setValidUntil] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
   const [pickProduct, setPickProduct] = useState("");
+  const [selectedUnitId, setSelectedUnitId] = useState("");
   const [qty, setQty] = useState(1);
   const [unitPrice, setUnitPrice] = useState(0);
   const [customName, setCustomName] = useState("");
@@ -96,6 +118,71 @@ export function InvoiceCreateDialog({
     queryKey: ["payment-accounts"],
     queryFn: fetchPaymentAccounts,
     enabled: open,
+  });
+
+  const pickedProduct = useMemo(
+    () => catalog.find((x) => x.id === pickProduct),
+    [catalog, pickProduct]
+  );
+
+  const { data: unitsByProduct = {} } = useQuery({
+    queryKey: ["quote-product-units", pickProduct],
+    queryFn: () => fetchProductUnitsMap(pickProduct ? [pickProduct] : []),
+    enabled: open && !!pickProduct,
+  });
+
+  const sellUnits = useMemo((): ProductUnitOption[] => {
+    if (!pickedProduct) return [];
+    const loaded = unitsByProduct[pickedProduct.id] ?? [];
+    return enrichUnitsWithConversion(
+      loaded.length > 0
+        ? loaded
+        : [
+            {
+              id: `${pickedProduct.id}-base`,
+              unitLabel: pickedProduct.unit,
+              factorToBase: 1,
+              isBase: true,
+              retailPrice: pickedProduct.retailPrice,
+              wholesalePrice: null,
+              sortOrder: 0,
+            },
+          ],
+      pickedProduct.retailPrice ?? 0,
+      0,
+      "retail"
+    );
+  }, [pickedProduct, unitsByProduct]);
+
+  const selectedUnit = useMemo(
+    () => sellUnits.find((u) => u.id === selectedUnitId) ?? sellUnits[0],
+    [sellUnits, selectedUnitId]
+  );
+
+  const createCustomerMut = useMutation({
+    mutationFn: () =>
+      createCustomerApi({
+        name: newCustomerName.trim(),
+        phone: newCustomerPhone.trim() || undefined,
+        customerType: "retail",
+        creditLimit: 0,
+        creditDays: 30,
+        priceType: "retail",
+        openingCredit: 0,
+        openingDeposit: 0,
+      }),
+    onSuccess: (res) => {
+      if (!res.ok) {
+        toast.error(res.message);
+        return;
+      }
+      toast.success("Customer added");
+      setAddCustomerOpen(false);
+      setNewCustomerName("");
+      setNewCustomerPhone("");
+      invalidateCustomerQueries(queryClient);
+      setCustomerId(res.id);
+    },
   });
 
   const productOptions = useMemo(
@@ -120,6 +207,7 @@ export function InvoiceCreateDialog({
   useEffect(() => {
     if (!open) return;
     setPickProduct("");
+    setSelectedUnitId("");
     setQty(1);
     setUnitPrice(0);
     setCustomName("");
@@ -128,9 +216,31 @@ export function InvoiceCreateDialog({
   }, [open, outletId]);
 
   useEffect(() => {
-    const p = catalog.find((x) => x.id === pickProduct);
-    if (p) setUnitPrice(p.retailPrice ?? 0);
-  }, [pickProduct, catalog]);
+    if (!pickedProduct || sellUnits.length === 0) return;
+    const preferred = pickDefaultSellUnit(
+      sellUnits,
+      pickedProduct.retailPrice ?? 0,
+      0,
+      "retail"
+    );
+    setSelectedUnitId((current) =>
+      current && sellUnits.some((u) => u.id === current)
+        ? current
+        : (preferred.id ?? sellUnits[0]!.id)
+    );
+  }, [pickedProduct, sellUnits]);
+
+  useEffect(() => {
+    if (!pickedProduct || !selectedUnit) return;
+    setUnitPrice(
+      resolveUnitPrice(
+        selectedUnit,
+        pickedProduct.retailPrice ?? 0,
+        0,
+        "retail"
+      )
+    );
+  }, [pickedProduct, selectedUnit]);
 
   const totals = useMemo(() => {
     const subtotal = lines.reduce(
@@ -153,8 +263,8 @@ export function InvoiceCreateDialog({
   });
 
   const addCatalogLine = () => {
-    const p = catalog.find((x) => x.id === pickProduct);
-    if (!p) {
+    const p = pickedProduct;
+    if (!p || !selectedUnit) {
       toast.error("Select a product from the list");
       return;
     }
@@ -166,11 +276,14 @@ export function InvoiceCreateDialog({
       toast.error("Enter a valid unit price");
       return;
     }
+    const unitLabel = selectedUnit.unitLabel;
     setLines((prev) => {
-      const existing = prev.find((l) => l.productId === p.id);
+      const existing = prev.find(
+        (l) => l.productId === p.id && l.unit === unitLabel
+      );
       if (existing) {
         return prev.map((l) =>
-          l.productId === p.id
+          l.productId === p.id && l.unit === unitLabel
             ? {
                 ...l,
                 quantity: l.quantity + qty,
@@ -185,13 +298,14 @@ export function InvoiceCreateDialog({
           key: newLineKey(),
           productId: p.id,
           productName: p.name,
-          unit: p.unit,
+          unit: unitLabel,
           quantity: qty,
           unitPrice,
         },
       ];
     });
     setPickProduct("");
+    setSelectedUnitId("");
     setQty(1);
     setUnitPrice(0);
   };
@@ -264,6 +378,7 @@ export function InvoiceCreateDialog({
                 productName: l.productName,
                 quantity: l.quantity,
                 unitPrice: l.unitPrice,
+                unitLabel: l.unit,
                 discountPct: 0,
               })),
               validUntil: validUntil || undefined,
@@ -273,24 +388,36 @@ export function InvoiceCreateDialog({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label>Customer</Label>
-              <Select
-                value={customerId || "__none__"}
-                onValueChange={(v) =>
-                  setCustomerId(!v || v === "__none__" ? "" : v)
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Walk-in" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Walk-in</SelectItem>
-                  {customers.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex gap-2">
+                <Select
+                  value={customerId || "__none__"}
+                  onValueChange={(v) =>
+                    setCustomerId(!v || v === "__none__" ? "" : v)
+                  }
+                >
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder="Walk-in" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Walk-in</SelectItem>
+                    {customers.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                        {c.phone ? ` · ${c.phone}` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  title="Add customer"
+                  onClick={() => setAddCustomerOpen(true)}
+                >
+                  <UserPlus className="size-4" />
+                </Button>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Valid until (optional)</Label>
@@ -301,7 +428,7 @@ export function InvoiceCreateDialog({
               />
             </div>
             <div className="space-y-2 sm:col-span-2">
-              <Label>Bank account for quotation (optional)</Label>
+              <Label>Bank / M-Pesa account on document (optional)</Label>
               <Select
                 value={bankAccountId || "__none__"}
                 onValueChange={(v) =>
@@ -309,19 +436,36 @@ export function InvoiceCreateDialog({
                 }
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select bank account" />
+                  <SelectValue placeholder="Select account">
+                    {bankAccountId
+                      ? bankAccounts.find((a) => a.id === bankAccountId)?.name ??
+                        "Select account"
+                      : "Select account"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">No bank account shown</SelectItem>
+                  <SelectItem value="__none__">Show all payment accounts</SelectItem>
                   {bankAccounts
                     .filter((a) => a.is_active)
                     .map((a) => (
                       <SelectItem key={a.id} value={a.id}>
-                        {a.name}
+                        {a.name} · {paymentAccountTypeLabel(a.account_type)}
                       </SelectItem>
                     ))}
                 </SelectContent>
               </Select>
+              {bankAccountId ? (
+                <p className="form-hint">
+                  {formatAccountDetails(
+                    bankAccounts.find((a) => a.id === bankAccountId)!
+                  )}
+                </p>
+              ) : (
+                <p className="form-hint">
+                  Leave blank to print all active bank and M-Pesa accounts on the
+                  document.
+                </p>
+              )}
             </div>
           </div>
 
@@ -344,6 +488,48 @@ export function InvoiceCreateDialog({
               maxVisible={120}
               className="w-full"
             />
+            {pickedProduct && sellUnits.length > 0 && hasMultipleUnits(sellUnits) ? (
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Unit of measure
+                </Label>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {sellUnits.map((u) => {
+                    const price = resolveUnitPrice(
+                      u,
+                      pickedProduct.retailPrice ?? 0,
+                      0,
+                      "retail"
+                    );
+                    const sel = u.id === selectedUnit?.id;
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => setSelectedUnitId(u.id)}
+                        className={cn(
+                          "rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                          sel
+                            ? "border-primary bg-primary/10"
+                            : "border-border hover:border-primary/40"
+                        )}
+                      >
+                        <span className="block font-medium">{u.unitLabel}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {formatTzs(price)}
+                          {unitConversionHint(u)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : selectedUnit ? (
+              <p className="text-xs text-muted-foreground">
+                Unit: {selectedUnit.unitLabel}
+                {unitConversionHint(selectedUnit)}
+              </p>
+            ) : null}
             <div className="flex flex-wrap items-end gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="quote-qty">Qty</Label>
@@ -513,6 +699,45 @@ export function InvoiceCreateDialog({
             </Button>
           </DialogFooter>
         </form>
+
+        <Dialog open={addCustomerOpen} onOpenChange={setAddCustomerOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Add customer</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label>Name</Label>
+                <Input
+                  value={newCustomerName}
+                  onChange={(e) => setNewCustomerName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Phone (optional)</Label>
+                <Input
+                  value={newCustomerPhone}
+                  onChange={(e) => setNewCustomerPhone(e.target.value)}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                disabled={
+                  !newCustomerName.trim() || createCustomerMut.isPending
+                }
+                onClick={() => createCustomerMut.mutate()}
+              >
+                {createCustomerMut.isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  "Save customer"
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   );

@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { InvoiceDocumentActions } from "@/components/invoices/invoice-print-button";
+import { SaleVoidActions } from "@/components/sales/sale-void-actions";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -16,10 +18,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { SaleVoidActions } from "@/components/sales/sale-void-actions";
+import { getOrganizationSettings } from "@/lib/actions/settings";
 import { getSaleById } from "@/lib/actions/sales";
+import { buildSaleDocumentPrintData } from "@/lib/invoices/print-data";
+import { loadPaymentAccountsForPrint } from "@/lib/invoices/payment-accounts-print";
 import { cn } from "@/lib/utils";
-import { formatTzs, formatDateTimeEAT } from "@/lib/utils/currency";
+import { formatTzs, formatDateTimeEAT, formatDateEAT } from "@/lib/utils/currency";
 
 type SalesDetailPageProps = {
   params: Promise<{ id: string }>;
@@ -29,10 +33,46 @@ export default async function SalesDetailPage({
   params,
 }: SalesDetailPageProps) {
   const { id } = await params;
-  const sale = await getSaleById(id);
+  const [sale, org, paymentAccounts] = await Promise.all([
+    getSaleById(id),
+    getOrganizationSettings(),
+    loadPaymentAccountsForPrint(),
+  ]);
   if (!sale) {
     notFound();
   }
+
+  const showCustomerInvoice =
+    !!sale.customer_id &&
+    sale.status === "completed" &&
+    (sale.sale_type === "retail" || sale.sale_type === "wholesale");
+
+  const printData = showCustomerInvoice
+    ? buildSaleDocumentPrintData({
+        organizationName: org?.name ?? "SUPAFUNDI TRADERS",
+        address: org?.address,
+        phone: org?.phone,
+        email: org?.email,
+        taxId: org?.tax_id,
+        saleType: sale.sale_type,
+        invoiceNo: sale.invoice_no,
+        documentDate: formatDateEAT(sale.sale_date),
+        customerName: sale.customer_name,
+        customerPhone: sale.customer_phone,
+        customerEmail: sale.customer_email,
+        status: sale.status,
+        items: sale.items,
+        subtotal: sale.subtotal,
+        discountAmount: sale.discount_amount,
+        taxRate: sale.tax_rate,
+        taxAmount: sale.tax_amount,
+        totalAmount: sale.total_amount,
+        amountPaid: sale.amount_paid,
+        balanceDue: sale.balance_due,
+        notes: sale.notes,
+        paymentAccounts,
+      })
+    : null;
 
   return (
     <div className="space-y-6">
@@ -46,6 +86,13 @@ export default async function SalesDetailPage({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {printData ? (
+            <InvoiceDocumentActions
+              printData={printData}
+              customerPhone={sale.customer_phone}
+              showWhatsApp={sale.balance_due > 0}
+            />
+          ) : null}
           <SaleVoidActions
             saleId={sale.id}
             invoiceNo={sale.invoice_no}
@@ -68,6 +115,7 @@ export default async function SalesDetailPage({
               {sale.customer_name
                 ? `Customer: ${sale.customer_name}`
                 : "Walk-in sale"}
+              {sale.customer_phone ? ` · ${sale.customer_phone}` : ""}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
@@ -137,7 +185,14 @@ export default async function SalesDetailPage({
             <TableBody>
               {sale.items.map((item, idx) => (
                 <TableRow key={idx}>
-                  <TableCell>{item.product_name}</TableCell>
+                  <TableCell>
+                    {item.product_name}
+                    {item.unit ? (
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        ({item.unit})
+                      </span>
+                    ) : null}
+                  </TableCell>
                   <TableCell className="text-right">{item.quantity}</TableCell>
                   <TableCell className="text-right">
                     {formatTzs(item.unit_price)}
@@ -151,6 +206,13 @@ export default async function SalesDetailPage({
           </Table>
         </CardContent>
       </Card>
+
+      {showCustomerInvoice && sale.balance_due > 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Use <strong>Print A4</strong> to hand the customer a formal invoice
+          with SUPAFUNDI letterhead and bank / M-Pesa payment details.
+        </p>
+      ) : null}
     </div>
   );
 }

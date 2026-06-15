@@ -15,6 +15,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { CollectionAccountSelect } from "@/components/finance/collection-account-select";
+import { needsCollectionAccount } from "@/lib/finance/collection-accounts";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { fetchSupplierOptions } from "@/lib/api/suppliers-fetch";
 import { createSupplierReturnApi } from "@/lib/api/procurement-fetch";
@@ -34,6 +36,7 @@ export function SupplierReturnsClient() {
   const [paymentMethod, setPaymentMethod] = useState<
     "on_account" | "cash" | "mpesa" | "bank_transfer"
   >("on_account");
+  const [bankAccountId, setBankAccountId] = useState("");
 
   const { data: outlets = [] } = useQuery({
     queryKey: ["org-outlets"],
@@ -53,6 +56,7 @@ export function SupplierReturnsClient() {
         setProductId("");
         setQty(1);
         setUnitCost(0);
+        setBankAccountId("");
       } else toast.error(r.message);
     },
   });
@@ -129,6 +133,13 @@ export function SupplierReturnsClient() {
           </div>
         </div>
 
+        <CollectionAccountSelect
+          paymentMethod={paymentMethod}
+          value={bankAccountId}
+          onValueChange={setBankAccountId}
+          label="Refund to account"
+        />
+
         <div className="flex flex-wrap items-end gap-2 rounded-lg border p-3">
           <div className="min-w-[200px] flex-1 space-y-1">
             <Label>Product</Label>
@@ -178,16 +189,26 @@ export function SupplierReturnsClient() {
         )}
 
         <Button
-          disabled={!outletId || !productId || returnMut.isPending}
-          onClick={() =>
+          disabled={
+            !outletId ||
+            !productId ||
+            returnMut.isPending ||
+            (needsCollectionAccount(paymentMethod) && !bankAccountId)
+          }
+          onClick={() => {
+            if (needsCollectionAccount(paymentMethod) && !bankAccountId) {
+              toast.error("Select the account receiving the refund");
+              return;
+            }
             returnMut.mutate({
               outletId,
               supplierId: supplierId || null,
               paymentMethod,
+              bankAccountId: bankAccountId || undefined,
               businessDate,
               lines: [{ productId, quantity: qty, unitCost }],
-            })
-          }
+            });
+          }}
         >
           {returnMut.isPending ? (
             <>

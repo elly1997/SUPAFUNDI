@@ -520,6 +520,43 @@ export async function creditAccountFromPosSale(
   });
 }
 
+/** Debit a collection account for purchases, expenses, or supplier payments. */
+export async function withdrawFromCollectionAccount(
+  bankAccountId: string,
+  amount: number,
+  description: string,
+  options?: { referenceNo?: string; transactionDate?: string }
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (amount <= 0) return { ok: true };
+  return recordBankTransaction({
+    bankAccountId,
+    transactionType: "withdrawal",
+    amount: roundMoney(amount),
+    referenceNo: options?.referenceNo,
+    description,
+    transactionDate: options?.transactionDate,
+    allowNegativeBalance: true,
+  });
+}
+
+/** Credit a collection account when a refund is received (e.g. supplier return). */
+export async function depositToCollectionAccount(
+  bankAccountId: string,
+  amount: number,
+  description: string,
+  options?: { referenceNo?: string; transactionDate?: string }
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (amount <= 0) return { ok: true };
+  return recordBankTransaction({
+    bankAccountId,
+    transactionType: "deposit",
+    amount: roundMoney(amount),
+    referenceNo: options?.referenceNo,
+    description,
+    transactionDate: options?.transactionDate,
+  });
+}
+
 export async function toggleBankTransactionReconciled(
   transactionId: string,
   reconciled: boolean

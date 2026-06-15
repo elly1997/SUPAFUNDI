@@ -32,6 +32,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ExpenseVoidActions } from "@/components/finance/expense-void-actions";
+import { CollectionAccountSelect } from "@/components/finance/collection-account-select";
+import { needsCollectionAccount } from "@/lib/finance/collection-accounts";
 import { fetchExpenses, recordExpenseApi } from "@/lib/api/daily-ops-fetch";
 import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { formatTzs } from "@/lib/utils/currency";
@@ -45,7 +47,11 @@ export function ExpensesPageClient() {
   const [category, setCategory] = useState("misc");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
-  const [paidCash, setPaidCash] = useState(true);
+  const [paymentMethod, setPaymentMethod] = useState<
+    "cash" | "mpesa" | "bank_transfer" | "on_account"
+  >("cash");
+  const [bankAccountId, setBankAccountId] = useState("");
+  const [referenceNo, setReferenceNo] = useState("");
   const queryClient = useQueryClient();
 
   const { data: expenses = [], isLoading } = useQuery({
@@ -63,6 +69,8 @@ export function ExpensesPageClient() {
         setDescription("");
         queryClient.invalidateQueries({ queryKey: ["expenses"] });
         queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
+        queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
+        queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
       } else toast.error(r.message);
     },
     onError: (e) =>
@@ -188,32 +196,68 @@ export function ExpensesPageClient() {
             <div className="space-y-2">
               <Label>Payment</Label>
               <Select
-                value={paidCash ? "cash" : "credit"}
-                onValueChange={(v) => setPaidCash(v === "cash")}
+                value={paymentMethod}
+                onValueChange={(v) =>
+                  setPaymentMethod(
+                    (v ?? "cash") as
+                      | "cash"
+                      | "mpesa"
+                      | "bank_transfer"
+                      | "on_account"
+                  )
+                }
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="cash">Paid from cash</SelectItem>
-                  <SelectItem value="credit">On account (AP)</SelectItem>
+                  <SelectItem value="cash">Cash (drawer)</SelectItem>
+                  <SelectItem value="mpesa">M-Pesa</SelectItem>
+                  <SelectItem value="bank_transfer">Bank transfer</SelectItem>
+                  <SelectItem value="on_account">On account (AP)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            <CollectionAccountSelect
+              paymentMethod={paymentMethod}
+              value={bankAccountId}
+              onValueChange={setBankAccountId}
+              label="Pay from account"
+            />
+            {needsCollectionAccount(paymentMethod) ? (
+              <div className="space-y-2">
+                <Label>Reference (optional)</Label>
+                <Input
+                  value={referenceNo}
+                  onChange={(e) => setReferenceNo(e.target.value)}
+                  placeholder="M-Pesa code, bank ref, etc."
+                />
+              </div>
+            ) : null}
           </div>
           <DialogFooter>
             <Button
-              onClick={() =>
+              onClick={() => {
+                if (needsCollectionAccount(paymentMethod) && !bankAccountId) {
+                  toast.error("Select the bank or M-Pesa account for this payment");
+                  return;
+                }
                 recordMut.mutate({
                   category,
                   description,
                   amount: Number(amount),
-                  paidFromCash: paidCash,
+                  paymentMethod,
+                  bankAccountId: bankAccountId || undefined,
+                  referenceNo: referenceNo.trim() || undefined,
                   expenseDate: businessDate,
                   outletId: outletId ?? undefined,
-                })
+                });
+              }}
+              disabled={
+                recordMut.isPending ||
+                !amount ||
+                (needsCollectionAccount(paymentMethod) && !bankAccountId)
               }
-              disabled={recordMut.isPending || !amount}
             >
               {recordMut.isPending ? "Saving…" : "Save & post"}
             </Button>

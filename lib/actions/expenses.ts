@@ -9,23 +9,41 @@ import {
   type JournalLineInput,
 } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { withdrawFromCollectionAccount } from "@/lib/actions/banking";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
+import { validateCollectionAccount } from "@/lib/finance/collection-accounts";
 import { resolveBusinessDate } from "@/lib/utils/iso-date";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+
+const expensePaymentMethod = z.enum([
+  "cash",
+  "mpesa",
+  "bank_transfer",
+  "on_account",
+]);
 
 const recordExpenseInput = z.object({
   outletId: z.string().uuid().nullable().optional(),
   category: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
   amount: z.coerce.number().positive(),
-  paidFromCash: z.boolean().default(true),
-  paymentMethod: z.string().optional(),
+  /** @deprecated — use paymentMethod */
+  paidFromCash: z.boolean().optional(),
+  paymentMethod: expensePaymentMethod.optional(),
+  bankAccountId: z.string().uuid().optional(),
   referenceNo: z.string().max(100).optional(),
   expenseDate: z.string().optional(),
 });
+
+function resolveExpensePayment(
+  input: z.infer<typeof recordExpenseInput>
+): z.infer<typeof expensePaymentMethod> {
+  if (input.paymentMethod) return input.paymentMethod;
+  return input.paidFromCash === false ? "on_account" : "cash";
+}
 
 export type ExpenseListRow = {
   id: string;
@@ -200,6 +218,13 @@ export async function recordExpense(
 
     const accountCode = await resolveExpenseAccountCode(input.category);
     const expenseDate = resolveBusinessDate(input.expenseDate);
+    const paymentMethod = resolveExpensePayment(input);
+    const accountCheck = validateCollectionAccount(
+      paymentMethod,
+      input.bankAccountId
+    );
+    if (!accountCheck.ok) return accountCheck;
+
     const outletId = input.outletId ?? ctx.outletId;
     const dayCheck = await checkBusinessDayMutable(outletId, expenseDate);
     if (!dayCheck.ok) return dayCheck;
@@ -212,7 +237,7 @@ export async function recordExpense(
         category: input.category.trim(),
         description: input.description?.trim() || null,
         amount: input.amount,
-        payment_method: input.paymentMethod ?? (input.paidFromCash ? "cash" : "credit"),
+        payment_method: paymentMethod,
         reference_no: input.referenceNo?.trim() || null,
         expense_date: expenseDate,
         created_by: ctx.userId,
@@ -231,7 +256,7 @@ export async function recordExpense(
       entryDate: expenseDate,
       lines: buildExpenseJournalLines({
         amount: input.amount,
-        paidFromCash: input.paidFromCash,
+        paymentMethod,
         categoryAccountCode: accountCode,
       }),
     });
@@ -240,7 +265,28 @@ export async function recordExpense(
       return { ok: false, message: journal.message };
     }
 
+    if (
+      (paymentMethod === "mpesa" || paymentMethod === "bank_transfer") &&
+      input.bankAccountId
+    ) {
+      const label = formatExpenseCategoryLabel(input.category.trim());
+      const bank = await withdrawFromCollectionAccount(
+        input.bankAccountId,
+        input.amount,
+        `Expense: ${label}${input.description ? ` — ${input.description.trim()}` : ""}`,
+        {
+          referenceNo: input.referenceNo?.trim() || undefined,
+          transactionDate: expenseDate,
+        }
+      );
+      if (!bank.ok) {
+        await supabase.from("expenses").delete().eq("id", expense.id);
+        return bank;
+      }
+    }
+
     revalidatePath("/finance/expenses");
+    revalidatePath("/finance/banking");
     return { ok: true, expenseId: expense.id };
   } catch (e) {
     return {

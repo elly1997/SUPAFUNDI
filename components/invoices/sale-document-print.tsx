@@ -2,37 +2,20 @@
 
 import { saleTypeLabel } from "@/lib/constants/sale-documents";
 import { formatTzs } from "@/lib/utils/currency";
+import {
+  buildSaleDocumentWhatsAppMessage,
+  type SaleDocumentPrintData,
+} from "@/lib/invoices/print-data";
 
-export type SaleDocumentPrintLine = {
-  name: string;
-  quantity: number;
-  unit?: string | null;
-  unitPrice: number;
-  lineTotal: number;
-};
-
-export type SaleDocumentPrintData = {
-  organizationName: string;
-  tagline?: string;
-  address?: string | null;
-  phone?: string | null;
-  email?: string | null;
-  taxId?: string | null;
-  saleType: string;
-  invoiceNo: string;
-  documentDate: string;
-  validUntil?: string | null;
-  bankAccountLabel?: string | null;
-  customerName?: string | null;
-  status: string;
-  lines: SaleDocumentPrintLine[];
-  subtotal: number;
-  discountAmount: number;
-  taxRate: number;
-  taxAmount: number;
-  totalAmount: number;
-  notes?: string | null;
-};
+export type {
+  PaymentAccountPrintLine,
+  SaleDocumentPrintData,
+  SaleDocumentPrintLine,
+} from "@/lib/invoices/print-data";
+export {
+  buildSaleDocumentPrintData,
+  buildSaleDocumentWhatsAppMessage,
+} from "@/lib/invoices/print-data";
 
 function escapeHtml(s: string) {
   return String(s ?? "")
@@ -42,77 +25,15 @@ function escapeHtml(s: string) {
     .replace(/"/g, "&quot;");
 }
 
-function parseValidUntil(notes: string | null | undefined): string | null {
-  if (!notes) return null;
-  const m = notes.match(/Valid until:\s*(\d{4}-\d{2}-\d{2})/i);
-  return m?.[1] ?? null;
-}
-
-function parsePreferredBankAccount(
-  notes: string | null | undefined
-): string | null {
-  if (!notes) return null;
-  const m = notes.match(/Preferred bank account:\s*(.+)$/im);
-  return m?.[1]?.trim() ?? null;
-}
-
-export function buildSaleDocumentPrintData(input: {
-  organizationName: string;
-  tagline?: string;
-  address?: string | null;
-  phone?: string | null;
-  email?: string | null;
-  taxId?: string | null;
-  saleType: string;
-  invoiceNo: string;
-  documentDate: string;
-  customerName?: string | null;
-  status: string;
-  items: {
-    product_name: string;
-    quantity: number;
-    unit_price: number;
-    total_price: number;
-  }[];
-  subtotal: number;
-  discountAmount: number;
-  taxRate: number;
-  taxAmount: number;
-  totalAmount: number;
-  notes?: string | null;
-}): SaleDocumentPrintData {
-  return {
-    organizationName: input.organizationName,
-    tagline: input.tagline ?? "Hardware Dealership • Wholesale & Retail",
-    address: input.address,
-    phone: input.phone,
-    email: input.email,
-    taxId: input.taxId,
-    saleType: input.saleType,
-    invoiceNo: input.invoiceNo,
-    documentDate: input.documentDate,
-    validUntil: parseValidUntil(input.notes),
-    bankAccountLabel: parsePreferredBankAccount(input.notes),
-    customerName: input.customerName,
-    status: input.status,
-    lines: input.items.map((i) => ({
-      name: i.product_name,
-      quantity: i.quantity,
-      unitPrice: i.unit_price,
-      lineTotal: i.total_price,
-    })),
-    subtotal: input.subtotal,
-    discountAmount: input.discountAmount,
-    taxRate: input.taxRate,
-    taxAmount: input.taxAmount,
-    totalAmount: input.totalAmount,
-    notes: input.notes,
-  };
+function isFormalInvoice(saleType: string): boolean {
+  return saleType === "retail" || saleType === "wholesale";
 }
 
 export function printSaleDocument(data: SaleDocumentPrintData): boolean {
   const title = saleTypeLabel(data.saleType);
   const isDraft = data.status === "draft";
+  const isInvoice = isFormalInvoice(data.saleType);
+
   const contact = [
     data.address || "186 Arusha, Tanzania",
     data.phone ? `Tel: ${data.phone}` : null,
@@ -121,6 +42,20 @@ export function printSaleDocument(data: SaleDocumentPrintData): boolean {
   ]
     .filter(Boolean)
     .map((line) => `<div>${escapeHtml(String(line))}</div>`)
+    .join("");
+
+  const customerLines = [
+    data.customerName
+      ? `<div><strong>${escapeHtml(data.customerName)}</strong></div>`
+      : "<div><strong>Walk-in customer</strong></div>",
+    data.customerPhone
+      ? `<div>Tel: ${escapeHtml(data.customerPhone)}</div>`
+      : "",
+    data.customerEmail
+      ? `<div>${escapeHtml(data.customerEmail)}</div>`
+      : "",
+  ]
+    .filter(Boolean)
     .join("");
 
   const lineRows = data.lines
@@ -135,6 +70,36 @@ export function printSaleDocument(data: SaleDocumentPrintData): boolean {
     )
     .join("");
 
+  const paymentSection =
+    data.paymentAccounts && data.paymentAccounts.length > 0
+      ? `<div class="payment-box">
+    <h3>Payment details</h3>
+    ${data.paymentAccounts
+      .map(
+        (a) =>
+          `<div class="pay-row"><strong>${escapeHtml(a.name)}</strong> <span class="pay-type">(${escapeHtml(a.typeLabel)})</span><br/>${escapeHtml(a.details)}</div>`
+      )
+      .join("")}
+  </div>`
+      : data.bankAccountLabel
+        ? `<div class="payment-box"><h3>Payment details</h3><div class="pay-row">${escapeHtml(data.bankAccountLabel)}</div></div>`
+        : "";
+
+  const balanceRows =
+    isInvoice && (data.amountPaid != null || data.balanceDue != null)
+      ? `
+    ${
+      data.amountPaid != null && data.amountPaid > 0
+        ? `<tr><td>Amount paid</td><td>${formatTzs(data.amountPaid)}</td></tr>`
+        : ""
+    }
+    ${
+      data.balanceDue != null && data.balanceDue > 0
+        ? `<tr class="due"><td>Balance due</td><td>${formatTzs(data.balanceDue)}</td></tr>`
+        : ""
+    }`
+      : "";
+
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"/><title>${escapeHtml(data.invoiceNo)} — ${escapeHtml(title)}</title>
 <style>
@@ -147,20 +112,25 @@ export function printSaleDocument(data: SaleDocumentPrintData): boolean {
   .contact { font-size: 9pt; color: #475569; margin-top: 8px; line-height: 1.45; }
   .doc-meta { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 20px; flex-wrap: wrap; }
   .doc-title { font-size: 16pt; font-weight: 700; color: #ea580c; margin: 0 0 4px; text-transform: uppercase; letter-spacing: 0.04em; }
-  .meta-block { font-size: 10pt; color: #334155; }
+  .meta-block { font-size: 10pt; color: #334155; line-height: 1.5; }
   .meta-block strong { color: #0f172a; }
   table.items { width: 100%; border-collapse: collapse; margin: 8px 0 16px; }
   table.items th { background: #f1f5f9; border: 1px solid #cbd5e1; padding: 8px 6px; font-size: 9pt; text-transform: uppercase; letter-spacing: 0.03em; color: #475569; }
   table.items td { border: 1px solid #e2e8f0; padding: 7px 6px; vertical-align: top; }
   table.items th.num, table.items td.num { text-align: center; width: 36px; }
   table.items th.money, table.items td.money { text-align: right; font-family: ui-monospace, monospace; white-space: nowrap; }
-  .totals { margin-left: auto; width: min(280px, 100%); }
+  .totals { margin-left: auto; width: min(300px, 100%); }
   .totals table { width: 100%; border-collapse: collapse; }
   .totals td { padding: 4px 0; font-size: 10pt; }
   .totals td:last-child { text-align: right; font-family: ui-monospace, monospace; }
-  .totals .grand td { font-size: 12pt; font-weight: 700; border-top: 2px solid #0f172a; padding-top: 8px; margin-top: 4px; }
+  .totals .grand td { font-size: 12pt; font-weight: 700; border-top: 2px solid #0f172a; padding-top: 8px; }
+  .totals .due td { color: #b45309; font-weight: 700; }
   .draft-banner { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; padding: 8px 12px; font-size: 10pt; margin-bottom: 16px; text-align: center; font-weight: 600; }
-  .footer { margin-top: 28px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 9pt; color: #64748b; }
+  .payment-box { margin-top: 24px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 6px; background: #f8fafc; }
+  .payment-box h3 { margin: 0 0 8px; font-size: 10pt; text-transform: uppercase; letter-spacing: 0.05em; color: #475569; }
+  .pay-row { font-size: 10pt; margin-bottom: 8px; line-height: 1.45; }
+  .pay-type { color: #64748b; font-weight: normal; }
+  .footer { margin-top: 20px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 9pt; color: #64748b; }
   @media print { body { padding: 0; } }
 </style></head><body>
 <header class="letterhead">
@@ -175,14 +145,10 @@ ${isDraft ? '<div class="draft-banner">DRAFT — Not a tax invoice until finaliz
     <div class="meta-block"><strong>Document no:</strong> ${escapeHtml(data.invoiceNo)}</div>
     <div class="meta-block"><strong>Date:</strong> ${escapeHtml(data.documentDate)}</div>
     ${data.validUntil ? `<div class="meta-block"><strong>Valid until:</strong> ${escapeHtml(data.validUntil)}</div>` : ""}
-    ${
-      data.bankAccountLabel
-        ? `<div class="meta-block"><strong>Bank account:</strong> ${escapeHtml(data.bankAccountLabel)}</div>`
-        : ""
-    }
   </div>
   <div class="meta-block" style="text-align:right">
-    ${data.customerName ? `<div><strong>Customer:</strong><br/>${escapeHtml(data.customerName)}</div>` : "<div><strong>Customer:</strong> Walk-in</div>"}
+    <div><strong>Bill to</strong></div>
+    ${customerLines}
   </div>
 </div>
 <table class="items">
@@ -213,11 +179,18 @@ ${isDraft ? '<div class="draft-banner">DRAFT — Not a tax invoice until finaliz
         : ""
     }
     <tr class="grand"><td>Total (TZS)</td><td>${formatTzs(data.totalAmount)}</td></tr>
+    ${balanceRows}
   </table>
 </div>
+${paymentSection}
 ${
   data.notes && !data.notes.match(/^Valid until:/i)
-    ? `<div class="footer"><strong>Notes:</strong> ${escapeHtml(data.notes.replace(/Valid until:[^\n]*/gi, "").trim())}</div>`
+    ? `<div class="footer"><strong>Notes:</strong> ${escapeHtml(
+        data.notes
+          .replace(/Valid until:[^\n]*/gi, "")
+          .replace(/Preferred bank account:[^\n]*/gi, "")
+          .trim()
+      )}</div>`
     : ""
 }
 <div class="footer">Thank you for your business — ${escapeHtml(data.organizationName)}</div>
@@ -228,5 +201,18 @@ ${
   if (!w) return false;
   w.document.write(html);
   w.document.close();
+  return true;
+}
+
+export function shareSaleDocumentWhatsApp(
+  data: SaleDocumentPrintData,
+  phone?: string | null
+): boolean {
+  const text = buildSaleDocumentWhatsAppMessage(data);
+  const digits = phone?.replace(/\D/g, "") ?? "";
+  const url = digits
+    ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}`
+    : `https://wa.me/?text=${encodeURIComponent(text)}`;
+  window.open(url, "_blank", "noopener,noreferrer");
   return true;
 }

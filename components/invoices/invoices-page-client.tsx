@@ -36,6 +36,10 @@ export function InvoicesPageClient() {
   const tabConfig = INVOICE_TAB_TYPES.find((t) => t.id === tab)!;
   const balanceDueMin =
     "balanceDueMin" in tabConfig ? tabConfig.balanceDueMin : undefined;
+  const customerRequired =
+    "customerRequired" in tabConfig ? tabConfig.customerRequired : undefined;
+  const statusFilter =
+    "status" in tabConfig ? [...tabConfig.status] : undefined;
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ["sale-documents", tab],
@@ -43,6 +47,8 @@ export function InvoicesPageClient() {
       listSaleDocuments({
         saleTypes: [...tabConfig.types],
         balanceDueMin,
+        customerRequired,
+        status: statusFilter,
         limit: 100,
       }),
   });
@@ -64,8 +70,8 @@ export function InvoicesPageClient() {
     },
   });
 
-  const canCreate = tab !== "invoices" && tab !== "credit";
-  const showDue = tab === "credit" || tab === "invoices";
+  const canCreate = tab !== "invoices";
+  const showDue = tab === "invoices";
 
   return (
     <div className="space-y-6">
@@ -148,7 +154,9 @@ export function InvoicesPageClient() {
             </div>
           ) : rows.length === 0 ? (
             <p className="py-12 text-center text-sm text-muted-foreground">
-              No {tabConfig.label.toLowerCase()} yet.
+              {tab === "invoices"
+                ? "No open customer invoices. Invoices appear here when a registered customer buys on credit or has an unpaid balance."
+                : `No ${tabConfig.label.toLowerCase()} yet.`}
             </p>
           ) : (
             <Table>

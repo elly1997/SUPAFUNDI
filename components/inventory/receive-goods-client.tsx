@@ -42,6 +42,8 @@ import { useTaxRate } from "@/hooks/useTaxRate";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { cn } from "@/lib/utils";
 import { PricingRecommendationHint } from "@/components/inventory/pricing-recommendation-hint";
+import { CollectionAccountSelect } from "@/components/finance/collection-account-select";
+import { needsCollectionAccount } from "@/lib/finance/collection-accounts";
 import { fetchProductPricingRecommendation } from "@/lib/api/pricing-insights-fetch";
 import { patchCatalogField } from "@/lib/api/inventory-catalog-fetch";
 import { retailPriceFromCost } from "@/lib/utils/calculations";
@@ -87,6 +89,7 @@ export function ReceiveGoodsClient() {
   const [paymentMethod, setPaymentMethod] = useState<
     "on_account" | "cash" | "mpesa" | "bank_transfer"
   >("on_account");
+  const [bankAccountId, setBankAccountId] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
   const [pickProduct, setPickProduct] = useState("");
   const [qty, setQty] = useState(1);
@@ -339,6 +342,8 @@ export function ReceiveGoodsClient() {
         void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
         void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
         void queryClient.invalidateQueries({ queryKey: ["payables-open"] });
+        void queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
+        void queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
       } else toast.error(r.message);
     },
     onError: (e) =>
@@ -477,6 +482,13 @@ export function ReceiveGoodsClient() {
                 </SelectContent>
               </Select>
             </div>
+
+            <CollectionAccountSelect
+              paymentMethod={paymentMethod}
+              value={bankAccountId}
+              onValueChange={setBankAccountId}
+              label="Pay from account"
+            />
           </div>
           </section>
 
@@ -777,10 +789,15 @@ export function ReceiveGoodsClient() {
                   toast.error("Select or add a supplier for on-account purchases");
                   return;
                 }
+                if (needsCollectionAccount(paymentMethod) && !bankAccountId) {
+                  toast.error("Select the bank or M-Pesa account for this payment");
+                  return;
+                }
                 receiveMut.mutate({
                   outletId,
                   supplierId: supplierId || null,
                   paymentMethod,
+                  bankAccountId: bankAccountId || undefined,
                   taxRate,
                   businessDate,
                   lines: lines.map((l) => ({

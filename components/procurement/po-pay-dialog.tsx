@@ -21,6 +21,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { CollectionAccountSelect } from "@/components/finance/collection-account-select";
+import { needsCollectionAccount } from "@/lib/finance/collection-accounts";
 import { payPurchaseOrderApi } from "@/lib/api/daily-ops-fetch";
 import { formatTzs } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
@@ -48,8 +50,9 @@ export function PoPayDialog({
 }: Props) {
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const [paymentMethod, setPaymentMethod] = useState<
-    "cash" | "mpesa" | "bank_transfer"
+    "cash" | "mpesa" | "bank_transfer" | "cheque"
   >("cash");
+  const [bankAccountId, setBankAccountId] = useState("");
   const [paymentDate, setPaymentDate] = useState(businessDate);
   const [amount, setAmount] = useState(String(balance ?? totalAmount));
   const [paymentRef, setPaymentRef] = useState("");
@@ -60,6 +63,7 @@ export function PoPayDialog({
     setAmount(String(balance ?? totalAmount));
     setPaymentRef("");
     setPaymentMethod("cash");
+    setBankAccountId("");
   }, [open, businessDate, balance, totalAmount]);
 
   const payMut = useMutation({
@@ -70,6 +74,7 @@ export function PoPayDialog({
         paymentDate,
         amount: Number(amount),
         referenceNo: paymentRef.trim() || undefined,
+        bankAccountId: bankAccountId || undefined,
       }),
     onSuccess: (r) => {
       if (r.ok) {
@@ -81,6 +86,8 @@ export function PoPayDialog({
     onError: (e) =>
       toast.error(e instanceof Error ? e.message : "Payment failed"),
   });
+
+  const needsAccount = needsCollectionAccount(paymentMethod);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -118,7 +125,9 @@ export function PoPayDialog({
             <Select
               value={paymentMethod}
               onValueChange={(v) =>
-                setPaymentMethod(v as "cash" | "mpesa" | "bank_transfer")
+                setPaymentMethod(
+                  (v ?? "cash") as "cash" | "mpesa" | "bank_transfer" | "cheque"
+                )
               }
             >
               <SelectTrigger>
@@ -128,9 +137,16 @@ export function PoPayDialog({
                 <SelectItem value="cash">Cash</SelectItem>
                 <SelectItem value="mpesa">M-Pesa</SelectItem>
                 <SelectItem value="bank_transfer">Bank transfer</SelectItem>
+                <SelectItem value="cheque">Cheque</SelectItem>
               </SelectContent>
             </Select>
           </div>
+          <CollectionAccountSelect
+            paymentMethod={paymentMethod}
+            value={bankAccountId}
+            onValueChange={setBankAccountId}
+            label="Pay from account"
+          />
           <div className="space-y-2">
             <Label>Reference (optional)</Label>
             <Input
@@ -150,7 +166,11 @@ export function PoPayDialog({
           </Button>
           <Button
             type="button"
-            disabled={payMut.isPending || !amount}
+            disabled={
+              payMut.isPending ||
+              !amount ||
+              (needsAccount && !bankAccountId)
+            }
             onClick={() => payMut.mutate()}
           >
             {payMut.isPending ? (

@@ -9,12 +9,13 @@ export const SALE_DOCUMENT_TYPES = [
 export type SaleDocumentType = (typeof SALE_DOCUMENT_TYPES)[number];
 
 export const INVOICE_TAB_TYPES = [
-  { id: "invoices", label: "Invoices", types: ["retail", "wholesale"] as SaleDocumentType[] },
   {
-    id: "credit",
-    label: "Credit / AR",
+    id: "invoices",
+    label: "Customer invoices",
     types: ["retail", "wholesale"] as SaleDocumentType[],
+    customerRequired: true,
     balanceDueMin: 0.01,
+    status: ["completed"] as const,
   },
   { id: "quotations", label: "Quotations", types: ["quotation"] as SaleDocumentType[] },
   { id: "proforma", label: "Proforma", types: ["proforma"] as SaleDocumentType[] },

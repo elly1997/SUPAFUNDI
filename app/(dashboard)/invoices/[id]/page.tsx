@@ -1,16 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
-import {
-  buildSaleDocumentPrintData,
-  InvoicePrintButton,
-} from "@/components/invoices/invoice-print-button";
+import { InvoiceDocumentActions } from "@/components/invoices/invoice-print-button";
 import { IssueDraftSaleCard } from "@/components/invoices/issue-draft-sale-card";
 import { SaleVoidActions } from "@/components/sales/sale-void-actions";
 import { buttonVariants } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { getOrganizationSettings } from "@/lib/actions/settings";
 import { getSaleById } from "@/lib/actions/sales";
+import { buildSaleDocumentPrintData } from "@/lib/invoices/print-data";
+import { loadPaymentAccountsForPrint } from "@/lib/invoices/payment-accounts-print";
 import { saleTypeLabel } from "@/lib/constants/sale-documents";
 import { cn } from "@/lib/utils";
 import { formatDateEAT, formatDateTimeEAT, formatTzs } from "@/lib/utils/currency";
@@ -24,12 +23,14 @@ import {
 } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-type Props = { params: { id: string } };
+type Props = { params: Promise<{ id: string }> };
 
 export default async function InvoiceDetailPage({ params }: Props) {
-  const [sale, org] = await Promise.all([
-    getSaleById(params.id),
+  const { id } = await params;
+  const [sale, org, paymentAccounts] = await Promise.all([
+    getSaleById(id),
     getOrganizationSettings(),
+    loadPaymentAccountsForPrint(),
   ]);
   if (!sale) notFound();
 
@@ -44,6 +45,8 @@ export default async function InvoiceDetailPage({ params }: Props) {
     invoiceNo: sale.invoice_no,
     documentDate: formatDateEAT(sale.sale_date),
     customerName: sale.customer_name,
+    customerPhone: sale.customer_phone,
+    customerEmail: sale.customer_email,
     status: sale.status,
     items: sale.items,
     subtotal: sale.subtotal,
@@ -51,8 +54,16 @@ export default async function InvoiceDetailPage({ params }: Props) {
     taxRate: sale.tax_rate,
     taxAmount: sale.tax_amount,
     totalAmount: sale.total_amount,
+    amountPaid: sale.amount_paid,
+    balanceDue: sale.balance_due,
     notes: sale.notes,
+    paymentAccounts,
   });
+
+  const isDraftDoc =
+    sale.sale_type === "quotation" ||
+    sale.sale_type === "proforma" ||
+    sale.sale_type === "delivery_note";
 
   return (
     <div className="space-y-6">
@@ -61,7 +72,11 @@ export default async function InvoiceDetailPage({ params }: Props) {
         description={`${saleTypeLabel(sale.sale_type)} · ${sale.status}`}
         actions={
           <div className="flex flex-wrap gap-2">
-            <InvoicePrintButton printData={printData} />
+            <InvoiceDocumentActions
+              printData={printData}
+              customerPhone={sale.customer_phone}
+              showWhatsApp={isDraftDoc || !!sale.customer_id}
+            />
             <SaleVoidActions
               saleId={sale.id}
               invoiceNo={sale.invoice_no}
@@ -123,9 +138,18 @@ export default async function InvoiceDetailPage({ params }: Props) {
       </div>
 
       {sale.customer_name ? (
-        <p className="text-sm text-muted-foreground">
-          Customer: <span className="font-medium text-foreground">{sale.customer_name}</span>
-        </p>
+        <div className="text-sm text-muted-foreground">
+          <p>
+            Customer:{" "}
+            <span className="font-medium text-foreground">{sale.customer_name}</span>
+          </p>
+          {sale.customer_phone ? (
+            <p>Tel: {sale.customer_phone}</p>
+          ) : null}
+          {sale.customer_email ? (
+            <p>Email: {sale.customer_email}</p>
+          ) : null}
+        </div>
       ) : null}
 
       <Card>
@@ -145,7 +169,14 @@ export default async function InvoiceDetailPage({ params }: Props) {
             <TableBody>
               {sale.items.map((item, i) => (
                 <TableRow key={i}>
-                  <TableCell>{item.product_name}</TableCell>
+                  <TableCell>
+                    {item.product_name}
+                    {item.unit ? (
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        ({item.unit})
+                      </span>
+                    ) : null}
+                  </TableCell>
                   <TableCell className="text-right">{item.quantity}</TableCell>
                   <TableCell className="text-right font-money">
                     {formatTzs(item.unit_price)}
@@ -160,10 +191,7 @@ export default async function InvoiceDetailPage({ params }: Props) {
         </CardContent>
       </Card>
 
-      {sale.status === "draft" &&
-      (sale.sale_type === "quotation" ||
-        sale.sale_type === "proforma" ||
-        sale.sale_type === "delivery_note") ? (
+      {sale.status === "draft" && isDraftDoc ? (
         <IssueDraftSaleCard
           saleId={sale.id}
           totalAmount={sale.total_amount}
@@ -173,8 +201,14 @@ export default async function InvoiceDetailPage({ params }: Props) {
 
       {sale.status === "draft" ? (
         <p className="text-sm text-muted-foreground">
-          Use <strong>Print PDF</strong> to send this {saleTypeLabel(sale.sale_type).toLowerCase()} to the customer.
-          Finalize from POS when they pay.
+          Use <strong>Print A4</strong> or <strong>Share quote</strong> to send this{" "}
+          {saleTypeLabel(sale.sale_type).toLowerCase()} to the customer. Finalize from
+          POS when they pay.
+        </p>
+      ) : sale.customer_id && sale.balance_due > 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Print the A4 invoice and hand it to the customer with bank / M-Pesa payment
+          details at the bottom.
         </p>
       ) : (
         <Link href={`/sales/${sale.id}`} className={cn(buttonVariants())}>

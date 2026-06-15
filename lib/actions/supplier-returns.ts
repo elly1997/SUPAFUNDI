@@ -7,7 +7,9 @@ import {
   type PurchasePaymentMethod,
 } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { depositToCollectionAccount } from "@/lib/actions/banking";
 import { requireOrgContext } from "@/lib/server/org-context";
+import { validateCollectionAccount } from "@/lib/finance/collection-accounts";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
 import { isoDateToTimestamptz, resolveBusinessDate } from "@/lib/utils/iso-date";
@@ -22,6 +24,7 @@ const returnInput = z.object({
   outletId: z.string().uuid(),
   supplierId: z.string().uuid().nullable().optional(),
   paymentMethod: z.enum(["cash", "mpesa", "bank_transfer", "on_account"]),
+  bankAccountId: z.string().uuid().optional(),
   referenceNo: z.string().max(100).optional(),
   notes: z.string().max(2000).optional(),
   businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -35,6 +38,12 @@ export async function createSupplierReturn(
     const input = returnInput.parse(raw);
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
+
+    const accountCheck = validateCollectionAccount(
+      input.paymentMethod,
+      input.bankAccountId
+    );
+    if (!accountCheck.ok) return accountCheck;
 
     const returnDate = resolveBusinessDate(input.businessDate);
     const movementAt = isoDateToTimestamptz(returnDate);
@@ -123,9 +132,28 @@ export async function createSupplierReturn(
       return { ok: false, message: journal.message };
     }
 
+    if (
+      (input.paymentMethod === "mpesa" ||
+        input.paymentMethod === "bank_transfer") &&
+      input.bankAccountId
+    ) {
+      const ref = input.referenceNo?.trim() || ret.id.slice(0, 8);
+      const bank = await depositToCollectionAccount(
+        input.bankAccountId,
+        totalAmount,
+        `Supplier return refund ${ref}`,
+        { referenceNo: ref, transactionDate: returnDate }
+      );
+      if (!bank.ok) {
+        await supabase.from("supplier_returns").delete().eq("id", ret.id);
+        return bank;
+      }
+    }
+
     revalidatePath("/inventory/stock");
     revalidatePath("/inventory/returns");
     revalidatePath("/suppliers");
+    revalidatePath("/finance/banking");
     revalidatePath("/daily-closing");
     return { ok: true, returnId: ret.id };
   } catch (e) {

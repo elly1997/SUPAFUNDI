@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { buildGrnJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { withdrawFromCollectionAccount } from "@/lib/actions/banking";
 import { createSupplierBillFromGrn } from "@/lib/actions/payables";
+import { validateCollectionAccount } from "@/lib/finance/collection-accounts";
 import { paySupplier } from "@/lib/actions/suppliers";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
@@ -59,6 +61,7 @@ const receivePoInput = z.object({
   paymentMethod: z
     .enum(["cash", "mpesa", "bank_transfer", "on_account"])
     .optional(),
+  bankAccountId: z.string().uuid().optional(),
   taxRate: z.number().min(0).max(100).default(18),
   businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
@@ -459,6 +462,15 @@ export async function receiveFromPurchaseOrder(
     const dayCheck = await checkBusinessDayMutable(po.outlet_id, receivedDate);
     if (!dayCheck.ok) return dayCheck;
 
+    const paymentMethod =
+      input.paymentMethod ??
+      (input.onAccount === false ? "cash" : "on_account");
+    const accountCheck = validateCollectionAccount(
+      paymentMethod,
+      input.bankAccountId
+    );
+    if (!accountCheck.ok) return accountCheck;
+
     const receiveLines: { productId: string; quantity: number; unitCost: number; poItemId: string }[] = [];
     for (const line of input.lines) {
       const item = po.items.find((i) => i.product_id === line.productId);
@@ -496,9 +508,7 @@ export async function receiveFromPurchaseOrder(
         reference_no: po.reference_no,
         invoice_no: input.invoiceNo?.trim() || null,
         received_date: receivedDate,
-        payment_method:
-          input.paymentMethod ??
-          (input.onAccount === false ? "cash" : "on_account"),
+        payment_method: paymentMethod,
         subtotal: inventoryValue,
         tax_amount: taxAmount,
         total_amount: totalAmount,
@@ -602,16 +612,11 @@ export async function receiveFromPurchaseOrder(
       lines: buildGrnJournalLines({
         inventoryValue,
         taxAmount,
-        paymentMethod:
-          input.paymentMethod ??
-          (input.onAccount === false ? "cash" : "on_account"),
+        paymentMethod,
       }),
     });
     if (!journal.ok) throw new Error(journal.message);
 
-    const paymentMethod =
-      input.paymentMethod ??
-      (input.onAccount === false ? "cash" : "on_account");
     const isCredit = paymentMethod === "on_account";
 
     const updated = await getPurchaseOrderById(po.id);
@@ -647,8 +652,23 @@ export async function receiveFromPurchaseOrder(
       if (!bill.ok) throw new Error(bill.message);
     }
 
+    if (
+      (paymentMethod === "mpesa" || paymentMethod === "bank_transfer") &&
+      input.bankAccountId
+    ) {
+      const ref = po.reference_no ?? grn.id.slice(0, 8);
+      const bank = await withdrawFromCollectionAccount(
+        input.bankAccountId,
+        totalAmount,
+        `PO receipt ${ref}`,
+        { referenceNo: ref, transactionDate: receivedDate }
+      );
+      if (!bank.ok) throw new Error(bank.message);
+    }
+
     revalidatePath("/inventory/purchase-orders");
     revalidatePath("/finance/payables");
+    revalidatePath("/finance/banking");
     revalidatePath("/inventory/stock");
     revalidatePath("/inventory/receive");
     return { ok: true, grnId: grn.id };

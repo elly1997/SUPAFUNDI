@@ -26,6 +26,7 @@ const lineInput = z.object({
   productName: z.string().min(1),
   quantity: z.number().positive(),
   unitPrice: z.number().nonnegative(),
+  unitLabel: z.string().max(40).optional(),
   discountPct: z.number().min(0).max(100).default(0),
 });
 
@@ -94,6 +95,7 @@ export async function listSaleDocuments(options?: {
   saleTypes?: SaleDocumentType[];
   status?: string[];
   balanceDueMin?: number;
+  customerRequired?: boolean;
   limit?: number;
 }): Promise<SaleDocumentRow[]> {
   const ctx = await requireOrgContext();
@@ -115,6 +117,9 @@ export async function listSaleDocuments(options?: {
   }
   if (options?.balanceDueMin != null) {
     query = query.gte("balance_due", options.balanceDueMin);
+  }
+  if (options?.customerRequired) {
+    query = query.not("customer_id", "is", null);
   }
 
   const { data, error } = await query;
@@ -240,16 +245,23 @@ export async function createDraftSaleDocument(
     }
 
     const { error: itemsErr } = await supabase.from("sale_items").insert(
-      input.lines.map((l, i) => ({
-        sale_id: sale.id,
-        product_id: l.productId ?? null,
-        product_name: l.productName,
-        quantity: l.quantity,
-        unit_price: l.unitPrice,
-        discount_pct: l.discountPct,
-        tax_rate: taxRate,
-        total_price: lineTotals[i],
-      }))
+      input.lines.map((l, i) => {
+        const unit = l.unitLabel?.trim();
+        const displayName =
+          unit && !l.productName.toLowerCase().includes(`(${unit.toLowerCase()})`)
+            ? `${l.productName} (${unit})`
+            : l.productName;
+        return {
+          sale_id: sale.id,
+          product_id: l.productId ?? null,
+          product_name: displayName,
+          quantity: l.quantity,
+          unit_price: l.unitPrice,
+          discount_pct: l.discountPct,
+          tax_rate: taxRate,
+          total_price: lineTotals[i],
+        };
+      })
     );
 
     if (itemsErr) {

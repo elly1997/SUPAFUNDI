@@ -8,6 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PosExpenseCategorySelect } from "@/components/pos/pos-expense-category-select";
+import { CollectionAccountSelect } from "@/components/finance/collection-account-select";
+import { needsCollectionAccount } from "@/lib/finance/collection-accounts";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { fetchExpenses, recordExpenseApi } from "@/lib/api/daily-ops-fetch";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
@@ -18,6 +27,10 @@ export function PosExpensesPanel() {
   const [category, setCategory] = useState<string>("misc");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<
+    "cash" | "mpesa" | "bank_transfer"
+  >("cash");
+  const [bankAccountId, setBankAccountId] = useState("");
   const outletId = useAuthStore((s) => s.activeOutletId);
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const queryClient = useQueryClient();
@@ -37,6 +50,8 @@ export function PosExpensesPanel() {
         setAmount("");
         setDescription("");
         queryClient.invalidateQueries({ queryKey: ["pos-expenses"] });
+        queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
+        queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
       } else toast.error(r.message);
     },
     onError: (e) =>
@@ -69,12 +84,17 @@ export function PosExpensesPanel() {
                 toast.error("Enter a valid amount");
                 return;
               }
+              if (needsCollectionAccount(paymentMethod) && !bankAccountId) {
+                toast.error("Select the bank or M-Pesa account");
+                return;
+              }
               recordMut.mutate({
                 outletId: outletId ?? undefined,
                 category,
                 description: description || undefined,
                 amount: amt,
-                paidFromCash: true,
+                paymentMethod,
+                bankAccountId: bankAccountId || undefined,
                 expenseDate: businessDate,
               });
             }}
@@ -96,6 +116,32 @@ export function PosExpensesPanel() {
                 onChange={(e) => setAmount(e.target.value)}
               />
             </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Payment</Label>
+              <Select
+                value={paymentMethod}
+                onValueChange={(v) =>
+                  setPaymentMethod(
+                    (v ?? "cash") as "cash" | "mpesa" | "bank_transfer"
+                  )
+                }
+              >
+                <SelectTrigger className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="mpesa">M-Pesa</SelectItem>
+                  <SelectItem value="bank_transfer">Bank</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <CollectionAccountSelect
+              paymentMethod={paymentMethod}
+              value={bankAccountId}
+              onValueChange={setBankAccountId}
+              label="Pay from"
+            />
             <div className="space-y-1">
               <Label className="text-xs">Note</Label>
               <Input

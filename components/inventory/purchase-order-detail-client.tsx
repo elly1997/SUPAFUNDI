@@ -24,6 +24,8 @@ import {
   sendPurchaseOrderApi,
 } from "@/lib/api/daily-ops-fetch";
 import { PoPayDialog } from "@/components/procurement/po-pay-dialog";
+import { CollectionAccountSelect } from "@/components/finance/collection-account-select";
+import { needsCollectionAccount } from "@/lib/finance/collection-accounts";
 import { PoStatusBadges } from "@/components/procurement/po-status-badges";
 import { isPoPaid } from "@/lib/procurement/po-payment";
 import { formatTzs } from "@/lib/utils/currency";
@@ -39,6 +41,7 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
   const [paymentMethod, setPaymentMethod] = useState<
     "on_account" | "cash" | "mpesa" | "bank_transfer"
   >("on_account");
+  const [bankAccountId, setBankAccountId] = useState("");
   const [payOpen, setPayOpen] = useState(false);
   const queryClient = useQueryClient();
 
@@ -82,7 +85,8 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
         toast.success("Goods received and posted to GL");
         setReceiveQty({});
         invalidate();
-        queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
+        queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
+        queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
       } else toast.error(r.message);
     },
     onError: (e) =>
@@ -270,17 +274,28 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
                 <option value="bank_transfer">Bank transfer</option>
               </select>
             </div>
+            <CollectionAccountSelect
+              paymentMethod={paymentMethod}
+              value={bankAccountId}
+              onValueChange={setBankAccountId}
+              label="Pay from account"
+            />
             <Button
               disabled={receiveLines.length === 0 || receiveMut.isPending}
-              onClick={() =>
+              onClick={() => {
+                if (needsCollectionAccount(paymentMethod) && !bankAccountId) {
+                  toast.error("Select the bank or M-Pesa account for this payment");
+                  return;
+                }
                 receiveMut.mutate({
                   poId,
                   lines: receiveLines,
                   paymentMethod,
+                  bankAccountId: bankAccountId || undefined,
                   taxRate,
                   businessDate,
-                })
-              }
+                });
+              }}
             >
               {receiveMut.isPending ? "Receiving…" : "Receive & post to GL"}
             </Button>

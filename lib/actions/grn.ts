@@ -8,8 +8,10 @@ import {
   type JournalLineInput,
 } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { withdrawFromCollectionAccount } from "@/lib/actions/banking";
 import { createSupplierBillFromGrn } from "@/lib/actions/payables";
 import { createReceivedPoFromGrn } from "@/lib/actions/purchase-orders";
+import { validateCollectionAccount } from "@/lib/finance/collection-accounts";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -43,6 +45,7 @@ const receiveGoodsInput = z.object({
   /** Legacy: false = cash */
   onAccount: z.boolean().optional(),
   paymentMethod: purchasePaymentMethod.optional(),
+  bankAccountId: z.string().uuid().optional(),
   businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   notes: z.string().max(2000).optional(),
   lines: z.array(grnLineInput).min(1),
@@ -100,6 +103,12 @@ export async function receiveGoods(
     const totalAmount = roundMoney(inventoryValue + taxAmount);
 
     const paymentMethod = resolvePurchasePayment(input);
+    const accountCheck = validateCollectionAccount(
+      paymentMethod,
+      input.bankAccountId
+    );
+    if (!accountCheck.ok) return accountCheck;
+
     const receivedDate = resolveBusinessDate(input.businessDate);
     const movementAt = isoDateToTimestamptz(receivedDate);
 
@@ -256,8 +265,26 @@ export async function receiveGoods(
       }
     }
 
+    if (
+      (paymentMethod === "mpesa" || paymentMethod === "bank_transfer") &&
+      input.bankAccountId
+    ) {
+      const ref =
+        input.referenceNo?.trim() ||
+        input.invoiceNo?.trim() ||
+        grn.id.slice(0, 8);
+      const bank = await withdrawFromCollectionAccount(
+        input.bankAccountId,
+        totalAmount,
+        `Purchase GRN ${ref}`,
+        { referenceNo: ref, transactionDate: receivedDate }
+      );
+      if (!bank.ok) throw new Error(bank.message);
+    }
+
     revalidatePath("/inventory/stock");
     revalidatePath("/finance/payables");
+    revalidatePath("/finance/banking");
     revalidatePath("/inventory/receive");
     revalidatePath("/inventory/products");
     revalidatePath("/inventory/purchase-orders");

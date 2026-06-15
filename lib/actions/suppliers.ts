@@ -643,6 +643,19 @@ export async function paySupplier(
     const paymentDate =
       input.paymentDate ?? new Date().toISOString().slice(0, 10);
 
+    const needsBankLedger =
+      input.paymentMethod === "mpesa" ||
+      input.paymentMethod === "bank_transfer" ||
+      input.paymentMethod === "cheque";
+
+    if (needsBankLedger && !input.bankAccountId) {
+      return {
+        ok: false,
+        message:
+          "Select the bank or M-Pesa account this payment was made from (Finance → Banking).",
+      };
+    }
+
     const plan = await planBillAllocations(
       supabase,
       ctx.organizationId,
@@ -711,19 +724,6 @@ export async function paySupplier(
     });
     if (!journal.ok) {
       return { ok: false, message: journal.message };
-    }
-
-    const needsBankLedger =
-      input.paymentMethod === "mpesa" ||
-      input.paymentMethod === "bank_transfer" ||
-      input.paymentMethod === "cheque";
-
-    if (needsBankLedger && !input.bankAccountId) {
-      return {
-        ok: false,
-        message:
-          "Select the bank or M-Pesa account this payment was made from (Finance → Banking).",
-      };
     }
 
     if (needsBankLedger && input.bankAccountId) {

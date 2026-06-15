@@ -314,12 +314,6 @@ export function buildSupplierReturnJournalLines(input: {
   ];
 }
 
-export type ExpensePostingInput = {
-  amount: number;
-  paidFromCash: boolean;
-  categoryAccountCode?: string;
-};
-
 /** Move cash from drawer to bank — asset transfer, no P&L impact. */
 export function buildCashToBankJournalLines(amount: number): JournalLineInput[] {
   return [
@@ -338,8 +332,40 @@ export function buildCashToBankJournalLines(amount: number): JournalLineInput[] 
   ];
 }
 
+export type ExpensePostingInput = {
+  amount: number;
+  /** @deprecated use paymentMethod */
+  paidFromCash?: boolean;
+  paymentMethod?: "cash" | "mpesa" | "bank_transfer" | "on_account";
+  categoryAccountCode?: string;
+};
+
+function expenseCreditAccount(
+  method: NonNullable<ExpensePostingInput["paymentMethod"]>
+): string {
+  if (method === "mpesa") return SYSTEM_ACCOUNT_CODES.mpesa;
+  if (method === "bank_transfer") return SYSTEM_ACCOUNT_CODES.bank;
+  if (method === "on_account") return SYSTEM_ACCOUNT_CODES.ap;
+  return SYSTEM_ACCOUNT_CODES.cash;
+}
+
+function resolveExpensePaymentMethod(
+  input: ExpensePostingInput
+): NonNullable<ExpensePostingInput["paymentMethod"]> {
+  if (input.paymentMethod) return input.paymentMethod;
+  return input.paidFromCash === false ? "on_account" : "cash";
+}
+
 export function buildExpenseJournalLines(input: ExpensePostingInput): JournalLineInput[] {
   const expenseCode = input.categoryAccountCode ?? "6040";
+  const paymentMethod = resolveExpensePaymentMethod(input);
+  const creditAccount = expenseCreditAccount(paymentMethod);
+  const creditMemo =
+    paymentMethod === "on_account"
+      ? "Accrued expense"
+      : paymentMethod === "cash"
+        ? "Paid from cash"
+        : `Paid from ${paymentMethod}`;
   return [
     {
       accountCode: expenseCode,
@@ -348,10 +374,10 @@ export function buildExpenseJournalLines(input: ExpensePostingInput): JournalLin
       memo: "Expense",
     },
     {
-      accountCode: input.paidFromCash ? SYSTEM_ACCOUNT_CODES.cash : SYSTEM_ACCOUNT_CODES.ap,
+      accountCode: creditAccount,
       debit: 0,
       credit: input.amount,
-      memo: input.paidFromCash ? "Paid from cash" : "Accrued expense",
+      memo: creditMemo,
     },
   ];
 }

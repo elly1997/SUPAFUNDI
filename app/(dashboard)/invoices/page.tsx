@@ -6,7 +6,7 @@ export default function InvoicesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Invoices & documents"
-        description="Retail and wholesale invoices, quotations, proforma invoices, and delivery notes."
+        description="Customer invoices (credit & partial payments), quotations, proforma, and delivery notes."
       />
       <InvoicesPageClient />
     </div>
