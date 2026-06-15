@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Landmark, Loader2, Plus, Smartphone, Wallet } from "lucide-react";
+import { Landmark, Loader2, Plus, ShieldCheck, Smartphone, Wallet } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -45,6 +45,9 @@ import {
   recordBankTransaction,
   toggleBankTransactionReconciled,
 } from "@/lib/actions/banking";
+import { AdjustBalanceDialog } from "@/components/finance/adjust-balance-dialog";
+import { canManageSettings } from "@/lib/auth/roles";
+import { useAuthStore } from "@/stores/authStore";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 
@@ -68,6 +71,10 @@ export function BankingPageClient() {
   const [txnType, setTxnType] = useState<"deposit" | "withdrawal">("deposit");
   const [txnAmount, setTxnAmount] = useState("");
   const [txnDesc, setTxnDesc] = useState("");
+  const [adjustOpen, setAdjustOpen] = useState(false);
+
+  const role = useAuthStore((s) => s.session?.role ?? null);
+  const canAdjustBalance = canManageSettings(role);
 
   const {
     data: accounts = [],
@@ -239,9 +246,23 @@ export function BankingPageClient() {
             </div>
             <div>
               <span className="text-muted-foreground">Balance</span>
-              <p className="font-money text-lg font-semibold">
-                {formatTzs(selected.current_balance)}
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-money text-lg font-semibold">
+                  {formatTzs(selected.current_balance)}
+                </p>
+                {canAdjustBalance && selected.is_active ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8"
+                    onClick={() => setAdjustOpen(true)}
+                  >
+                    <ShieldCheck className="mr-1.5 size-3.5" />
+                    Adjust balance
+                  </Button>
+                ) : null}
+              </div>
             </div>
             <div>
               <span className="text-muted-foreground">POS</span>
@@ -613,6 +634,16 @@ export function BankingPageClient() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AdjustBalanceDialog
+        account={selected ?? null}
+        open={adjustOpen}
+        onOpenChange={setAdjustOpen}
+        onSuccess={() => {
+          void queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
+          void queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
+        }}
+      />
     </div>
   );
 }

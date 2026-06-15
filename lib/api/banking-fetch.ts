@@ -98,3 +98,30 @@ export async function fetchCashDepositAccounts(): Promise<PaymentAccountRow[]> {
   }
   return body.accounts ?? [];
 }
+
+export async function adjustAccountBalanceApi(params: {
+  bankAccountId: string;
+  newBalance: number;
+  reason: string;
+  adminPassword: string;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await fetch("/api/finance/banking/adjust-balance", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const body = (await res.json()) as
+    | { ok: true }
+    | { ok: false; message?: string };
+  if (!res.ok) {
+    return {
+      ok: false,
+      message:
+        body.ok === false ? body.message ?? "Adjustment failed" : "Adjustment failed",
+    };
+  }
+  return body.ok
+    ? { ok: true }
+    : { ok: false, message: body.message ?? "Adjustment failed" };
+}

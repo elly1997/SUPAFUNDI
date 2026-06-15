@@ -10,6 +10,8 @@ import { buildCashToBankJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { CASH_DRAWER_DEPOSIT_PREFIX } from "@/lib/constants/cash-deposit";
 import { requireOrgContext } from "@/lib/server/org-context";
+import { requireManagerContext } from "@/lib/server/require-manager";
+import { verifyManagerPassword } from "@/lib/auth/verify-manager-password";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
 import { resolveBusinessDate } from "@/lib/utils/iso-date";
@@ -532,4 +534,77 @@ export async function toggleBankTransactionReconciled(
   if (error) return { ok: false, message: error.message };
   revalidatePath("/finance/banking");
   return { ok: true };
+}
+
+const adjustBalanceInput = z.object({
+  bankAccountId: z.string().uuid(),
+  newBalance: z.number().nonnegative(),
+  reason: z.string().min(3).max(500),
+  adminPassword: z.string().min(6),
+});
+
+/** Set account balance to an exact figure (owner/manager + password). */
+export async function adjustPaymentAccountBalance(
+  raw: z.infer<typeof adjustBalanceInput>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const input = adjustBalanceInput.parse(raw);
+    const verified = await verifyManagerPassword(input.adminPassword);
+    if (!verified.ok) return verified;
+
+    const { organizationId, userId } = await requireManagerContext();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: account } = await bankDb(supabase)
+      .from("bank_accounts")
+      .select("id, name, current_balance, account_type")
+      .eq("id", input.bankAccountId)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (!account) {
+      return { ok: false, message: "Account not found." };
+    }
+
+    const previous = roundMoney(Number(account.current_balance));
+    const target = roundMoney(input.newBalance);
+    const delta = roundMoney(target - previous);
+
+    if (delta === 0) {
+      return { ok: false, message: "New balance matches the current balance." };
+    }
+
+    const txnType = delta > 0 ? "deposit" : "withdrawal";
+    const amount = Math.abs(delta);
+    const reason = input.reason.trim();
+    const label = `Balance adjustment: ${reason}`;
+
+    const { error: txErr } = await bankDb(supabase)
+      .from("bank_transactions")
+      .insert({
+        organization_id: organizationId,
+        bank_account_id: input.bankAccountId,
+        transaction_type: txnType,
+        amount,
+        reference_no: `ADJ-${Date.now()}`,
+        description: label,
+        transaction_date: new Date().toISOString().slice(0, 10),
+        created_by: userId,
+        is_reconciled: true,
+      });
+    if (txErr) return { ok: false, message: txErr.message };
+
+    const { error: balErr } = await bankDb(supabase)
+      .from("bank_accounts")
+      .update({ current_balance: target })
+      .eq("id", input.bankAccountId);
+    if (balErr) return { ok: false, message: balErr.message };
+
+    revalidatePath("/finance/banking");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Balance adjustment failed",
+    };
+  }
 }
