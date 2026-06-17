@@ -14,6 +14,10 @@ import { buildCashVarianceJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { getOrganizationSettings } from "@/lib/actions/settings";
 import { isoDateToTimestamptz } from "@/lib/utils/iso-date";
+import {
+  isCustomerArPaymentRef,
+  isCustomerDepositRef,
+} from "@/lib/constants/party-payments";
 
 export type DayCashSummary = {
   businessDate: string;
@@ -123,12 +127,14 @@ export async function computeDayCashSummary(
   if (saleIds.length > 0) {
     const { data: payments } = await supabase
       .from("payments")
-      .select("amount, payment_method")
+      .select("amount, payment_method, reference_no, customer_id")
       .eq("organization_id", ctx.organizationId)
       .eq("status", "completed")
       .in("sale_id", saleIds);
 
     for (const p of payments ?? []) {
+      // Customer AR collections are counted under cashCustomerPayments.
+      if (isCustomerArPaymentRef(p.reference_no) || p.customer_id) continue;
       const amt = Number(p.amount);
       if (p.payment_method === "cash") cashSales += amt;
       else if (p.payment_method === "mpesa") mpesaSales += amt;
@@ -212,20 +218,20 @@ export async function computeDayCashSummary(
   let cashCustomerDeposits = 0;
   const { data: customerCash } = await supabase
     .from("payments")
-    .select("amount, reference_no, payment_method")
+    .select("amount, reference_no, payment_method, sale_id")
     .eq("organization_id", ctx.organizationId)
     .eq("outlet_id", outletId)
     .eq("payment_method", "cash")
     .eq("status", "completed")
     .gte("payment_date", from)
     .lte("payment_date", to)
-    .not("customer_id", "is", null)
-    .is("sale_id", null);
+    .not("customer_id", "is", null);
 
   for (const p of customerCash ?? []) {
-    const ref = String(p.reference_no ?? "");
     const amt = Number(p.amount);
-    if (ref.startsWith("DEP-")) {
+    if (isCustomerDepositRef(p.reference_no)) {
+      // Deposit allocation rows share the parent DEP- reference — skip slices.
+      if (p.sale_id != null) continue;
       cashCustomerDeposits += amt;
     } else {
       cashCustomerPayments += amt;

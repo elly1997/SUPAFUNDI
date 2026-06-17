@@ -512,6 +512,7 @@ export type Database = {
           organization_id: string;
           outlet_id: string | null;
           sale_id: string | null;
+          customer_id: string | null;
           payment_method: string;
           amount: number;
           status: string;
@@ -526,6 +527,7 @@ export type Database = {
           organization_id: string;
           outlet_id?: string | null;
           sale_id?: string | null;
+          customer_id?: string | null;
           payment_method: string;
           amount: number;
           status?: string;

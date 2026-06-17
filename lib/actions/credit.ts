@@ -8,6 +8,7 @@ import {
 } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
+import { formatCustomerArReference } from "@/lib/constants/party-payments";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -113,8 +114,10 @@ export async function applyAmountToCustomerCredit(
         payment_method: params.paymentMethod,
         amount: slice.amount,
         reference_no:
-          params.paymentReference?.trim() ||
-          `AR-${sale.invoice_no}`,
+          formatCustomerArReference(
+            sale.invoice_no,
+            params.paymentReference
+          ),
         status: "completed",
         payment_date: paymentTs,
         received_by: ctx.userId,
@@ -338,6 +341,16 @@ export async function recordCustomerPayment(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const input = paymentInput.parse(raw);
+    if (
+      (input.paymentMethod === "mpesa" ||
+        input.paymentMethod === "bank_transfer") &&
+      !input.bankAccountId
+    ) {
+      return {
+        ok: false,
+        message: "Select the M-Pesa or bank account that received this payment.",
+      };
+    }
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
     const paymentDate =
@@ -449,9 +462,10 @@ export async function recordCustomerPayment(
         sale_id: slice.saleId,
         payment_method: input.paymentMethod,
         amount: slice.amount,
-        reference_no:
-          input.referenceNo?.trim() ||
-          `AR-${sale.invoice_no}`,
+        reference_no: formatCustomerArReference(
+          sale.invoice_no,
+          input.referenceNo
+        ),
         status: "completed",
         payment_date: paymentTs,
         received_by: ctx.userId,
@@ -488,7 +502,10 @@ export async function recordCustomerPayment(
         outlet_id: ctx.outletId,
         payment_method: input.paymentMethod,
         amount: input.amount,
-        reference_no: input.referenceNo?.trim() || `AR-${customer.name}`,
+        reference_no: formatCustomerArReference(
+          customer.name,
+          input.referenceNo
+        ),
         status: "completed",
         payment_date: paymentTs,
         received_by: ctx.userId,
@@ -534,8 +551,9 @@ export async function recordCustomerPayment(
         input.bankAccountId,
         input.amount,
         ledger.id,
-        `AR-${customer.name}`,
-        paymentDate
+        formatCustomerArReference(customer.name, input.referenceNo),
+        paymentDate,
+        `Customer payment — ${customer.name}`
       );
       if (!bank.ok) return bank;
     }

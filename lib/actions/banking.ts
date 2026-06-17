@@ -501,13 +501,14 @@ export async function recordCashToBankDeposit(
   }
 }
 
-/** Credit a collection account when a POS sale is paid to M-Pesa / bank / card. */
+/** Credit a collection account when a POS sale or customer payment is received. */
 export async function creditAccountFromPosSale(
   paymentAccountId: string,
   amount: number,
   saleId: string,
   invoiceNo: string,
-  businessDate?: string
+  businessDate?: string,
+  description?: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if (amount <= 0) return { ok: true };
   return recordBankTransaction({
@@ -515,7 +516,7 @@ export async function creditAccountFromPosSale(
     transactionType: "deposit",
     amount: roundMoney(amount),
     referenceNo: invoiceNo,
-    description: `POS sale ${invoiceNo}`,
+    description: description ?? `POS sale ${invoiceNo}`,
     transactionDate: businessDate,
   });
 }

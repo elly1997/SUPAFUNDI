@@ -6,6 +6,7 @@ import { applyAmountToCustomerCredit, applyCustomerDepositToCredit } from "@/lib
 import { buildCustomerDepositReceiptJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
+import { formatCustomerDepositReference } from "@/lib/constants/party-payments";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
@@ -113,6 +114,16 @@ export async function recordCustomerDeposit(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const input = depositInput.parse(raw);
+    if (
+      (input.paymentMethod === "mpesa" ||
+        input.paymentMethod === "bank_transfer") &&
+      !input.bankAccountId
+    ) {
+      return {
+        ok: false,
+        message: "Select the M-Pesa or bank account that received this deposit.",
+      };
+    }
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
     const paymentDate =
@@ -129,7 +140,10 @@ export async function recordCustomerDeposit(
     if (!customer) return { ok: false, message: "Customer not found." };
 
     const paymentTs = `${paymentDate}T12:00:00.000Z`;
-    const referenceNo = input.notes?.trim() || `DEP-${customer.name}`;
+    const referenceNo = formatCustomerDepositReference(
+      customer.name,
+      input.notes
+    );
 
     const outstanding = roundMoney(Number(customer.outstanding_balance ?? 0));
     const prevDeposit = roundMoney(Number(customer.deposit_balance ?? 0));
@@ -188,7 +202,8 @@ export async function recordCustomerDeposit(
         input.amount,
         payment!.id,
         referenceNo,
-        paymentDate
+        paymentDate,
+        `Customer deposit — ${customer.name}`
       );
       if (!bank.ok) {
         await supabase.from("payments").delete().eq("id", payment?.id);
