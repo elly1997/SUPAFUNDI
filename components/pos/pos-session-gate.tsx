@@ -38,6 +38,8 @@ export function PosSessionGate({
     queryKey: ["drawer-status", outletId, workingDate],
     queryFn: () => fetchDrawerStatus(outletId, workingDate),
     enabled: mounted && !!outletId,
+    staleTime: 90_000,
+    refetchOnWindowFocus: false,
   });
 
   const dayReconciled = !!drawer?.reconciled;

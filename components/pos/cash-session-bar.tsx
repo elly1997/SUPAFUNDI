@@ -64,8 +64,10 @@ export function CashSessionBar({
     queryKey: ["drawer-status", outletId, workingDate],
     queryFn: () => fetchDrawerStatus(outletId, workingDate),
     enabled: !!outletId,
-    refetchInterval: 20_000,
-    refetchOnWindowFocus: true,
+    staleTime: 90_000,
+    refetchInterval: 120_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
   });
 
   const session = drawer?.session ?? null;

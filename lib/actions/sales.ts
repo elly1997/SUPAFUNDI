@@ -1109,17 +1109,6 @@ export async function listCustomersForPos(): Promise<PosCustomer[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
 
-  const { data: needsApply } = await supabase
-    .from("customers")
-    .select("id")
-    .eq("organization_id", ctx.organizationId)
-    .gt("outstanding_balance", 0)
-    .gt("deposit_balance", 0);
-  for (const c of needsApply ?? []) {
-    const { applyCustomerDepositToCredit } = await import("@/lib/actions/credit");
-    await applyCustomerDepositToCredit(c.id);
-  }
-
   const { data, error } = await supabase
     .from("customers")
     .select(

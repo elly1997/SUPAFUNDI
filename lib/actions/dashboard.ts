@@ -12,6 +12,55 @@ export type DashboardKpis = {
   netToday: number;
 };
 
+type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
+
+function applySalesFilters(
+  q: ReturnType<Supabase["from"]>,
+  organizationId: string,
+  bounds: { from: string; to: string },
+  outletId?: string | null
+) {
+  let filtered = q
+    .eq("organization_id", organizationId)
+    .eq("status", "completed")
+    .gte("sale_date", bounds.from)
+    .lte("sale_date", bounds.to);
+  if (outletId) filtered = filtered.eq("outlet_id", outletId);
+  return filtered;
+}
+
+function applyExpenseFilters(
+  q: ReturnType<Supabase["from"]>,
+  organizationId: string,
+  date: string,
+  outletId?: string | null
+) {
+  let filtered = q
+    .eq("organization_id", organizationId)
+    .eq("expense_date", date);
+  if (outletId) filtered = filtered.eq("outlet_id", outletId);
+  return filtered;
+}
+
+function readSum(
+  data: Record<string, unknown> | null | undefined,
+  field: string
+): number {
+  if (!data) return 0;
+  const nested = data[field];
+  if (typeof nested === "number") return nested;
+  if (
+    nested &&
+    typeof nested === "object" &&
+    "sum" in nested &&
+    typeof (nested as { sum?: unknown }).sum === "number"
+  ) {
+    return (nested as { sum: number }).sum;
+  }
+  const flat = data[`${field}.sum`];
+  return typeof flat === "number" ? flat : 0;
+}
+
 export async function getDashboardKpis(
   outletId?: string | null,
   businessDate?: string | null
@@ -21,33 +70,37 @@ export async function getDashboardKpis(
   const date = resolveBusinessDate(businessDate);
   const bounds = businessDayBounds(date);
 
-  let salesQ = supabase
-    .from("sales")
-    .select("total_amount")
-    .eq("organization_id", ctx.organizationId)
-    .eq("status", "completed")
-    .gte("sale_date", bounds.from)
-    .lte("sale_date", bounds.to);
-  let expQ = supabase
-    .from("expenses")
-    .select("amount")
-    .eq("organization_id", ctx.organizationId)
-    .eq("expense_date", date);
-  if (outletId) {
-    salesQ = salesQ.eq("outlet_id", outletId);
-    expQ = expQ.eq("outlet_id", outletId);
-  }
+  const [salesSumRes, salesCountRes, expSumRes] = await Promise.all([
+    applySalesFilters(
+      supabase.from("sales").select("total_amount.sum()"),
+      ctx.organizationId,
+      bounds,
+      outletId
+    ).maybeSingle(),
+    applySalesFilters(
+      supabase.from("sales").select("*", { count: "exact", head: true }),
+      ctx.organizationId,
+      bounds,
+      outletId
+    ),
+    applyExpenseFilters(
+      supabase.from("expenses").select("amount.sum()"),
+      ctx.organizationId,
+      date,
+      outletId
+    ).maybeSingle(),
+  ]);
 
-  const [salesRes, expRes] = await Promise.all([salesQ, expQ]);
-  if (salesRes.error) throw new Error(salesRes.error.message);
-  if (expRes.error) throw new Error(expRes.error.message);
+  if (salesSumRes.error) throw new Error(salesSumRes.error.message);
+  if (salesCountRes.error) throw new Error(salesCountRes.error.message);
+  if (expSumRes.error) throw new Error(expSumRes.error.message);
 
   const salesToday = roundMoney(
-    (salesRes.data ?? []).reduce((s, r) => s + Number(r.total_amount), 0)
+    readSum(salesSumRes.data as Record<string, unknown> | null, "total_amount")
   );
-  const salesCountToday = salesRes.data?.length ?? 0;
+  const salesCountToday = salesCountRes.count ?? 0;
   const expensesToday = roundMoney(
-    (expRes.data ?? []).reduce((s, r) => s + Number(r.amount), 0)
+    readSum(expSumRes.data as Record<string, unknown> | null, "amount")
   );
 
   return {

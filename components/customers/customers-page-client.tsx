@@ -103,8 +103,8 @@ export function CustomersPageClient() {
   const { data: customers = [], isLoading, isError, error } = useQuery({
     queryKey: ["customers"],
     queryFn: fetchCustomers,
-    staleTime: 0,
-    refetchOnMount: "always",
+    staleTime: 90_000,
+    refetchOnMount: false,
   });
 
   const createMut = useMutation({

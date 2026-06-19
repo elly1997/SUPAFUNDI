@@ -55,6 +55,8 @@ type Props = {
   className?: string;
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
+  /** When false, skip list fetches until panel is visible (desktop collapsed / mobile closed). */
+  fetchEnabled?: boolean;
 };
 
 export function PosCashflowPanel({
@@ -63,6 +65,7 @@ export function PosCashflowPanel({
   className,
   collapsed = false,
   onCollapsedChange,
+  fetchEnabled = true,
 }: Props) {
   const taxRate = useTaxRate();
   const [tab, setTab] = useState<Tab>("expense");
@@ -80,20 +83,25 @@ export function PosCashflowPanel({
   const [stickySupplierName, setStickySupplierName] = useState("");
   const queryClient = useQueryClient();
 
+  const queriesActive = fetchEnabled && !collapsed && !!outletId;
+
   const { data: expenses = [], isLoading: expensesLoading } = useQuery({
     queryKey: ["pos-expenses", outletId, businessDate],
+    enabled: queriesActive,
     queryFn: () =>
       fetchExpenses(80, {
         outletId,
         fromDate: businessDate,
         toDate: businessDate,
       }),
+    staleTime: 60_000,
   });
 
   const { data: bankTransactions = [], isLoading: depositsLoading } = useQuery({
     queryKey: ["pos-bank-deposits", outletId, businessDate],
+    enabled: queriesActive,
     queryFn: () => fetchBankTransactions(null, outletId),
-    staleTime: 30_000,
+    staleTime: 60_000,
   });
 
   const dayDeposits = bankTransactions.filter(
@@ -111,8 +119,9 @@ export function PosCashflowPanel({
     error: suppliersLoadError,
   } = useQuery({
     queryKey: ["pos-suppliers"],
+    enabled: queriesActive,
     queryFn: fetchSupplierOptions,
-    staleTime: 30_000,
+    staleTime: 5 * 60_000,
   });
 
   const addSupplierMut = useMutation({

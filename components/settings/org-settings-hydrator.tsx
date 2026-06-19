@@ -21,7 +21,8 @@ export function OrgSettingsHydrator({ children }: { children: React.ReactNode })
         defaultRetailMarginPct: number;
       }>;
     },
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
   });
 
   useEffect(() => {

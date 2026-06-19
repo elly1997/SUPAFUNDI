@@ -95,25 +95,27 @@ export async function getDrawerStatus(
   workingDate?: string
 ): Promise<DrawerStatus> {
   const date = resolveBusinessDate(workingDate);
-  const session = await getOpenCashSession(outletId);
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
 
-  const suggestedOpening = await getPreviousReconciledClosing(
-    supabase,
-    ctx.organizationId,
-    outletId,
-    date
-  );
+  const [session, suggestedOpening, closingResult] = await Promise.all([
+    getOpenCashSession(outletId),
+    getPreviousReconciledClosing(
+      supabase,
+      ctx.organizationId,
+      outletId,
+      date
+    ),
+    supabase
+      .from("daily_closings")
+      .select("status, closing_balance")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", outletId)
+      .eq("business_date", date)
+      .maybeSingle(),
+  ]);
 
-  const { data: closing } = await supabase
-    .from("daily_closings")
-    .select("status, closing_balance")
-    .eq("organization_id", ctx.organizationId)
-    .eq("outlet_id", outletId)
-    .eq("business_date", date)
-    .maybeSingle();
-
+  const closing = closingResult.data;
   const reconciled = closing?.status === "reconciled";
   const reconciledClosing =
     reconciled && closing?.closing_balance != null
@@ -123,15 +125,20 @@ export async function getDrawerStatus(
   const sessionDate = session?.business_date ?? null;
   const dateMismatch = !!session && sessionDate !== date;
 
-  const cashDate =
-    session && !dateMismatch ? session.business_date : date;
-  const summary = await computeDayCashSummary(outletId, cashDate);
+  let liveExpectedCash = 0;
+  if (session && !dateMismatch) {
+    const summary = await computeDayCashSummary(
+      outletId,
+      session.business_date
+    );
+    liveExpectedCash = summary.expectedCash;
+  }
 
   return {
     session,
     workingDate: date,
     dateMismatch,
-    liveExpectedCash: summary.expectedCash,
+    liveExpectedCash,
     suggestedOpening: roundMoney(suggestedOpening),
     reconciled,
     reconciledClosing,

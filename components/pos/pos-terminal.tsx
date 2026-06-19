@@ -441,7 +441,10 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       setPaymentMethod("cash");
       void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
       void queryClient.invalidateQueries({
-        queryKey: ["pos-top-products", effectiveOutletId],
+        queryKey: ["drawer-status", effectiveOutletId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["dashboard-kpis"],
       });
       toast.success(
         businessDate !== new Date().toISOString().slice(0, 10)
@@ -641,6 +644,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                   products={products}
                   collapsed={cashflowCollapsed}
                   onCollapsedChange={setCashflowCollapsed}
+                  fetchEnabled={!cashflowCollapsed}
                   className="hidden h-full min-h-0 min-w-0 lg:flex lg:flex-col"
                 />
                 <section className="flex min-h-0 min-w-0 flex-col overflow-hidden border-x border-border pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0">
@@ -817,6 +821,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                     <PosCashflowPanel
                       outletId={effectiveOutletId}
                       products={products}
+                      fetchEnabled={cashflowSheetOpen}
                       className="h-[min(85vh,640px)] w-full border-r-0"
                     />
                   )}

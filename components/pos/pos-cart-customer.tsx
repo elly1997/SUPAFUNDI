@@ -49,6 +49,8 @@ export function PosCartCustomer({
   const { data: customers = [], isLoading } = useQuery({
     queryKey: ["pos-customers"],
     queryFn: fetchPosCustomers,
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
   });
 
   const createMut = useMutation({

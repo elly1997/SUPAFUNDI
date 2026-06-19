@@ -114,9 +114,9 @@ export function usePosProducts(
   const query = useQuery({
     queryKey: ["pos-products", outletId, search, categoryId],
     enabled: envOk && !!outletId,
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchOnWindowFocus: false,
     placeholderData: keepPreviousData,
     initialData: () => readCachedCatalog(outletId, search, categoryId),
