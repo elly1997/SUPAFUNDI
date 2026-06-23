@@ -211,6 +211,20 @@ export async function createProduct(
         return { ok: false, message: sErr.message };
       }
 
+      if (input.quantity > 0) {
+        await supabase.from("stock_movements").insert({
+          organization_id: ctx.organizationId,
+          outlet_id: input.outletId,
+          product_id: product.id,
+          movement_type: "opening",
+          quantity: input.quantity,
+          unit_cost: input.costPrice,
+          reference_type: "product_create",
+          notes: "Initial stock on product create",
+          created_by: ctx.userId,
+        });
+      }
+
       revalidatePath("/inventory/products");
       revalidatePath("/inventory/receive");
       revalidatePath("/inventory/stock");

@@ -5,6 +5,7 @@ import type { InventoryImportRow } from "@/lib/excel/parse-inventory";
 import { normalizeProductName } from "@/lib/products/product-name";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { fetchAllPaginated } from "@/lib/supabase/query-chunks";
+import { roundMoney } from "@/lib/utils/calculations";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
@@ -214,10 +215,14 @@ export async function runInventoryImport(
 
       const { data: existingStock } = await supabase
         .from("stock")
-        .select("id, cost_price")
+        .select("id, quantity, cost_price")
         .eq("outlet_id", outletId)
         .eq("product_id", productId)
         .maybeSingle();
+
+      const prevQty = Number(existingStock?.quantity ?? 0);
+      const prevCost = Number(existingStock?.cost_price ?? 0);
+      const nextCost = r.cost ?? prevCost;
 
       if (existingStock?.id) {
         const patch: { quantity: number; cost_price?: number } = {
@@ -238,6 +243,28 @@ export async function runInventoryImport(
           cost_price: r.cost ?? 0,
         });
         if (sErr) throw new Error(sErr.message);
+      }
+
+      const delta = roundMoney(r.quantity - prevQty);
+      if (delta !== 0) {
+        const { error: movErr } = await supabase.from("stock_movements").insert({
+          organization_id: organizationId,
+          outlet_id: outletId,
+          product_id: productId,
+          movement_type:
+            delta > 0
+              ? !existingStock?.id
+                ? "opening"
+                : "adjustment_in"
+              : "adjustment_out",
+          quantity: Math.abs(delta),
+          unit_cost: nextCost,
+          reference_type: "import",
+          notes: existingStock?.id
+            ? `Import qty ${prevQty} → ${r.quantity}`
+            : "Opening stock from import",
+        });
+        if (movErr) throw new Error(movErr.message);
       }
     } catch (e) {
       errors.push({

@@ -1,10 +1,15 @@
 "use server";
 
-import { endOfDay, format, parseISO, eachDayOfInterval } from "date-fns";
+import { parseISO } from "date-fns";
 import {
   resolveInventoryReportRange,
   type InventoryReportPreset,
 } from "@/lib/inventory/report-range";
+import {
+  buildStockValueSeries,
+  computeStockSnapshot,
+  type StockValuePoint,
+} from "@/lib/inventory/stock-value-series";
 import { listProductPriceCatalog } from "@/lib/actions/inventory";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -26,11 +31,7 @@ import {
 
 export type { InventoryReportPreset } from "@/lib/inventory/report-range";
 
-export type StockValuePoint = {
-  date: string;
-  value: number;
-  retailValue: number;
-};
+export type { StockValuePoint } from "@/lib/inventory/stock-value-series";
 
 export type CategoryMetricRow = {
   categoryId: string | null;
@@ -69,7 +70,14 @@ export type InventoryAnalyticsReport = {
   stockValueSeries: StockValuePoint[];
   openingStockValue: number;
   closingStockValue: number;
+  openingRetailStockValue: number;
+  closingRetailStockValue: number;
+  stockBuildUpCost: number;
+  stockBuildUpRetail: number;
+  potentialMargin: number;
+  skusWithQty: number;
   stockValueChangePct: number;
+  retailStockValueChangePct: number;
   categoriesBySales: CategoryMetricRow[];
   categoriesByMargin: CategoryMetricRow[];
   categoriesByVelocity: CategoryMetricRow[];
@@ -81,27 +89,7 @@ export type InventoryAnalyticsReport = {
   seasonalInsights: SeasonalInsight[];
 };
 
-const IN_MOVEMENTS = new Set([
-  "purchase",
-  "transfer_in",
-  "adjustment_in",
-  "return_in",
-  "opening",
-]);
-const OUT_MOVEMENTS = new Set([
-  "sale",
-  "transfer_out",
-  "adjustment_out",
-  "return_out",
-]);
-
-function movementDelta(type: string, qty: number): number {
-  if (IN_MOVEMENTS.has(type)) return qty;
-  if (OUT_MOVEMENTS.has(type)) return -qty;
-  return 0;
-}
-
-/** Inventory analytics from POS sales, stock levels, and stock movements. */
+/** Inventory analytics from live stock, POS sales, and stock movements. */
 export async function getInventoryAnalyticsReport(
   preset: InventoryReportPreset,
   outletId?: string | null
@@ -118,7 +106,14 @@ export async function getInventoryAnalyticsReport(
     stockValueSeries: [],
     openingStockValue: 0,
     closingStockValue: 0,
+    openingRetailStockValue: 0,
+    closingRetailStockValue: 0,
+    stockBuildUpCost: 0,
+    stockBuildUpRetail: 0,
+    potentialMargin: 0,
+    skusWithQty: 0,
     stockValueChangePct: 0,
+    retailStockValueChangePct: 0,
     categoriesBySales: [],
     categoriesByMargin: [],
     categoriesByVelocity: [],
@@ -150,40 +145,39 @@ export async function getInventoryAnalyticsReport(
   if (!productIds.length) return empty;
 
   const costByProduct = new Map(catalog.map((p) => [p.id, p.costPrice]));
-  const retailByProduct = new Map(catalog.map((p) => [p.id, p.retailPrice]));
+  const retailByProduct = new Map(
+    catalog.map((p) => [p.id, p.retailPrice ?? 0])
+  );
 
-  const [stockRows, reorderRows] = await Promise.all([
-    fetchByInChunks(productIds, async (chunk) => {
-      const { data, error } = await supabase
-        .from("stock")
-        .select("product_id, quantity")
-        .eq("organization_id", ctx.organizationId)
-        .eq("outlet_id", filterOutlet)
-        .in("product_id", chunk);
-      return { data, error };
-    }),
-    fetchByInChunks(productIds, async (chunk) => {
-      const { data, error } = await supabase
-        .from("products")
-        .select("id, name, category_id, reorder_point")
-        .in("id", chunk);
-      return { data, error };
-    }),
-  ]);
+  const snapshot = computeStockSnapshot(
+    catalog.map((p) => ({
+      id: p.id,
+      costPrice: p.costPrice,
+      retailPrice: p.retailPrice,
+      stockQty: p.stockQty,
+    }))
+  );
 
-  const qtyNow = new Map<string, number>();
-  for (const s of stockRows) {
-    qtyNow.set(s.product_id, Number(s.quantity));
-  }
+  const reorderRows = await fetchByInChunks(productIds, async (chunk) => {
+    const { data, error } = await supabase
+      .from("products")
+      .select("id, name, category_id, reorder_point")
+      .in("id", chunk);
+    return { data, error };
+  });
+
+  const qtyNow = new Map(catalog.map((p) => [p.id, p.stockQty]));
 
   const fromIso = `${from}T00:00:00.000Z`;
   const toEndIso = `${to}T23:59:59.999Z`;
 
-  /** All movements through period end — needed to open the period with correct qty. */
+  /** All movements through period end — reconciled against live stock quantities. */
   const movements = await fetchAllPaginated(async (fromIdx, toIdx) => {
     const { data, error } = await supabase
       .from("stock_movements")
-      .select("product_id, movement_type, quantity, created_at")
+      .select(
+        "product_id, movement_type, quantity, unit_cost, reference_type, notes, created_at"
+      )
       .eq("organization_id", ctx.organizationId)
       .eq("outlet_id", filterOutlet)
       .lte("created_at", toEndIso)
@@ -192,66 +186,50 @@ export async function getInventoryAnalyticsReport(
     return { data, error };
   });
 
-  const fromMs = parseISO(from).getTime();
-
-  const openingQty = new Map<string, number>();
-  for (const id of productIds) openingQty.set(id, 0);
-  for (const m of movements) {
-    if (!m.product_id) continue;
-    if (new Date(m.created_at).getTime() < fromMs) {
-      const prev = openingQty.get(m.product_id) ?? 0;
-      openingQty.set(
-        m.product_id,
-        Math.max(0, prev + movementDelta(m.movement_type, Number(m.quantity)))
-      );
-    }
-  }
-
-  const dayEnds = eachDayOfInterval({
-    start: parseISO(from),
-    end: parseISO(to),
-  }).map((d) => endOfDay(d));
-
-  const runningQty = new Map(openingQty);
-  let moveIdx = 0;
-  const stockValueSeries: StockValuePoint[] = dayEnds.map((dayEnd) => {
-    const endMs = dayEnd.getTime();
-    while (moveIdx < movements.length) {
-      const m = movements[moveIdx];
-      const at = new Date(m.created_at).getTime();
-      if (at > endMs) break;
-      if (m.product_id) {
-        const prev = runningQty.get(m.product_id) ?? 0;
-        runningQty.set(
-          m.product_id,
-          Math.max(0, prev + movementDelta(m.movement_type, Number(m.quantity)))
-        );
-      }
-      moveIdx += 1;
-    }
-    let value = 0;
-    let retailValue = 0;
-    for (const id of productIds) {
-      const qty = runningQty.get(id) ?? 0;
-      value += qty * (costByProduct.get(id) ?? 0);
-      retailValue += qty * (retailByProduct.get(id) ?? 0);
-    }
-    return {
-      date: format(dayEnd, "yyyy-MM-dd"),
-      value: roundMoney(value),
-      retailValue: roundMoney(retailValue),
-    };
+  const stockValueSeries = buildStockValueSeries({
+    from,
+    to,
+    productIds,
+    qtyNow,
+    defaultCosts: costByProduct,
+    defaultRetail: retailByProduct,
+    movements,
   });
 
+  if (stockValueSeries.length > 0) {
+    const last = stockValueSeries[stockValueSeries.length - 1]!;
+    last.value = snapshot.costValue;
+    last.retailValue = snapshot.retailValue;
+  }
+
   const openingStockValue = stockValueSeries[0]?.value ?? 0;
-  const closingStockValue =
-    stockValueSeries[stockValueSeries.length - 1]?.value ?? 0;
+  const openingRetailStockValue = stockValueSeries[0]?.retailValue ?? 0;
+  const closingStockValue = snapshot.costValue;
+  const closingRetailStockValue = snapshot.retailValue;
+  const stockBuildUpCost = roundMoney(closingStockValue - openingStockValue);
+  const stockBuildUpRetail = roundMoney(
+    closingRetailStockValue - openingRetailStockValue
+  );
+  const potentialMargin = roundMoney(
+    closingRetailStockValue - closingStockValue
+  );
+
   const stockValueChangePct =
     openingStockValue > 0
       ? roundMoney(
           ((closingStockValue - openingStockValue) / openingStockValue) * 100
         )
       : closingStockValue > 0
+        ? 100
+        : 0;
+  const retailStockValueChangePct =
+    openingRetailStockValue > 0
+      ? roundMoney(
+          ((closingRetailStockValue - openingRetailStockValue) /
+            openingRetailStockValue) *
+            100
+        )
+      : closingRetailStockValue > 0
         ? 100
         : 0;
 
@@ -505,7 +483,14 @@ export async function getInventoryAnalyticsReport(
     stockValueSeries,
     openingStockValue,
     closingStockValue,
+    openingRetailStockValue,
+    closingRetailStockValue,
+    stockBuildUpCost,
+    stockBuildUpRetail,
+    potentialMargin,
+    skusWithQty: snapshot.skusWithQty,
     stockValueChangePct,
+    retailStockValueChangePct,
     categoriesBySales: categoriesBySales.slice(0, 10),
     categoriesByMargin: categoriesByMargin.slice(0, 10),
     categoriesByVelocity: categoriesByVelocity.slice(0, 10),

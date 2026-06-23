@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, Loader2, Package, TrendingDown, TrendingUp } from "lucide-react";
+import { Boxes, Loader2, Package, TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { StockValueTrendChart } from "@/components/reports/report-charts";
@@ -168,23 +168,48 @@ export function InventoryReportPanel({ enabled = true }: InventoryReportPanelPro
         </div>
       ) : data ? (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
             <KpiCard
-              title="Stock value (cost)"
+              title="Stock on hand (cost)"
               value={formatTzs(data.closingStockValue)}
-              subtitle={
-                data.stockValueChangePct >= 0
-                  ? `+${data.stockValueChangePct}% vs period start`
-                  : `${data.stockValueChangePct}% vs period start`
-              }
-              icon={data.stockValueChangePct >= 0 ? TrendingUp : TrendingDown}
-              variant={data.stockValueChangePct >= 0 ? "inflow" : "outflow"}
+              subtitle={`${data.skusWithQty} SKUs with qty · matches Stock & prices`}
+              icon={Boxes}
               className="glass-card"
             />
             <KpiCard
-              title="Opening value"
+              title="Stock on hand (retail)"
+              value={formatTzs(data.closingRetailStockValue)}
+              subtitle={
+                data.retailStockValueChangePct >= 0
+                  ? `+${data.retailStockValueChangePct}% vs period start`
+                  : `${data.retailStockValueChangePct}% vs period start`
+              }
+              icon={Wallet}
+              className="glass-card"
+            />
+            <KpiCard
+              title="Potential margin"
+              value={formatTzs(data.potentialMargin)}
+              subtitle="Retail value minus cost value (on hand)"
+              variant={data.potentialMargin >= 0 ? "inflow" : "outflow"}
+              className="glass-card"
+            />
+            <KpiCard
+              title="Stock build-up (cost)"
+              value={formatTzs(data.stockBuildUpCost)}
+              subtitle={
+                data.stockBuildUpCost >= 0
+                  ? `+${data.stockValueChangePct}% capital in inventory`
+                  : `${data.stockValueChangePct}% draw-down in period`
+              }
+              icon={data.stockBuildUpCost >= 0 ? TrendingUp : TrendingDown}
+              variant={data.stockBuildUpCost >= 0 ? "warning" : "inflow"}
+              className="glass-card"
+            />
+            <KpiCard
+              title="Period opening (cost)"
               value={formatTzs(data.openingStockValue)}
-              subtitle={`At ${data.from}`}
+              subtitle={`At ${data.from} · retail ${formatTzs(data.openingRetailStockValue)}`}
               className="glass-card"
             />
             <KpiCard
@@ -194,16 +219,23 @@ export function InventoryReportPanel({ enabled = true }: InventoryReportPanelPro
               variant="warning"
               className="glass-card"
             />
-            <Card className="glass-card flex flex-col justify-center p-4">
+          </div>
+
+          <Card className="glass-card">
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+              <p className="text-sm text-muted-foreground">
+                Values use live outlet stock (same as Stock &amp; prices). Trend
+                rebuilds daily quantities from movements, reconciled to today.
+              </p>
               <Link
                 href="/inventory/stock"
-                className={cn(buttonVariants({ variant: "default" }), "w-full")}
+                className={cn(buttonVariants({ variant: "default" }), "shrink-0")}
               >
                 <Package className="mr-2 size-4" />
                 View stock
               </Link>
-            </Card>
-          </div>
+            </CardContent>
+          </Card>
 
           <SeasonalInsightsPanel
             seasonal={data.seasonal}
@@ -225,8 +257,9 @@ export function InventoryReportPanel({ enabled = true }: InventoryReportPanelPro
                 Stock value over time
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Rebuilt from daily POS stock movements and current costs (TZS at
-                cost; orange curve = retail value if prices are set).
+                Daily stock value from movement history, anchored to current
+                on-hand quantities. Cost and retail curves reflect price changes
+                when recorded on stock movements.
               </p>
             </CardHeader>
             <CardContent>
