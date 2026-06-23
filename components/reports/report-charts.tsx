@@ -135,6 +135,54 @@ export type StockValuePoint = {
   retailValue: number;
 };
 
+function StockValueTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{
+    name?: string;
+    value?: number;
+    color?: string;
+    dataKey?: string;
+    payload?: StockValuePoint & { label?: string };
+  }>;
+}) {
+  if (!active || !payload?.length) return null;
+  const row = payload[0]?.payload;
+  const dateLabel = row?.date
+    ? format(parseISO(row.date), "EEE d MMM yyyy")
+    : "";
+
+  return (
+    <div
+      className="rounded-lg border px-3 py-2 text-xs shadow-md"
+      style={chartTooltipStyle()}
+    >
+      <p className="mb-2 font-medium text-foreground">{dateLabel}</p>
+      <div className="space-y-1">
+        {payload.map((entry) => (
+          <div
+            key={String(entry.dataKey ?? entry.name)}
+            className="flex items-center justify-between gap-4"
+          >
+            <span className="flex items-center gap-2 text-muted-foreground">
+              <span
+                className="inline-block size-2.5 rounded-full"
+                style={{ background: entry.color ?? CHART.primary }}
+              />
+              {entry.name ?? "Value"}
+            </span>
+            <span className="font-money font-semibold tabular-nums text-foreground">
+              {formatTzs(Number(entry.value ?? 0))}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function StockValueTrendChart({
   data,
   height = 300,
@@ -173,19 +221,7 @@ export function StockValueTrendChart({
             axisLine={false}
             domain={["auto", "auto"]}
           />
-          <Tooltip
-            contentStyle={chartTooltipStyle()}
-            formatter={(value, name) => [
-              formatTzs(Number(value ?? 0)),
-              String(name) === "value" ? "At cost" : "At retail",
-            ]}
-            labelFormatter={(_, payload) => {
-              const row = payload?.[0]?.payload as StockValuePoint | undefined;
-              return row?.date
-                ? format(parseISO(row.date), "EEE d MMM yyyy")
-                : "";
-            }}
-          />
+          <Tooltip content={<StockValueTooltip />} />
           <Legend
             wrapperStyle={{ fontSize: 12, color: CHART.muted }}
           />

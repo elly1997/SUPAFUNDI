@@ -5,6 +5,7 @@ import { Boxes, Loader2, Package, TrendingDown, TrendingUp, Wallet } from "lucid
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { StockValueTrendChart } from "@/components/reports/report-charts";
+import { CostRetailInsightsPanel } from "@/components/reports/cost-retail-insights-panel";
 import { BundleInsightsPanel } from "@/components/reports/bundle-insights-panel";
 import { SeasonalInsightsPanel } from "@/components/reports/seasonal-insights-panel";
 import { fetchPricingInsights } from "@/lib/api/pricing-insights-fetch";
@@ -272,6 +273,8 @@ export function InventoryReportPanel({ enabled = true }: InventoryReportPanelPro
               )}
             </CardContent>
           </Card>
+
+          <CostRetailInsightsPanel analysis={data.costRetailMargin} />
 
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="glass-card">

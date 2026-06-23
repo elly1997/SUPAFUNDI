@@ -10,6 +10,10 @@ import {
   computeStockSnapshot,
   type StockValuePoint,
 } from "@/lib/inventory/stock-value-series";
+import {
+  buildCostRetailMarginAnalysis,
+  type CostRetailMarginAnalysis,
+} from "@/lib/inventory/cost-retail-insights";
 import { listProductPriceCatalog } from "@/lib/actions/inventory";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -32,6 +36,8 @@ import {
 export type { InventoryReportPreset } from "@/lib/inventory/report-range";
 
 export type { StockValuePoint } from "@/lib/inventory/stock-value-series";
+
+export type { CostRetailMarginAnalysis } from "@/lib/inventory/cost-retail-insights";
 
 export type CategoryMetricRow = {
   categoryId: string | null;
@@ -78,6 +84,7 @@ export type InventoryAnalyticsReport = {
   skusWithQty: number;
   stockValueChangePct: number;
   retailStockValueChangePct: number;
+  costRetailMargin: CostRetailMarginAnalysis;
   categoriesBySales: CategoryMetricRow[];
   categoriesByMargin: CategoryMetricRow[];
   categoriesByVelocity: CategoryMetricRow[];
@@ -114,6 +121,16 @@ export async function getInventoryAnalyticsReport(
     skusWithQty: 0,
     stockValueChangePct: 0,
     retailStockValueChangePct: 0,
+    costRetailMargin: {
+      openingMarginPct: 0,
+      closingMarginPct: 0,
+      marginPctChange: 0,
+      costValueChangePct: 0,
+      retailValueChangePct: 0,
+      costOutpacingRetail: false,
+      skusCostRaisedWithoutRetail: 0,
+      insights: [],
+    },
     categoriesBySales: [],
     categoriesByMargin: [],
     categoriesByVelocity: [],
@@ -232,6 +249,22 @@ export async function getInventoryAnalyticsReport(
       : closingRetailStockValue > 0
         ? 100
         : 0;
+
+  const productNames = new Map(
+    reorderRows.map((p) => [p.id, p.name as string])
+  );
+  const costRetailMargin = buildCostRetailMarginAnalysis({
+    openingCostValue: openingStockValue,
+    closingCostValue: closingStockValue,
+    openingRetailValue: openingRetailStockValue,
+    closingRetailValue: closingRetailStockValue,
+    costValueChangePct: stockValueChangePct,
+    retailValueChangePct: retailStockValueChangePct,
+    movements,
+    fromMs: parseISO(from).getTime(),
+    toMs: parseISO(`${to}T23:59:59.999Z`).getTime(),
+    productNames,
+  });
 
   const { data: categories } = await supabase
     .from("categories")
@@ -491,6 +524,7 @@ export async function getInventoryAnalyticsReport(
     skusWithQty: snapshot.skusWithQty,
     stockValueChangePct,
     retailStockValueChangePct,
+    costRetailMargin,
     categoriesBySales: categoriesBySales.slice(0, 10),
     categoriesByMargin: categoriesByMargin.slice(0, 10),
     categoriesByVelocity: categoriesByVelocity.slice(0, 10),
