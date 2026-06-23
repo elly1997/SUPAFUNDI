@@ -246,6 +246,7 @@ export async function recordCustomerDeposit(
     revalidatePath("/customers");
     revalidatePath(`/customers/${input.customerId}`);
     revalidatePath("/finance/credit");
+    revalidatePath("/customers");
     revalidatePath("/finance/banking");
     revalidatePath("/daily-closing");
 
@@ -316,6 +317,7 @@ export async function createCustomer(
     revalidatePath("/customers");
     revalidatePath("/pos");
     revalidatePath("/finance/credit");
+    revalidatePath("/customers");
     return { ok: true, id: data.id };
   } catch (e) {
     return {
@@ -363,6 +365,7 @@ export async function updateCustomer(
     revalidatePath(`/customers/${id}`);
     revalidatePath("/pos");
     revalidatePath("/finance/credit");
+    revalidatePath("/customers");
     return { ok: true };
   } catch (e) {
     return {
@@ -444,6 +447,7 @@ export async function deleteCustomer(
     revalidatePath("/customers");
     revalidatePath("/pos");
     revalidatePath("/finance/credit");
+    revalidatePath("/customers");
     return { ok: true };
   } catch (e) {
     return {

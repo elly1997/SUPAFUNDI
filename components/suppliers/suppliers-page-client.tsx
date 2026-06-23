@@ -12,8 +12,8 @@ import {
   Wallet,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/table";
 import { PartyStatementDialog } from "@/components/finance/party-statement-dialog";
 import { RecordPartyPaymentDialog } from "@/components/finance/record-party-payment-dialog";
+import { SuppliersPayablesPanel } from "@/components/suppliers/suppliers-payables-panel";
 import { canManageSettings, isUserRole } from "@/lib/auth/roles";
 import {
   createSupplierApi,
@@ -49,8 +50,22 @@ import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
 
+type SupplierTab = "suppliers" | "bills";
+
 export function SuppliersPageClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const tab: SupplierTab =
+    searchParams.get("tab") === "bills" ? "bills" : "suppliers";
+
+  const setTab = (next: SupplierTab) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "bills") params.set("tab", "bills");
+    else params.delete("tab");
+    const qs = params.toString();
+    router.replace(qs ? `/suppliers?${qs}` : "/suppliers", { scroll: false });
+  };
+
   const role = useAuthStore((s) => s.session?.role ?? null);
   const canManage = canManageSettings(isUserRole(role ?? "") ? role : null);
 
@@ -77,6 +92,8 @@ export function SuppliersPageClient() {
   const { data: suppliers = [], isLoading, isError, error } = useQuery({
     queryKey: ["suppliers"],
     queryFn: fetchSuppliers,
+    staleTime: 90_000,
+    refetchOnMount: false,
   });
 
   const createMut = useMutation({
@@ -149,21 +166,100 @@ export function SuppliersPageClient() {
     0
   );
 
+  const topSuppliers = useMemo(
+    () =>
+      [...suppliers]
+        .filter((s) => Number(s.payables_balance) > 0)
+        .sort(
+          (a, b) =>
+            Number(b.payables_balance) - Number(a.payables_balance)
+        )
+        .slice(0, 5),
+    [suppliers]
+  );
+
+  const suppliersWithPayables = useMemo(
+    () => suppliers.filter((s) => Number(s.payables_balance) > 0).length,
+    [suppliers]
+  );
+
   return (
     <>
-      <Card className="mb-6 dash-stat-card border-warning/30">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm text-muted-foreground">
-            Total payables
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="font-money text-2xl font-bold text-warning">
-            {formatTzs(totalPayables)}
-          </p>
-        </CardContent>
-      </Card>
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <Card className="dash-stat-card border-warning/30">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-xs font-normal text-muted-foreground">
+              Total payables due
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="font-money text-xl font-bold text-warning">
+              {formatTzs(totalPayables)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {suppliersWithPayables} supplier(s) with balance
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="dash-stat-card sm:col-span-2">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-xs font-normal text-muted-foreground">
+              Top suppliers by amount due
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {topSuppliers.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No open payables.</p>
+            ) : (
+              <ul className="space-y-1 text-sm">
+                {topSuppliers.map((s) => (
+                  <li
+                    key={s.id}
+                    className="flex items-center justify-between gap-2"
+                  >
+                    <Link
+                      href={`/suppliers/${s.id}`}
+                      className="truncate text-primary hover:underline"
+                    >
+                      {s.name}
+                    </Link>
+                    <span className="shrink-0 font-money font-semibold text-warning">
+                      {formatTzs(Number(s.payables_balance))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
+      <div className="mb-4 flex rounded-lg border border-border p-0.5 w-fit">
+        <Button
+          type="button"
+          size="sm"
+          variant={tab === "suppliers" ? "secondary" : "ghost"}
+          className="h-8 rounded-md px-3 text-xs"
+          onClick={() => setTab("suppliers")}
+        >
+          <Truck className="mr-1.5 size-3.5" />
+          Suppliers ({suppliers.length})
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={tab === "bills" ? "secondary" : "ghost"}
+          className="h-8 rounded-md px-3 text-xs"
+          onClick={() => setTab("bills")}
+        >
+          Open bills
+        </Button>
+      </div>
+
+      {tab === "bills" ? (
+        <SuppliersPayablesPanel />
+      ) : (
+        <>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2">
@@ -297,6 +393,8 @@ export function SuppliersPageClient() {
           )}
         </CardContent>
       </Card>
+        </>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

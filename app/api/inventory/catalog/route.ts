@@ -41,6 +41,7 @@ const patchSchema = z.object({
   outletId: z.string().uuid().optional(),
   field: z.enum(["code", "unit", "costPrice", "retailPrice"]),
   value: z.union([z.string(), z.number()]),
+  reason: z.string().max(500).optional(),
 });
 
 export async function PATCH(request: Request) {

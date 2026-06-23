@@ -171,6 +171,76 @@ export type CustomerBalanceRow = {
   credit_limit: number;
 };
 
+export type CustomerCreditSummary = {
+  totalOutstanding: number;
+  creditIssuedMonth: number;
+  creditPaidMonth: number;
+  monthLabel: string;
+};
+
+function currentMonthStart(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}-01`;
+}
+
+function currentMonthLabel(): string {
+  return new Date().toLocaleDateString("en-TZ", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+/** Lightweight AR aggregates for the customers hub (no full ledger scan). */
+export async function getCustomerCreditSummary(): Promise<CustomerCreditSummary> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const monthStart = currentMonthStart();
+
+  const [customersRes, ledgerRes] = await Promise.all([
+    supabase
+      .from("customers")
+      .select("outstanding_balance")
+      .eq("organization_id", ctx.organizationId)
+      .eq("is_active", true),
+    supabase
+      .from("credit_ledger")
+      .select("entry_type, debit, credit")
+      .eq("organization_id", ctx.organizationId)
+      .gte("entry_date", monthStart),
+  ]);
+
+  if (customersRes.error) throw new Error(customersRes.error.message);
+  if (ledgerRes.error) throw new Error(ledgerRes.error.message);
+
+  const totalOutstanding = roundMoney(
+    (customersRes.data ?? []).reduce(
+      (s, c) => s + Number(c.outstanding_balance),
+      0
+    )
+  );
+
+  let creditIssuedMonth = 0;
+  let creditPaidMonth = 0;
+  for (const row of ledgerRes.data ?? []) {
+    const debit = Number(row.debit) || 0;
+    const credit = Number(row.credit) || 0;
+    if (row.entry_type === "invoice" || row.entry_type === "adjustment") {
+      creditIssuedMonth += debit;
+    } else if (row.entry_type === "payment") {
+      creditPaidMonth += credit;
+    }
+  }
+
+  return {
+    totalOutstanding,
+    creditIssuedMonth: roundMoney(creditIssuedMonth),
+    creditPaidMonth: roundMoney(creditPaidMonth),
+    monthLabel: currentMonthLabel(),
+  };
+}
+
 export async function listCustomersWithBalance(): Promise<CustomerBalanceRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
@@ -327,6 +397,7 @@ export async function applyCustomerDepositToCredit(
     revalidatePath("/customers");
     revalidatePath(`/customers/${customerId}`);
     revalidatePath("/finance/credit");
+    revalidatePath("/customers");
     return { ok: true, applied: applyAmount };
   } catch (e) {
     return {
@@ -559,6 +630,7 @@ export async function recordCustomerPayment(
     }
 
     revalidatePath("/finance/credit");
+    revalidatePath("/customers");
     revalidatePath("/customers");
     revalidatePath(`/customers/${input.customerId}`);
     revalidatePath("/finance/banking");

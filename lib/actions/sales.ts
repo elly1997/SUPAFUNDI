@@ -1094,6 +1094,7 @@ export async function voidSale(
     revalidatePath("/pos");
     revalidatePath("/inventory/stock");
     revalidatePath("/finance/credit");
+    revalidatePath("/customers");
     revalidatePath("/reports");
     return { ok: true };
   } catch (e) {

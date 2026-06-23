@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
 import { KpiCard } from "@/components/ui/kpi-card";
+import { CashSessionBar } from "@/components/pos/cash-session-bar";
 import {
   buildClosingWhatsAppApi,
   fetchDayCashSummary,
@@ -195,6 +196,22 @@ export function DailyClosingClient({ outlets }: Props) {
           showPresets
         />
       </div>
+
+      {effectiveOutlet ? (
+        <Card className="border-border/80">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+            <p className="text-sm text-muted-foreground">
+              Open today&apos;s cash drawer before POS sales, or close when the
+              shift ends.
+            </p>
+            <CashSessionBar
+              outletId={effectiveOutlet}
+              variant="inline"
+              redirectAfterOpen="/pos"
+            />
+          </CardContent>
+        </Card>
+      ) : null}
 
       {isLoading || !summary ? (
         <div className="flex items-center gap-2 py-12 text-muted-foreground">

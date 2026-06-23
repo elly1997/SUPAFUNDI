@@ -1,15 +1,5 @@
-import { CreditPageClient } from "@/components/finance/credit-page-client";
+import { redirect } from "next/navigation";
 
-export default function CreditPage() {
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Credit &amp; AR</h1>
-        <p className="text-sm text-muted-foreground">
-          Outstanding balances and customer payment receipts.
-        </p>
-      </div>
-      <CreditPageClient />
-    </div>
-  );
+export default function CreditRedirectPage() {
+  redirect("/customers?view=credit");
 }

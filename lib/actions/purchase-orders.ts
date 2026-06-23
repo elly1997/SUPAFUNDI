@@ -668,6 +668,7 @@ export async function receiveFromPurchaseOrder(
 
     revalidatePath("/inventory/purchase-orders");
     revalidatePath("/finance/payables");
+    revalidatePath("/suppliers");
     revalidatePath("/finance/banking");
     revalidatePath("/inventory/stock");
     revalidatePath("/inventory/receive");
@@ -865,6 +866,7 @@ export async function payPurchaseOrder(
     revalidatePath("/inventory/purchase-orders");
     revalidatePath(`/inventory/purchase-orders/${input.poId}`);
     revalidatePath("/finance/payables");
+    revalidatePath("/suppliers");
     revalidatePath("/suppliers");
     if (po.supplier_id) {
       revalidatePath(`/suppliers/${po.supplier_id}`);

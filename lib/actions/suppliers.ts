@@ -437,6 +437,7 @@ export async function updateSupplier(
     revalidatePath("/suppliers");
     revalidatePath(`/suppliers/${supplierId}`);
     revalidatePath("/finance/payables");
+    revalidatePath("/suppliers");
     revalidatePath("/inventory/purchase-orders");
     return { ok: true };
   } catch (e) {
@@ -531,6 +532,7 @@ export async function deleteSupplier(
 
     revalidatePath("/suppliers");
     revalidatePath("/finance/payables");
+    revalidatePath("/suppliers");
     revalidatePath("/inventory/purchase-orders");
     return { ok: true };
   } catch (e) {
@@ -747,6 +749,7 @@ export async function paySupplier(
     revalidatePath("/suppliers");
     revalidatePath(`/suppliers/${input.supplierId}`);
     revalidatePath("/finance/payables");
+    revalidatePath("/suppliers");
     revalidatePath("/finance/banking");
     revalidatePath("/daily-closing");
     return { ok: true };

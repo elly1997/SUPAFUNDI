@@ -9,7 +9,6 @@ import {
   Loader2,
   Printer,
   RefreshCw,
-  Scale,
   TrendingUp,
 } from "lucide-react";
 import Link from "next/link";
@@ -18,6 +17,7 @@ import { toast } from "sonner";
 import { FinancialReports } from "@/components/reports/financial-reports";
 import { InventoryReportPanel } from "@/components/reports/inventory-report-panel";
 import { PerformanceInsightsPanel } from "@/components/reports/performance-insights-panel";
+import { ReportsDailyClosingPanel } from "@/components/reports/reports-daily-closing-panel";
 import { SeasonalInsightsPanel } from "@/components/reports/seasonal-insights-panel";
 import {
   DailySalesChart,
@@ -496,54 +496,7 @@ export function ReportsAnalyticsClient() {
       case "financials":
         return <FinancialReports fromDate={fromDate} toDate={toDate} />;
       case "closing":
-        return (
-          <div className="space-y-4">
-            <Card className="glass-card border-primary/30">
-              <CardContent className="flex flex-col items-center gap-4 py-8 text-center">
-                <Scale className="size-10 text-primary" />
-                <p className="text-lg font-semibold">Daily closing &amp; reconciliation</p>
-                <p className="max-w-md text-sm text-muted-foreground">
-                  Reports with &quot;Reconciled days only&quot; use closed days. Open
-                  daily closing to count cash and send the director report on WhatsApp.
-                </p>
-                <Link
-                  href="/daily-closing"
-                  className={cn(buttonVariants(), "rounded-xl")}
-                >
-                  Open daily closing
-                </Link>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>Unreconciled days</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {unreconciled.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    No unreconciled days with activity in this outlet.
-                  </p>
-                ) : (
-                  <ul className="space-y-2 text-sm">
-                    {unreconciled.map((d) => (
-                      <li
-                        key={`${d.outletId}-${d.businessDate}`}
-                        className="flex justify-between rounded-lg border px-3 py-2"
-                      >
-                        <span>
-                          {d.businessDate} · {d.outletName}
-                        </span>
-                        <span className="font-money text-warning">
-                          {formatTzs(d.expectedCash)} expected
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        );
+        return <ReportsDailyClosingPanel unreconciled={unreconciled} />;
       default:
         return null;
     }
@@ -630,7 +583,7 @@ export function ReportsAnalyticsClient() {
           Daily closing
         </Link>
         <Link
-          href="/finance/payables"
+          href="/suppliers?tab=bills"
           className={cn(buttonVariants({ variant: "secondary" }), "rounded-lg")}
         >
           Supplier payables

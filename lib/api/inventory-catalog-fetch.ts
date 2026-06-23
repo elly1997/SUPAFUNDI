@@ -186,6 +186,7 @@ export async function patchCatalogField(params: {
   outletId?: string;
   field: "code" | "unit" | "costPrice" | "retailPrice";
   value: string | number;
+  reason?: string;
 }): Promise<void> {
   const res = await fetch("/api/inventory/catalog", {
     method: "PATCH",
@@ -223,6 +224,7 @@ export async function patchStockQuantity(params: {
   productId: string;
   outletId: string;
   quantity: number;
+  reason?: string;
 }): Promise<void> {
   const res = await fetch("/api/inventory/stock-qty", {
     method: "PATCH",

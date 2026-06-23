@@ -1,5 +1,8 @@
 import type { CustomerListRow } from "@/lib/actions/customers";
-import type { CustomerBalanceRow } from "@/lib/actions/credit";
+import type {
+  CustomerBalanceRow,
+  CustomerCreditSummary,
+} from "@/lib/actions/credit";
 
 export type PosCustomer = {
   id: string;
@@ -42,6 +45,17 @@ export async function fetchPosCustomers(): Promise<PosCustomer[]> {
   }
   const body = (await res.json()) as { customers: PosCustomer[] };
   return body.customers ?? [];
+}
+
+export async function fetchCustomerCreditSummary(): Promise<CustomerCreditSummary> {
+  const res = await fetch("/api/customers/credit-summary", {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    throw new Error(await readJsonError(res));
+  }
+  const body = (await res.json()) as { summary: CustomerCreditSummary };
+  return body.summary;
 }
 
 export async function fetchCustomersWithBalance(): Promise<CustomerBalanceRow[]> {
@@ -105,6 +119,7 @@ export const CUSTOMER_QUERY_KEYS = [
   "customers",
   "pos-customers",
   "credit-balances",
+  "customer-credit-summary",
 ] as const;
 
 export async function recordCustomerDepositApi(

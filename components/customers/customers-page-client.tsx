@@ -12,8 +12,8 @@ import {
   Wallet,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -41,6 +41,7 @@ import { canManageSettings, isUserRole } from "@/lib/auth/roles";
 import {
   createCustomerApi,
   deleteCustomerApi,
+  fetchCustomerCreditSummary,
   fetchCustomers,
   invalidateCustomerQueries,
   updateCustomerApi,
@@ -67,8 +68,22 @@ type EditFormValues = {
   creditDays: number;
 };
 
+type CustomerView = "all" | "credit";
+
 export function CustomersPageClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const view: CustomerView =
+    searchParams.get("view") === "credit" ? "credit" : "all";
+
+  const setView = (next: CustomerView) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "credit") params.set("view", "credit");
+    else params.delete("view");
+    const qs = params.toString();
+    router.replace(qs ? `/customers?${qs}` : "/customers", { scroll: false });
+  };
+
   const role = useAuthStore((s) => s.session?.role ?? null);
   const canManage = canManageSettings(isUserRole(role ?? "") ? role : null);
 
@@ -106,6 +121,25 @@ export function CustomersPageClient() {
     staleTime: 90_000,
     refetchOnMount: false,
   });
+
+  const { data: creditSummary, isLoading: summaryLoading } = useQuery({
+    queryKey: ["customer-credit-summary"],
+    queryFn: fetchCustomerCreditSummary,
+    staleTime: 90_000,
+    refetchOnMount: false,
+  });
+
+  const displayedCustomers = useMemo(() => {
+    if (view === "credit") {
+      return customers.filter((c) => c.outstanding_balance > 0);
+    }
+    return customers;
+  }, [customers, view]);
+
+  const customersWithBalance = useMemo(
+    () => customers.filter((c) => c.outstanding_balance > 0).length,
+    [customers]
+  );
 
   const createMut = useMutation({
     mutationFn: (values: FormValues) =>
@@ -179,9 +213,85 @@ export function CustomersPageClient() {
 
   return (
     <>
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        <Card className="dash-stat-card border-warning/30">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-xs font-normal text-muted-foreground">
+              Total credit outstanding
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="font-money text-xl font-bold text-warning">
+              {summaryLoading
+                ? "…"
+                : formatTzs(creditSummary?.totalOutstanding ?? 0)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {customersWithBalance} account(s) with balance
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="dash-stat-card">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-xs font-normal text-muted-foreground">
+              Credit issued this month
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="font-money text-xl font-bold">
+              {summaryLoading
+                ? "…"
+                : formatTzs(creditSummary?.creditIssuedMonth ?? 0)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {creditSummary?.monthLabel ?? "This month"}
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="dash-stat-card border-inflow/30">
+          <CardHeader className="pb-1">
+            <CardTitle className="text-xs font-normal text-muted-foreground">
+              Credit paid this month
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="font-money text-xl font-bold text-inflow">
+              {summaryLoading
+                ? "…"
+                : formatTzs(creditSummary?.creditPaidMonth ?? 0)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Customer payments received
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Customers</CardTitle>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <CardTitle>Customers</CardTitle>
+            <div className="flex rounded-lg border border-border p-0.5">
+              <Button
+                type="button"
+                size="sm"
+                variant={view === "all" ? "secondary" : "ghost"}
+                className="h-7 rounded-md px-2.5 text-xs"
+                onClick={() => setView("all")}
+              >
+                All ({customers.length})
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={view === "credit" ? "secondary" : "ghost"}
+                className="h-7 rounded-md px-2.5 text-xs"
+                onClick={() => setView("credit")}
+              >
+                With balance ({customersWithBalance})
+              </Button>
+            </div>
+          </div>
           <Button type="button" onClick={() => setOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Add customer
@@ -197,10 +307,11 @@ export function CustomersPageClient() {
             <div className="flex justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          ) : customers.length === 0 ? (
+          ) : displayedCustomers.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              No customers yet. Add your first customer to start tracking credit
-              and deposits.
+              {view === "credit"
+                ? "No outstanding customer balances."
+                : "No customers yet. Add your first customer to start tracking credit and deposits."}
             </p>
           ) : (
             <Table>
@@ -208,14 +319,14 @@ export function CustomersPageClient() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Phone</TableHead>
-                  <TableHead>Type</TableHead>
+                  {view === "all" ? <TableHead>Type</TableHead> : null}
                   <TableHead className="text-right">Credit limit</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {customers.map((c) => {
+                {displayedCustomers.map((c) => {
                   const balance = customerBalanceView(
                     c.outstanding_balance,
                     c.deposit_balance
@@ -231,7 +342,9 @@ export function CustomersPageClient() {
                       </Link>
                     </TableCell>
                     <TableCell>{c.phone ?? "—"}</TableCell>
-                    <TableCell className="capitalize">{c.customer_type}</TableCell>
+                    {view === "all" ? (
+                      <TableCell className="capitalize">{c.customer_type}</TableCell>
+                    ) : null}
                     <TableCell className="text-right">
                       {formatTzs(c.credit_limit)}
                     </TableCell>

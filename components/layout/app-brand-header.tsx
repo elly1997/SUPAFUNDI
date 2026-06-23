@@ -143,14 +143,14 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
               Reconcile
             </Link>
             <Link
-              href="/finance/cash-sessions"
+              href="/daily-closing"
               className={cn(
                 buttonVariants({ variant: "secondary", size: "sm" }),
                 "h-8"
               )}
             >
               <Wallet className="mr-1.5 size-4" />
-              Open session
+              Daily closing
             </Link>
           </div>
         ) : null}

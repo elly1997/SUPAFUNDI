@@ -1,5 +1,5 @@
-import { ProductsPageClient } from "@/components/inventory/products-page-client";
+import { redirect } from "next/navigation";
 
-export default function ProductsPage() {
-  return <ProductsPageClient />;
+export default function ProductsRedirectPage() {
+  redirect("/inventory/stock");
 }

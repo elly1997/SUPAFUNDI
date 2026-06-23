@@ -199,45 +199,11 @@ export async function getTopPosProducts(
 ): Promise<PosRecentProduct[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const velocity = await loadSalesVelocity(supabase, outletId);
 
-  const since = new Date();
-  since.setDate(since.getDate() - 30);
-
-  const { data: sales, error } = await supabase
-    .from("sales")
-    .select("id")
-    .eq("organization_id", ctx.organizationId)
-    .eq("outlet_id", outletId)
-    .eq("status", "completed")
-    .gte("sale_date", since.toISOString())
-    .limit(500);
-
-  if (error || !sales?.length) return [];
-
-  const saleIds = sales.map((s) => s.id);
-  const { data: items } = await supabase
-    .from("sale_items")
-    .select("product_id, product_name, quantity")
-    .in("sale_id", saleIds)
-    .not("product_id", "is", null);
-
-  const counts = new Map<
-    string,
-    { name: string; qty: number }
-  >();
-
-  for (const row of items ?? []) {
-    if (!row.product_id) continue;
-    const prev = counts.get(row.product_id);
-    const add = Number(row.quantity);
-    counts.set(row.product_id, {
-      name: prev?.name ?? row.product_name,
-      qty: (prev?.qty ?? 0) + add,
-    });
-  }
-
-  const sorted = Array.from(counts.entries())
-    .sort((a, b) => b[1].qty - a[1].qty)
+  const sorted = Array.from(velocity.entries())
+    .filter(([, qty]) => qty > 0)
+    .sort((a, b) => b[1] - a[1])
     .slice(0, limit);
 
   if (sorted.length === 0) return [];
@@ -246,17 +212,18 @@ export async function getTopPosProducts(
   const { data: products } = await supabase
     .from("products")
     .select("id, name, code")
+    .eq("organization_id", ctx.organizationId)
     .in("id", productIds);
 
   const productMap = new Map((products ?? []).map((p) => [p.id, p]));
 
-  return sorted.map(([productId, meta]) => {
+  return sorted.map(([productId, qty]) => {
     const p = productMap.get(productId);
     return {
       productId,
-      name: p?.name ?? meta.name,
+      name: p?.name ?? "Product",
       code: p?.code ?? null,
-      saleCount: meta.qty,
+      saleCount: qty,
     };
   });
 }

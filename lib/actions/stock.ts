@@ -770,7 +770,8 @@ export async function getProductItemStatement(
 export async function setStockQuantity(
   productId: string,
   outletId: string,
-  newQuantity: number
+  newQuantity: number,
+  reason?: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const ctx = await requireOrgContext();
@@ -791,6 +792,10 @@ export async function setStockQuantity(
     const prevQty = Number(stock?.quantity ?? 0);
     const cost = Number(stock?.cost_price ?? 0);
     const delta = roundMoney(newQuantity - prevQty);
+    const reasonNote = reason?.trim();
+    const qtyNote = reasonNote
+      ? `Qty ${prevQty} → ${newQuantity}: ${reasonNote}`
+      : `Qty adjusted ${prevQty} → ${newQuantity}`;
 
     if (!stock?.id) {
       const { error: insErr } = await supabase.from("stock").insert({
@@ -810,7 +815,9 @@ export async function setStockQuantity(
           quantity: newQuantity,
           unit_cost: 0,
           reference_type: "adjustment",
-          notes: "Stock quantity set",
+          notes: reasonNote
+            ? `Opening stock set: ${reasonNote}`
+            : "Stock quantity set",
           created_by: ctx.userId,
         });
       }
@@ -830,7 +837,7 @@ export async function setStockQuantity(
           quantity: Math.abs(delta),
           unit_cost: cost,
           reference_type: "adjustment",
-          notes: `Qty adjusted ${prevQty} → ${newQuantity}`,
+          notes: qtyNote,
           created_by: ctx.userId,
         });
       }

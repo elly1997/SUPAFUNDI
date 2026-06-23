@@ -444,7 +444,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
         queryKey: ["drawer-status", effectiveOutletId],
       });
       void queryClient.invalidateQueries({
-        queryKey: ["dashboard-kpis"],
+        queryKey: ["customer-credit-summary"],
       });
       toast.success(
         businessDate !== new Date().toISOString().slice(0, 10)

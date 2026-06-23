@@ -9,7 +9,10 @@ import {
   FileSpreadsheet,
   FileText,
   Loader2,
+  Plus,
   RefreshCw,
+  Sparkles,
+  Tag,
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
@@ -41,17 +44,33 @@ import {
 import {
   Table,
   TableBody,
-  TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
 import { CatalogCategoryFilter } from "@/components/inventory/catalog-category-filter";
+import { AddProductDialog } from "@/components/inventory/add-product-dialog";
+import {
+  InventoryChangeReasonDialog,
+} from "@/components/inventory/inventory-change-reason-dialog";
+import {
+  StockListRow,
+  type PendingInventoryChange,
+} from "@/components/inventory/stock-list-row";
 import {
   CatalogCategoryTableHeader,
   stockSectionValue,
 } from "@/components/inventory/catalog-category-table-header";
-import { patchStockQuantity, deleteProductApi } from "@/lib/api/inventory-catalog-fetch";
+import {
+  applyMissingRetailPricesApi,
+  patchCatalogField,
+  patchStockQuantity,
+  deleteProductApi,
+} from "@/lib/api/inventory-catalog-fetch";
+import { downloadCatalogXlsx } from "@/lib/api/backup-fetch";
+import { fetchPricingInsights } from "@/lib/api/pricing-insights-fetch";
+import { invalidatePriceDependentQueries } from "@/lib/query/invalidate-price-queries";
+import { useOrgSettingsStore } from "@/stores/orgSettingsStore";
 import { canManageSettings, isUserRole } from "@/lib/auth/roles";
 import { groupCatalogByCategory } from "@/lib/products/catalog-grouping";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
@@ -80,6 +99,7 @@ const PAGE_SIZE = 50;
 
 export function StockPageClient() {
   const outletId = useAuthStore((s) => s.activeOutletId);
+  const marginPct = useOrgSettingsStore((s) => s.defaultRetailMarginPct);
   const role = useAuthStore((s) => s.session?.role ?? null);
   const canManage = canManageSettings(isUserRole(role ?? "") ? role : null);
   const router = useRouter();
@@ -87,8 +107,11 @@ export function StockPageClient() {
   const [statementRow, setStatementRow] = useState<StockLevelRow | null>(null);
   const [transferRow, setTransferRow] = useState<StockLevelRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<StockLevelRow | null>(null);
-  const [savingQtyId, setSavingQtyId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [pendingChange, setPendingChange] = useState<PendingInventoryChange | null>(null);
+  const [savingFieldId, setSavingFieldId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<StockStatus | "all">("all");
   const [search, setSearch] = useState("");
@@ -142,14 +165,76 @@ export function StockPageClient() {
   const rows = useMemo(() => data?.rows ?? [], [data?.rows]);
   const summary = data?.summary;
   const total = data?.total ?? 0;
+  const rowIds = useMemo(() => rows.map((r) => r.product_id), [rows]);
 
-  const qtyMut = useMutation({
-    mutationFn: patchStockQuantity,
-    onSettled: () => setSavingQtyId(null),
+  const { data: pricingInsights } = useQuery({
+    queryKey: ["pricing-insights", outletId, rowIds.join(",")],
+    queryFn: () =>
+      fetchPricingInsights({
+        outletId,
+        productIds: rowIds,
+      }),
+    enabled: !!outletId && rowIds.length > 0,
+    staleTime: 60_000,
+  });
+
+  const recByProduct = useMemo(() => {
+    const map = new Map<
+      string,
+      NonNullable<typeof pricingInsights>["recommendations"][number]
+    >();
+    for (const r of pricingInsights?.recommendations ?? []) {
+      map.set(r.productId, r);
+    }
+    return map;
+  }, [pricingInsights?.recommendations]);
+
+  const activeOutletName =
+    outlets.find((o) => o.id === outletId)?.name ?? "outlet";
+
+  const applyRetailMut = useMutation({
+    mutationFn: () => applyMissingRetailPricesApi(outletId),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success(
+          r.updated > 0
+            ? `Set retail on ${r.updated} product(s) using ${r.marginPct}% margin`
+            : "All products with cost already have a retail price"
+        );
+        invalidatePriceDependentQueries(queryClient);
+        void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      } else toast.error(r.message);
+    },
+  });
+
+  const confirmChangeMut = useMutation({
+    mutationFn: async (params: { change: PendingInventoryChange; reason: string }) => {
+      const { change, reason } = params;
+      if (!outletId) throw new Error("Select an outlet");
+      if (change.kind === "quantity") {
+        await patchStockQuantity({
+          productId: change.productId,
+          outletId,
+          quantity: change.numericValue,
+          reason: reason || undefined,
+        });
+      } else {
+        await patchCatalogField({
+          productId: change.productId,
+          outletId,
+          field: change.kind,
+          value: change.numericValue,
+          reason: reason || undefined,
+        });
+      }
+    },
+    onMutate: ({ change }) => setSavingFieldId(change.productId),
+    onSettled: () => setSavingFieldId(null),
     onSuccess: () => {
+      setPendingChange(null);
+      invalidatePriceDependentQueries(queryClient);
       void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
-      void queryClient.invalidateQueries({ queryKey: ["stock-valuation"] });
-      toast.success("Quantity updated");
+      toast.success("Updated");
     },
     onError: (e) => {
       toast.error(e instanceof Error ? e.message : "Update failed");
@@ -205,13 +290,66 @@ export function StockPageClient() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Stock</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Stock &amp; price list
+          </h1>
           <p className="text-sm text-muted-foreground">
-            Quantity on hand and inventory value by outlet. Use the same Excel
-            template as before to import or update products and stock.
+            Quantities, buying and selling prices in one list. Export to Excel,
+            edit inline, and tap the info icon on prices for smart suggestions.
           </p>
         </div>
         <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap">
+          <Button type="button" onClick={() => setAddOpen(true)}>
+            <Plus className="mr-2 size-4" />
+            Add product
+          </Button>
+          {canManage && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={applyRetailMut.isPending}
+              onClick={() => applyRetailMut.mutate()}
+            >
+              {applyRetailMut.isPending ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : (
+                <Sparkles className="mr-2 size-4 text-warning" />
+              )}
+              Fill missing retail ({marginPct}%)
+            </Button>
+          )}
+          {(pricingInsights?.adjustmentCount ?? 0) > 0 ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-warning/15 px-2.5 py-1 text-xs font-medium text-warning">
+              <Tag className="size-3.5" />
+              {pricingInsights?.adjustmentCount} suggestion
+              {(pricingInsights?.adjustmentCount ?? 0) === 1 ? "" : "s"} on page
+            </span>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!outletId || exporting}
+            onClick={async () => {
+              if (!outletId) return;
+              setExporting(true);
+              try {
+                await downloadCatalogXlsx(outletId, activeOutletName);
+                toast.success("Price list downloaded");
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : "Export failed");
+              } finally {
+                setExporting(false);
+              }
+            }}
+          >
+            {exporting ? (
+              <Loader2 className="mr-2 size-4 animate-spin" />
+            ) : (
+              <Download className="mr-2 size-4" />
+            )}
+            Export Excel
+          </Button>
           <Button
             type="button"
             variant="outline"
@@ -333,7 +471,7 @@ export function StockPageClient() {
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="flex items-center gap-2">
-            Stock on hand
+            Stock &amp; prices
             {isFetching && !isLoading ? (
               <Loader2 className="size-4 animate-spin text-muted-foreground" />
             ) : null}
@@ -363,7 +501,7 @@ export function StockPageClient() {
             <p className="py-8 text-center text-sm text-muted-foreground">
               {deferredSearch || categoryFilter !== "all" || statusFilter !== "all"
                 ? "No products match your filters."
-                : "No active products. Add products under Inventory → Products, or import Excel."}
+                : "No active products. Import Excel or add products to get started."}
             </p>
           ) : (
             <>
@@ -378,17 +516,20 @@ export function StockPageClient() {
                       key={`${r.outlet_id}-${r.product_id}`}
                       row={r}
                       outletId={outletId}
-                      saving={savingQtyId === r.product_id}
+                      saving={savingFieldId === r.product_id}
                       onQtySave={(qty) => {
                         if (!outletId) {
                           toast.error("Select an active outlet");
                           return;
                         }
-                        setSavingQtyId(r.product_id);
-                        qtyMut.mutate({
+                        if (qty === r.quantity) return;
+                        setPendingChange({
                           productId: r.product_id,
-                          outletId,
-                          quantity: qty,
+                          productName: r.product_name,
+                          kind: "quantity",
+                          previousValue: `${r.quantity} ${r.unit}`,
+                          newValue: `${qty} ${r.unit}`,
+                          numericValue: qty,
                         });
                       }}
                       onStatement={() => setStatementRow(r)}
@@ -409,8 +550,7 @@ export function StockPageClient() {
                   <TableHead className="text-right">Qty</TableHead>
                   <TableHead className="text-right">Buying</TableHead>
                   <TableHead className="text-right">Selling</TableHead>
-                  <TableHead className="text-right">Cost value</TableHead>
-                  <TableHead className="text-right">Sell value</TableHead>
+                  <TableHead className="text-right">Stock value</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -420,27 +560,17 @@ export function StockPageClient() {
                     <CatalogCategoryTableHeader
                       categoryName={section.categoryName}
                       itemCount={section.rows.length}
-                      colSpan={9}
+                      colSpan={8}
                       stockValue={stockSectionValue(section.rows)}
                     />
                     {section.rows.map((r) => (
-                      <StockRow
+                      <StockListRow
                         key={`${r.outlet_id}-${r.product_id}`}
                         row={r}
                         outletId={outletId}
-                        saving={savingQtyId === r.product_id}
-                        onQtySave={(qty) => {
-                          if (!outletId) {
-                            toast.error("Select an active outlet");
-                            return;
-                          }
-                          setSavingQtyId(r.product_id);
-                          qtyMut.mutate({
-                            productId: r.product_id,
-                            outletId,
-                            quantity: qty,
-                          });
-                        }}
+                        saving={savingFieldId === r.product_id}
+                        recommendation={recByProduct.get(r.product_id)}
+                        onRequestChange={setPendingChange}
                         onStatement={() => setStatementRow(r)}
                         onTransfer={() => setTransferRow(r)}
                         onDelete={canManage ? () => setDeleteTarget(r) : undefined}
@@ -499,6 +629,13 @@ export function StockPageClient() {
         onImported={invalidateAfterImport}
       />
 
+      <AddProductDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        preferredOutletId={outletId}
+        onCreated={invalidateAfterImport}
+      />
+
       <StockTransferDialog
         open={!!transferRow}
         onOpenChange={(o) => !o && setTransferRow(null)}
@@ -509,6 +646,20 @@ export function StockPageClient() {
           void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
           void queryClient.invalidateQueries({ queryKey: ["incoming-transfers"] });
           void queryClient.invalidateQueries({ queryKey: ["stock-transfers"] });
+        }}
+      />
+
+      <InventoryChangeReasonDialog
+        open={!!pendingChange}
+        productName={pendingChange?.productName ?? ""}
+        kind={pendingChange?.kind ?? "quantity"}
+        previousValue={pendingChange?.previousValue ?? ""}
+        newValue={pendingChange?.newValue ?? ""}
+        pending={confirmChangeMut.isPending}
+        onCancel={() => setPendingChange(null)}
+        onConfirm={(reason) => {
+          if (!pendingChange) return;
+          confirmChangeMut.mutate({ change: pendingChange, reason });
         }}
       />
 
@@ -538,114 +689,6 @@ export function StockPageClient() {
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-function StockRow({
-  row,
-  outletId,
-  saving,
-  onQtySave,
-  onStatement,
-  onTransfer,
-  onDelete,
-}: {
-  row: StockLevelRow;
-  outletId: string | null;
-  saving: boolean;
-  onQtySave: (qty: number) => void;
-  onStatement: () => void;
-  onTransfer?: () => void;
-  onDelete?: () => void;
-}) {
-  const [qty, setQty] = useState(String(row.quantity));
-  useEffect(() => {
-    setQty(String(row.quantity));
-  }, [row.quantity]);
-
-  return (
-    <TableRow className={saving ? "opacity-70" : undefined}>
-      <TableCell>
-        <span
-          className={cn(
-            "rounded px-1.5 py-0.5 text-xs font-medium",
-            statusClass[row.stock_status]
-          )}
-        >
-          {statusLabel[row.stock_status]}
-        </span>
-      </TableCell>
-      <TableCell className="font-mono text-xs">{row.code ?? "—"}</TableCell>
-      <TableCell>{row.product_name}</TableCell>
-      <TableCell className="text-right">
-        <Input
-          type="number"
-          min={0}
-          step="any"
-          className="ml-auto min-h-11 w-28 text-right font-money"
-          value={qty}
-          onChange={(e) => setQty(e.target.value)}
-          onBlur={() => {
-            const n = Number(qty);
-            if (Number.isFinite(n) && n >= 0 && n !== row.quantity) {
-              onQtySave(n);
-            }
-          }}
-          disabled={!outletId}
-        />
-        <span className="ml-1 text-xs text-muted-foreground">{row.unit}</span>
-      </TableCell>
-      <TableCell className="text-right font-money text-muted-foreground">
-        {row.cost_price > 0 ? formatTzs(row.cost_price) : "—"}
-      </TableCell>
-      <TableCell className="text-right font-money">
-        {row.retail_price > 0 ? formatTzs(row.retail_price) : "—"}
-      </TableCell>
-      <TableCell className="text-right font-money text-muted-foreground">
-        {formatTzs(row.stock_value)}
-      </TableCell>
-      <TableCell className="text-right font-money">
-        {formatTzs(row.retail_stock_value)}
-      </TableCell>
-      <TableCell className="text-right">
-        <div className="flex flex-wrap justify-end gap-1">
-          {row.quantity > 0 && onTransfer ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onTransfer}
-              title="Transfer to another outlet"
-            >
-              <ArrowLeftRight className="mr-1 size-3.5" />
-              Transfer
-            </Button>
-          ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onStatement}
-            title="View purchases, sales and adjustments"
-          >
-            <FileText className="mr-1 size-3.5" />
-            Statement
-          </Button>
-          {row.quantity === 0 && onDelete ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="text-destructive"
-              onClick={onDelete}
-              title="Delete product (zero stock only)"
-            >
-              <Trash2 className="size-3.5" />
-            </Button>
-          ) : null}
-        </div>
-      </TableCell>
-    </TableRow>
   );
 }
 

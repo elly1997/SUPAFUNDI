@@ -43,15 +43,15 @@ export function AppBreadcrumbs() {
   if (crumbs.length === 0) {
     return (
       <nav aria-label="Breadcrumb" className="text-sm text-muted-foreground">
-        <span className="font-medium text-foreground">Dashboard</span>
+        <span className="font-medium text-foreground">POS</span>
       </nav>
     );
   }
 
   return (
     <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-sm">
-      <Link href="/" className="text-muted-foreground hover:text-foreground">
-        Home
+      <Link href="/pos" className="text-muted-foreground hover:text-foreground">
+        POS
       </Link>
       {crumbs.map((c, i) => (
         <span key={c.href} className="flex items-center gap-1">

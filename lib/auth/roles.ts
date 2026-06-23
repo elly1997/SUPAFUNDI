@@ -46,3 +46,10 @@ export function canViewFinance(role: UserRole | null): boolean {
 export function canViewReports(role: UserRole | null): boolean {
   return role !== "cashier" && role !== null;
 }
+
+/** Default route after login — POS for counter staff, reports for back-office viewers. */
+export function getDefaultLandingPath(role: UserRole | null): string {
+  if (canUsePos(role)) return "/pos";
+  if (canViewReports(role)) return "/reports";
+  return "/sales";
+}

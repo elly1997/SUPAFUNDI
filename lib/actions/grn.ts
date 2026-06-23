@@ -284,6 +284,7 @@ export async function receiveGoods(
 
     revalidatePath("/inventory/stock");
     revalidatePath("/finance/payables");
+    revalidatePath("/suppliers");
     revalidatePath("/finance/banking");
     revalidatePath("/inventory/receive");
     revalidatePath("/inventory/products");
@@ -532,6 +533,7 @@ export async function voidGrn(
 
     revalidatePath("/inventory/stock");
     revalidatePath("/finance/payables");
+    revalidatePath("/suppliers");
     revalidatePath("/inventory/receive");
     revalidatePath("/inventory/purchase-orders");
     revalidatePath("/daily-closing");

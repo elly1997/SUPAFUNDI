@@ -20,10 +20,8 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
 
 const POS_MODULE_HREFS = new Set([
-  "/",
   "/pos",
   "/sales",
-  "/inventory/products",
   "/inventory/stock",
   "/reports",
 ]);

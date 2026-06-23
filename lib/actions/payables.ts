@@ -155,6 +155,7 @@ export async function createSupplierBillFromGrn(params: {
 
     revalidatePath("/finance/payables");
     revalidatePath("/suppliers");
+    revalidatePath("/suppliers");
     revalidatePath("/inventory/purchase-orders");
     if (params.poId) {
       revalidatePath(`/inventory/purchase-orders/${params.poId}`);
@@ -208,6 +209,7 @@ export async function createManualSupplierBill(
       return { ok: false, message: error?.message ?? "Create failed" };
     }
     revalidatePath("/finance/payables");
+    revalidatePath("/suppliers");
     revalidatePath("/suppliers");
     return { ok: true, id: data.id };
   } catch (e) {

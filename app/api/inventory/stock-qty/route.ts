@@ -6,6 +6,7 @@ const bodySchema = z.object({
   productId: z.string().uuid(),
   outletId: z.string().uuid(),
   quantity: z.number().nonnegative(),
+  reason: z.string().max(500).optional(),
 });
 
 export async function PATCH(request: Request) {
@@ -14,7 +15,8 @@ export async function PATCH(request: Request) {
     const result = await setStockQuantity(
       body.productId,
       body.outletId,
-      body.quantity
+      body.quantity,
+      body.reason
     );
     if (!result.ok) {
       return NextResponse.json({ error: result.message }, { status: 400 });

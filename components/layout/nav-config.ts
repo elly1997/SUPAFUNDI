@@ -4,13 +4,9 @@ import {
   Banknote,
   Boxes,
   ClipboardList,
-  CreditCard,
   FileText,
-  FileStack,
   Landmark,
   Truck,
-  LayoutDashboard,
-  Package,
   PackagePlus,
   Receipt,
   Settings,
@@ -19,7 +15,6 @@ import {
   Sun,
   History,
   Users,
-  Wallet,
   Warehouse,
 } from "lucide-react";
 import type { UserRole } from "@/lib/auth/roles";
@@ -47,7 +42,6 @@ export type NavSection = {
 
 /** Top-level horizontal tabs (module navigation). */
 export const PRIMARY_NAV_TABS: NavItem[] = [
-  { label: "Dashboard", href: "/", icon: LayoutDashboard },
   {
     label: "POS",
     href: "/pos",
@@ -63,31 +57,12 @@ export const PRIMARY_NAV_TABS: NavItem[] = [
     icon: ClipboardList,
     roles: ["owner", "manager", "accountant"],
   },
-  { label: "Products", href: "/inventory/products", icon: Package },
-  { label: "Stock", href: "/inventory/stock", icon: Warehouse },
+  { label: "Stock & prices", href: "/inventory/stock", icon: Warehouse },
   { label: "Customers", href: "/customers", icon: Users },
-  {
-    label: "Cash drawer",
-    href: "/finance/cash-sessions",
-    icon: Wallet,
-    roles: ["owner", "manager", "cashier", "accountant"],
-  },
   {
     label: "Expenses",
     href: "/finance/expenses",
     icon: Banknote,
-    roles: ["owner", "manager", "accountant"],
-  },
-  {
-    label: "Credit",
-    href: "/finance/credit",
-    icon: CreditCard,
-    roles: ["owner", "manager", "accountant"],
-  },
-  {
-    label: "Payables",
-    href: "/finance/payables",
-    icon: FileStack,
     roles: ["owner", "manager", "accountant"],
   },
   {
@@ -122,10 +97,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: "overview",
     title: "Overview",
     defaultOpen: true,
-    items: [
-      { label: "Daily closing", href: "/daily-closing", icon: Sun },
-      { label: "Dashboard", href: "/", icon: LayoutDashboard },
-    ],
+    items: [{ label: "Daily closing", href: "/daily-closing", icon: Sun }],
   },
   {
     id: "operations",
@@ -166,8 +138,7 @@ export const NAV_SECTIONS: NavSection[] = [
     collapsible: true,
     defaultOpen: true,
     items: [
-      { label: "Products", href: "/inventory/products", icon: Package },
-      { label: "Stock", href: "/inventory/stock", icon: Warehouse },
+      { label: "Stock & prices", href: "/inventory/stock", icon: Warehouse },
       {
         label: "Catch-up",
         href: "/inventory/catch-up",
@@ -191,27 +162,9 @@ export const NAV_SECTIONS: NavSection[] = [
     defaultOpen: false,
     items: [
       {
-        label: "Cash drawer",
-        href: "/finance/cash-sessions",
-        icon: Wallet,
-        roles: ["owner", "manager", "cashier", "accountant"],
-      },
-      {
         label: "Expenses",
         href: "/finance/expenses",
         icon: Banknote,
-        roles: ["owner", "manager", "accountant"],
-      },
-      {
-        label: "Credit / AR",
-        href: "/finance/credit",
-        icon: CreditCard,
-        roles: ["owner", "manager", "accountant"],
-      },
-      {
-        label: "Payables",
-        href: "/finance/payables",
-        icon: FileStack,
         roles: ["owner", "manager", "accountant"],
       },
       {
@@ -295,8 +248,14 @@ export function roleCanManageSettings(role: UserRole): boolean {
 
 /** True if pathname matches this nav item (including child routes). */
 export function isNavItemActive(pathname: string, href: string): boolean {
-  if (href === "/") {
-    return pathname === "/";
+  if (href === "/daily-closing") {
+    return (
+      pathname.startsWith("/daily-closing") ||
+      pathname.startsWith("/finance/cash-sessions")
+    );
+  }
+  if (href === "/pos") {
+    return pathname === "/pos" || pathname === "/";
   }
   if (href === "/settings/general") {
     return pathname.startsWith("/settings");
@@ -305,7 +264,22 @@ export function isNavItemActive(pathname: string, href: string): boolean {
     return pathname.startsWith("/invoices");
   }
   if (href === "/suppliers") {
-    return pathname.startsWith("/suppliers");
+    return (
+      pathname.startsWith("/suppliers") ||
+      pathname.startsWith("/finance/payables")
+    );
+  }
+  if (href === "/customers") {
+    return (
+      pathname.startsWith("/customers") ||
+      pathname.startsWith("/finance/credit")
+    );
+  }
+  if (href === "/inventory/stock") {
+    return (
+      pathname.startsWith("/inventory/stock") ||
+      pathname.startsWith("/inventory/products")
+    );
   }
   if (href === "/inventory/purchase-orders") {
     return pathname.startsWith("/inventory/purchase-orders");
@@ -314,7 +288,8 @@ export function isNavItemActive(pathname: string, href: string): boolean {
     return (
       pathname.startsWith("/inventory") &&
       !pathname.startsWith("/inventory/purchase-orders") &&
-      !pathname.startsWith("/inventory/returns")
+      !pathname.startsWith("/inventory/returns") &&
+      !pathname.startsWith("/inventory/stock")
     );
   }
   if (href.startsWith("/finance/")) {
