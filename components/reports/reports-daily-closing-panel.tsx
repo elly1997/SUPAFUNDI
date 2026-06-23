@@ -21,7 +21,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { fetchDashboardKpis } from "@/lib/api/dashboard-fetch";
 import { fetchDayCashSummary } from "@/lib/api/daily-ops-fetch";
 import type { UnreconciledDayRow } from "@/lib/actions/daily-closing";
 import { listCashSessionHistory } from "@/lib/actions/cash-sessions";
@@ -37,13 +36,6 @@ type Props = {
 export function ReportsDailyClosingPanel({ unreconciled }: Props) {
   const outletId = useAuthStore((s) => s.activeOutletId);
   const businessDate = useBusinessDateStore((s) => s.businessDate);
-
-  const { data: kpis, isLoading: kpisLoading } = useQuery({
-    queryKey: ["dashboard-kpis", outletId, businessDate],
-    queryFn: () => fetchDashboardKpis({ outletId, businessDate }),
-    staleTime: 90_000,
-    enabled: !!outletId,
-  });
 
   const { data: summary, isLoading: summaryLoading } = useQuery({
     queryKey: ["day-cash-summary", outletId, businessDate],
@@ -87,11 +79,15 @@ export function ReportsDailyClosingPanel({ unreconciled }: Props) {
         />
         <KpiCard
           title="Sales (business date)"
-          value={kpisLoading ? "…" : formatTzs(kpis?.salesToday ?? 0)}
+          value={
+            summaryLoading
+              ? "…"
+              : formatTzs(summary?.totalSales ?? 0)
+          }
           subtitle={
-            kpisLoading
+            summaryLoading
               ? "Loading…"
-              : `${kpis?.salesCountToday ?? 0} sale(s) · Cash ${summaryLoading ? "…" : formatTzs(summary?.cashSales ?? 0)}`
+              : `${summary?.salesCount ?? 0} sale(s) · Cash ${formatTzs(summary?.cashSales ?? 0)} · M-Pesa ${formatTzs(summary?.mpesaSales ?? 0)}`
           }
           icon={TrendingUp}
           variant="inflow"
@@ -99,10 +95,14 @@ export function ReportsDailyClosingPanel({ unreconciled }: Props) {
         />
         <KpiCard
           title="Net (sales − expenses)"
-          value={kpisLoading ? "…" : formatTzs(kpis?.netToday ?? 0)}
-          subtitle={`Expenses ${kpisLoading ? "…" : formatTzs(kpis?.expensesToday ?? 0)}`}
+          value={
+            summaryLoading
+              ? "…"
+              : formatTzs(summary?.netToday ?? 0)
+          }
+          subtitle={`Expenses ${summaryLoading ? "…" : formatTzs(summary?.expensesToday ?? 0)}`}
           icon={Receipt}
-          variant={(kpis?.netToday ?? 0) >= 0 ? "inflow" : "outflow"}
+          variant={(summary?.netToday ?? 0) >= 0 ? "inflow" : "outflow"}
           className="glass-card"
         />
       </div>

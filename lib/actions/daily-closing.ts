@@ -24,6 +24,13 @@ export type DayCashSummary = {
   outletId: string;
   outletName: string;
   openingBalance: number;
+  /** Sum of completed sale totals for the business date. */
+  totalSales: number;
+  salesCount: number;
+  /** All expenses on the business date (any payment method). */
+  expensesToday: number;
+  /** totalSales − expensesToday */
+  netToday: number;
   cashSales: number;
   mpesaSales: number;
   cashExpenses: number;
@@ -121,6 +128,10 @@ export async function computeDayCashSummary(
     .lte("sale_date", to);
 
   const saleIds = (sales ?? []).map((s) => s.id);
+  const salesCount = (sales ?? []).length;
+  const totalSales = roundMoney(
+    (sales ?? []).reduce((sum, s) => sum + Number(s.total_amount), 0)
+  );
   let cashSales = 0;
   let mpesaSales = 0;
 
@@ -151,8 +162,10 @@ export async function computeDayCashSummary(
   let cashExpenses = 0;
   let bankDeposits = 0;
   let cashPurchases = 0;
+  let expensesToday = 0;
   for (const e of expenses ?? []) {
     const amt = Number(e.amount);
+    expensesToday += amt;
     const cat = (e.category ?? "").toLowerCase();
     if (cat === "bank") {
       // Legacy misclassified drawer deposits (pre cash-to-bank fix)
@@ -165,6 +178,7 @@ export async function computeDayCashSummary(
       cashExpenses += amt;
     }
   }
+  expensesToday = roundMoney(expensesToday);
 
   const { data: drawerDeposits } = await apDb(supabase)
     .from("bank_transactions")
@@ -272,6 +286,10 @@ export async function computeDayCashSummary(
     outletId,
     outletName: outlet.name,
     openingBalance: roundMoney(openingBalance),
+    totalSales,
+    salesCount,
+    expensesToday,
+    netToday: roundMoney(totalSales - expensesToday),
     cashSales,
     mpesaSales,
     cashExpenses,

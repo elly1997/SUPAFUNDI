@@ -42,25 +42,6 @@ function applyExpenseFilters(
   return filtered;
 }
 
-function readSum(
-  data: Record<string, unknown> | null | undefined,
-  field: string
-): number {
-  if (!data) return 0;
-  const nested = data[field];
-  if (typeof nested === "number") return nested;
-  if (
-    nested &&
-    typeof nested === "object" &&
-    "sum" in nested &&
-    typeof (nested as { sum?: unknown }).sum === "number"
-  ) {
-    return (nested as { sum: number }).sum;
-  }
-  const flat = data[`${field}.sum`];
-  return typeof flat === "number" ? flat : 0;
-}
-
 export async function getDashboardKpis(
   outletId?: string | null,
   businessDate?: string | null
@@ -70,37 +51,34 @@ export async function getDashboardKpis(
   const date = resolveBusinessDate(businessDate);
   const bounds = businessDayBounds(date);
 
-  const [salesSumRes, salesCountRes, expSumRes] = await Promise.all([
+  const [salesRes, expRes] = await Promise.all([
     applySalesFilters(
-      supabase.from("sales").select("total_amount.sum()"),
-      ctx.organizationId,
-      bounds,
-      outletId
-    ).maybeSingle(),
-    applySalesFilters(
-      supabase.from("sales").select("*", { count: "exact", head: true }),
+      supabase.from("sales").select("total_amount"),
       ctx.organizationId,
       bounds,
       outletId
     ),
     applyExpenseFilters(
-      supabase.from("expenses").select("amount.sum()"),
+      supabase.from("expenses").select("amount"),
       ctx.organizationId,
       date,
       outletId
-    ).maybeSingle(),
+    ),
   ]);
 
-  if (salesSumRes.error) throw new Error(salesSumRes.error.message);
-  if (salesCountRes.error) throw new Error(salesCountRes.error.message);
-  if (expSumRes.error) throw new Error(expSumRes.error.message);
+  if (salesRes.error) throw new Error(salesRes.error.message);
+  if (expRes.error) throw new Error(expRes.error.message);
 
+  const salesRows = (salesRes.data ?? []) as { total_amount: number }[];
   const salesToday = roundMoney(
-    readSum(salesSumRes.data as Record<string, unknown> | null, "total_amount")
+    salesRows.reduce((sum: number, row) => sum + Number(row.total_amount), 0)
   );
-  const salesCountToday = salesCountRes.count ?? 0;
+  const salesCountToday = salesRows.length;
   const expensesToday = roundMoney(
-    readSum(expSumRes.data as Record<string, unknown> | null, "amount")
+    ((expRes.data ?? []) as { amount: number }[]).reduce(
+      (sum: number, row) => sum + Number(row.amount),
+      0
+    )
   );
 
   return {
