@@ -13,7 +13,8 @@ import {
 import { buildCashVarianceJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { getOrganizationSettings } from "@/lib/actions/settings";
-import { isoDateToTimestamptz } from "@/lib/utils/iso-date";
+import { fetchAllPaginated, fetchByInChunks } from "@/lib/supabase/query-chunks";
+import { businessDayBounds, isoDateToTimestamptz } from "@/lib/utils/iso-date";
 import {
   isCustomerArPaymentRef,
   isCustomerDepositRef,
@@ -48,10 +49,17 @@ export type DayCashSummary = {
 };
 
 function dayBounds(businessDate: string) {
-  return {
-    from: `${businessDate}T00:00:00.000Z`,
-    to: `${businessDate}T23:59:59.999Z`,
-  };
+  return businessDayBounds(businessDate);
+}
+
+function saleRevenue(s: {
+  total_amount: number;
+  amount_paid?: number | null;
+  balance_due?: number | null;
+}): number {
+  const total = Number(s.total_amount);
+  if (total > 0) return total;
+  return roundMoney(Number(s.amount_paid ?? 0) + Number(s.balance_due ?? 0));
 }
 
 type SupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -118,37 +126,48 @@ export async function computeDayCashSummary(
           businessDate
         );
 
-  const { data: sales } = await supabase
-    .from("sales")
-    .select("id, total_amount")
-    .eq("organization_id", ctx.organizationId)
-    .eq("outlet_id", outletId)
-    .eq("status", "completed")
-    .gte("sale_date", from)
-    .lte("sale_date", to);
+  const sales = await fetchAllPaginated(async (fromIdx, toIdx) => {
+    const { data, error } = await supabase
+      .from("sales")
+      .select("id, total_amount, amount_paid, balance_due")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", outletId)
+      .eq("status", "completed")
+      .gte("sale_date", from)
+      .lte("sale_date", to)
+      .order("sale_date", { ascending: true })
+      .range(fromIdx, toIdx);
+    return { data, error };
+  });
 
-  const saleIds = (sales ?? []).map((s) => s.id);
-  const salesCount = (sales ?? []).length;
-  const totalSales = roundMoney(
-    (sales ?? []).reduce((sum, s) => sum + Number(s.total_amount), 0)
-  );
+  const saleIds = sales.map((s) => s.id);
+  const salesCount = sales.length;
+  let totalSales = roundMoney(sales.reduce((sum, s) => sum + saleRevenue(s), 0));
   let cashSales = 0;
   let mpesaSales = 0;
 
   if (saleIds.length > 0) {
-    const { data: payments } = await supabase
-      .from("payments")
-      .select("amount, payment_method, reference_no, customer_id")
-      .eq("organization_id", ctx.organizationId)
-      .eq("status", "completed")
-      .in("sale_id", saleIds);
+    const payments = await fetchByInChunks(saleIds, async (chunk) => {
+      const { data, error } = await supabase
+        .from("payments")
+        .select("amount, payment_method, reference_no, customer_id")
+        .eq("organization_id", ctx.organizationId)
+        .eq("status", "completed")
+        .in("sale_id", chunk);
+      return { data, error };
+    });
 
-    for (const p of payments ?? []) {
+    for (const p of payments) {
       // Customer AR collections are counted under cashCustomerPayments.
       if (isCustomerArPaymentRef(p.reference_no) || p.customer_id) continue;
       const amt = Number(p.amount);
       if (p.payment_method === "cash") cashSales += amt;
       else if (p.payment_method === "mpesa") mpesaSales += amt;
+    }
+
+    // Fallback when legacy rows have payment amounts but zero total_amount.
+    if (totalSales === 0 && (cashSales > 0 || mpesaSales > 0)) {
+      totalSales = roundMoney(cashSales + mpesaSales);
     }
   }
 

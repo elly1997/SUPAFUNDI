@@ -11,8 +11,8 @@ import {
 import Link from "next/link";
 import { CashSessionBar } from "@/components/pos/cash-session-bar";
 import { KpiCard } from "@/components/ui/kpi-card";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { buttonVariants } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -37,11 +37,12 @@ export function ReportsDailyClosingPanel({ unreconciled }: Props) {
   const outletId = useAuthStore((s) => s.activeOutletId);
   const businessDate = useBusinessDateStore((s) => s.businessDate);
 
-  const { data: summary, isLoading: summaryLoading } = useQuery({
+  const { data: summary, isLoading: summaryLoading, refetch, isFetching } = useQuery({
     queryKey: ["day-cash-summary", outletId, businessDate],
     queryFn: () => fetchDayCashSummary(outletId!, businessDate),
     enabled: !!outletId,
-    staleTime: 90_000,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
   });
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery({
@@ -53,6 +54,20 @@ export function ReportsDailyClosingPanel({ unreconciled }: Props) {
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => void refetch()}
+          disabled={summaryLoading || isFetching}
+        >
+          {isFetching ? (
+            <Loader2 className="mr-2 size-4 animate-spin" />
+          ) : null}
+          Refresh totals
+        </Button>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           title="Opening cash"

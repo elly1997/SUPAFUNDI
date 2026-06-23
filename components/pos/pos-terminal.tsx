@@ -446,6 +446,8 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       void queryClient.invalidateQueries({
         queryKey: ["customer-credit-summary"],
       });
+      void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard-kpis"] });
       toast.success(
         businessDate !== new Date().toISOString().slice(0, 10)
           ? `Sale ${result.invoiceNo} recorded for ${businessDate}`

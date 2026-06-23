@@ -22,6 +22,7 @@ export async function fetchDayCashSummary(
   const params = new URLSearchParams({ outletId, businessDate });
   const res = await fetch(`/api/daily-closing/summary?${params}`, {
     credentials: "include",
+    cache: "no-store",
   });
   const body = await readJson<{ summary: DayCashSummary }>(res);
   return body.summary;
