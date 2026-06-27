@@ -256,31 +256,35 @@ async function computeStockLevelsSummaryFast(
 
   let totalValue = 0;
   let skusWithQty = 0;
-  const idsWithQty: string[] = [];
-  for (const [, stock] of Array.from(stockMap.entries())) {
-    if (stock.quantity > 0) {
-      totalValue += stock.quantity * stock.cost_price;
-      skusWithQty += 1;
-    }
-  }
-  totalValue = roundMoney(totalValue);
-
   let lowStockCount = 0;
   let outOfStockCount = 0;
+  const idsWithQty: string[] = [];
+
   for (const p of products) {
-    const qty = stockMap.get(p.id)?.quantity ?? 0;
+    const stock = stockMap.get(p.id);
+    const qty = stock?.quantity ?? 0;
+    const cost = stock?.cost_price ?? 0;
     const reorder = Number(p.reorder_point ?? 0);
-    if (stockStatus(qty, reorder) === "low") lowStockCount += 1;
-    if (qty <= 0 && reorder > 0) outOfStockCount += 1;
-    if (qty > 0) idsWithQty.push(p.id);
+    const status = stockStatus(qty, reorder);
+
+    if (status === "low") lowStockCount += 1;
+    if (status === "out_of_stock") outOfStockCount += 1;
+
+    if (qty > 0) {
+      skusWithQty += 1;
+      idsWithQty.push(p.id);
+      totalValue += qty * cost;
+    }
   }
+
+  totalValue = roundMoney(totalValue);
 
   const retailMap = await fetchRetailPriceMap(supabase, idsWithQty);
   let totalRetailValue = 0;
-  for (const [productId, stock] of Array.from(stockMap.entries())) {
-    if (stock.quantity > 0) {
-      totalRetailValue += stock.quantity * (retailMap.get(productId) ?? 0);
-    }
+  for (const id of idsWithQty) {
+    const stock = stockMap.get(id);
+    if (!stock) continue;
+    totalRetailValue += stock.quantity * (retailMap.get(id) ?? 0);
   }
 
   return {
@@ -612,16 +616,18 @@ export type StockValuationSummary = {
   outOfStockCount: number;
 };
 
-export async function getStockValuationSummary(
+export async function getStockLevelsSummary(
   outletId?: string | null
-): Promise<StockValuationSummary> {
+): Promise<StockLevelsSummary> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
   const filterOutlet = outletId ?? ctx.outletId;
   if (!filterOutlet) {
     return {
       totalValue: 0,
+      totalRetailValue: 0,
       lineCount: 0,
+      skusWithQty: 0,
       lowStockCount: 0,
       outOfStockCount: 0,
     };
@@ -631,12 +637,18 @@ export async function getStockValuationSummary(
     ctx.organizationId,
     filterOutlet
   );
-  const summary = await computeStockLevelsSummaryFast(
+  return computeStockLevelsSummaryFast(
     supabase,
     ctx.organizationId,
     filterOutlet,
     stockMap
   );
+}
+
+export async function getStockValuationSummary(
+  outletId?: string | null
+): Promise<StockValuationSummary> {
+  const summary = await getStockLevelsSummary(outletId);
   return {
     totalValue: summary.totalValue,
     lineCount: summary.lineCount,

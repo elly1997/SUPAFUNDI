@@ -1,4 +1,4 @@
-import type { StockLevelsPage, StockStatus } from "@/lib/actions/stock";
+import type { StockLevelsPage, StockLevelsSummary, StockStatus } from "@/lib/actions/stock";
 
 async function parseJsonError(res: Response): Promise<string> {
   try {
@@ -34,4 +34,18 @@ export async function fetchStockLevelsPage(params: {
   });
   if (!res.ok) throw new Error(await parseJsonError(res));
   return res.json() as Promise<StockLevelsPage>;
+}
+
+export async function fetchStockLevelsSummary(
+  outletId?: string | null
+): Promise<StockLevelsSummary> {
+  const q = new URLSearchParams();
+  if (outletId) q.set("outletId", outletId);
+  const res = await fetch(`/api/inventory/stock-levels/summary?${q}`, {
+    cache: "no-store",
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(await parseJsonError(res));
+  const body = (await res.json()) as { summary: StockLevelsSummary };
+  return body.summary;
 }

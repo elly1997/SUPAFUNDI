@@ -9,6 +9,7 @@ import {
   FileSpreadsheet,
   FileText,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   Sparkles,
@@ -50,11 +51,13 @@ import {
 } from "@/components/ui/table";
 import { CatalogCategoryFilter } from "@/components/inventory/catalog-category-filter";
 import { AddProductDialog } from "@/components/inventory/add-product-dialog";
+import { ProductEditDialog } from "@/components/inventory/product-edit-dialog";
 import {
   InventoryChangeReasonDialog,
 } from "@/components/inventory/inventory-change-reason-dialog";
 import {
   StockListRow,
+  type CatalogTextField,
   type PendingInventoryChange,
 } from "@/components/inventory/stock-list-row";
 import {
@@ -78,7 +81,7 @@ import { suggestPurchaseOrderFromStock } from "@/lib/actions/purchase-orders";
 import { downloadInventoryTemplate } from "@/lib/excel/inventory-template";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import type { StockLevelRow, StockStatus } from "@/lib/actions/stock";
-import { fetchStockLevelsPage } from "@/lib/api/stock-fetch";
+import { fetchStockLevelsPage, fetchStockLevelsSummary } from "@/lib/api/stock-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
@@ -109,6 +112,7 @@ export function StockPageClient() {
   const [deleteTarget, setDeleteTarget] = useState<StockLevelRow | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [editProductId, setEditProductId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [pendingChange, setPendingChange] = useState<PendingInventoryChange | null>(null);
   const [savingFieldId, setSavingFieldId] = useState<string | null>(null);
@@ -159,11 +163,24 @@ export function StockPageClient() {
         status: statusFilter,
       }),
     enabled: !!outletId,
-    staleTime: 90_000,
+    staleTime: 60_000,
     placeholderData: (prev) => prev,
   });
+
+  const {
+    data: summary,
+    isLoading: summaryLoading,
+    refetch: refetchSummary,
+    isFetching: summaryFetching,
+  } = useQuery({
+    queryKey: ["stock-levels", "summary", outletId],
+    queryFn: () => fetchStockLevelsSummary(outletId),
+    enabled: !!outletId,
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
+  });
+
   const rows = useMemo(() => data?.rows ?? [], [data?.rows]);
-  const summary = data?.summary;
   const total = data?.total ?? 0;
   const rowIds = useMemo(() => rows.map((r) => r.product_id), [rows]);
 
@@ -206,6 +223,37 @@ export function StockPageClient() {
       } else toast.error(r.message);
     },
   });
+
+  const catalogFieldMut = useMutation({
+    mutationFn: patchCatalogField,
+    onMutate: (vars) => setSavingFieldId(`${vars.productId}-${vars.field}`),
+    onSettled: () => setSavingFieldId(null),
+    onSuccess: () => {
+      invalidatePriceDependentQueries(queryClient);
+      toast.success("Updated");
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Save failed");
+      void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+    },
+  });
+
+  const saveCatalogField = (
+    productId: string,
+    field: CatalogTextField,
+    value: string
+  ) => {
+    catalogFieldMut.mutate({
+      productId,
+      outletId: outletId ?? undefined,
+      field,
+      value,
+    });
+  };
+
+  const isRowSaving = (productId: string) =>
+    savingFieldId === productId ||
+    (savingFieldId?.startsWith(`${productId}-`) ?? false);
 
   const confirmChangeMut = useMutation({
     mutationFn: async (params: { change: PendingInventoryChange; reason: string }) => {
@@ -295,7 +343,8 @@ export function StockPageClient() {
           </h1>
           <p className="text-sm text-muted-foreground">
             Quantities, buying and selling prices in one list. Export to Excel,
-            edit inline, and tap the info icon on prices for smart suggestions.
+            edit SKU and base unit inline, or click a product name (or pencil)
+            to change name, category, and sell units (e.g. box / pcs).
           </p>
         </div>
         <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap">
@@ -353,11 +402,17 @@ export function StockPageClient() {
           <Button
             type="button"
             variant="outline"
-            onClick={() =>
-              queryClient.invalidateQueries({ queryKey: ["stock-levels"] })
-            }
+            disabled={summaryFetching || isFetching}
+            onClick={() => {
+              void refetchSummary();
+              void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+            }}
           >
-            <RefreshCw className="mr-2 size-4" />
+            {(summaryFetching || isFetching) ? (
+              <Loader2 className="mr-2 size-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-2 size-4" />
+            )}
             Refresh
           </Button>
           <Link
@@ -388,28 +443,48 @@ export function StockPageClient() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <KpiCard
           title="Stock valuation"
-          value={formatTzs(summary?.totalValue ?? 0)}
-          subtitle="Qty × buying (same as price list)"
+          value={
+            summaryLoading && !summary
+              ? "…"
+              : formatTzs(summary?.totalValue ?? 0)
+          }
+          subtitle="Active catalogue · qty × buying at outlet"
           variant="inflow"
         />
         <KpiCard
           title="Retail stock value"
-          value={formatTzs(summary?.totalRetailValue ?? 0)}
-          subtitle="Qty × selling from price list"
+          value={
+            summaryLoading && !summary
+              ? "…"
+              : formatTzs(summary?.totalRetailValue ?? 0)
+          }
+          subtitle="Active catalogue · qty × selling price"
         />
         <KpiCard
           title="SKUs with qty"
-          value={String(summary?.skusWithQty ?? 0)}
+          value={
+            summaryLoading && !summary ? "…" : String(summary?.skusWithQty ?? 0)
+          }
           subtitle={`${summary?.lineCount ?? 0} products in catalogue`}
         />
         <KpiCard
           title="Low stock"
-          value={String(summary?.lowStockCount ?? 0)}
+          value={
+            summaryLoading && !summary
+              ? "…"
+              : String(summary?.lowStockCount ?? 0)
+          }
+          subtitle="On hand but at/below reorder level"
           variant="warning"
         />
         <KpiCard
           title="Out of stock"
-          value={String(summary?.outOfStockCount ?? 0)}
+          value={
+            summaryLoading && !summary
+              ? "…"
+              : String(summary?.outOfStockCount ?? 0)
+          }
+          subtitle="Zero quantity on hand"
           variant="outflow"
         />
       </div>
@@ -516,7 +591,8 @@ export function StockPageClient() {
                       key={`${r.outlet_id}-${r.product_id}`}
                       row={r}
                       outletId={outletId}
-                      saving={savingFieldId === r.product_id}
+                      saving={isRowSaving(r.product_id)}
+                      onEdit={() => setEditProductId(r.product_id)}
                       onQtySave={(qty) => {
                         if (!outletId) {
                           toast.error("Select an active outlet");
@@ -547,7 +623,7 @@ export function StockPageClient() {
                   <TableHead>Status</TableHead>
                   <TableHead>SKU</TableHead>
                   <TableHead>Product</TableHead>
-                  <TableHead className="text-right">Qty</TableHead>
+                  <TableHead className="text-right">Qty / unit</TableHead>
                   <TableHead className="text-right">Buying</TableHead>
                   <TableHead className="text-right">Selling</TableHead>
                   <TableHead className="text-right">Stock value</TableHead>
@@ -568,9 +644,13 @@ export function StockPageClient() {
                         key={`${r.outlet_id}-${r.product_id}`}
                         row={r}
                         outletId={outletId}
-                        saving={savingFieldId === r.product_id}
+                        saving={isRowSaving(r.product_id)}
                         recommendation={recByProduct.get(r.product_id)}
                         onRequestChange={setPendingChange}
+                        onSaveCatalogField={(field, value) =>
+                          saveCatalogField(r.product_id, field, value)
+                        }
+                        onEdit={() => setEditProductId(r.product_id)}
                         onStatement={() => setStatementRow(r)}
                         onTransfer={() => setTransferRow(r)}
                         onDelete={canManage ? () => setDeleteTarget(r) : undefined}
@@ -636,6 +716,12 @@ export function StockPageClient() {
         onCreated={invalidateAfterImport}
       />
 
+      <ProductEditDialog
+        productId={editProductId}
+        open={!!editProductId}
+        onOpenChange={(o) => !o && setEditProductId(null)}
+      />
+
       <StockTransferDialog
         open={!!transferRow}
         onOpenChange={(o) => !o && setTransferRow(null)}
@@ -696,6 +782,7 @@ function StockCard({
   row,
   outletId,
   saving,
+  onEdit,
   onQtySave,
   onStatement,
   onTransfer,
@@ -704,6 +791,7 @@ function StockCard({
   row: StockLevelRow;
   outletId: string | null;
   saving: boolean;
+  onEdit: () => void;
   onQtySave: (qty: number) => void;
   onStatement: () => void;
   onTransfer?: () => void;
@@ -718,19 +806,37 @@ function StockCard({
     <div className={cn("rounded-xl border border-border bg-card p-3", saving && "opacity-70")}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="font-semibold leading-snug text-foreground">{row.product_name}</p>
+          <button
+            type="button"
+            onClick={onEdit}
+            className="text-left font-semibold leading-snug text-primary underline-offset-2 hover:underline"
+          >
+            {row.product_name}
+          </button>
           <p className="mt-1 text-xs text-muted-foreground">
             {row.code ?? "No SKU"} · {row.unit}
           </p>
         </div>
-        <span
-          className={cn(
-            "shrink-0 rounded px-2 py-1 text-xs font-medium",
-            statusClass[row.stock_status]
-          )}
-        >
-          {statusLabel[row.stock_status]}
-        </span>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <span
+            className={cn(
+              "rounded px-2 py-1 text-xs font-medium",
+              statusClass[row.stock_status]
+            )}
+          >
+            {statusLabel[row.stock_status]}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 px-2"
+            onClick={onEdit}
+          >
+            <Pencil className="mr-1 size-3.5" />
+            Edit
+          </Button>
+        </div>
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-3 text-sm">

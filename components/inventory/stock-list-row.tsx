@@ -3,6 +3,7 @@
 import {
   ArrowLeftRight,
   FileText,
+  Pencil,
   Trash2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -31,6 +32,8 @@ const statusClass = {
   ok: "bg-inflow/15 text-inflow",
 } as const;
 
+export type CatalogTextField = "code" | "unit";
+
 export type PendingInventoryChange = {
   productId: string;
   productName: string;
@@ -46,6 +49,8 @@ type RowProps = {
   saving: boolean;
   recommendation?: PriceRecommendation;
   onRequestChange: (change: PendingInventoryChange) => void;
+  onSaveCatalogField?: (field: CatalogTextField, value: string) => void;
+  onEdit?: () => void;
   onStatement: () => void;
   onTransfer?: () => void;
   onDelete?: () => void;
@@ -57,19 +62,25 @@ export function StockListRow({
   saving,
   recommendation,
   onRequestChange,
+  onSaveCatalogField,
+  onEdit,
   onStatement,
   onTransfer,
   onDelete,
 }: RowProps) {
+  const [code, setCode] = useState(row.code ?? "");
+  const [unit, setUnit] = useState(row.unit);
   const [qty, setQty] = useState(String(row.quantity));
   const [cost, setCost] = useState(String(row.cost_price || ""));
   const [retail, setRetail] = useState(String(row.retail_price || ""));
 
   useEffect(() => {
+    setCode(row.code ?? "");
+    setUnit(row.unit);
     setQty(String(row.quantity));
     setCost(String(row.cost_price || ""));
     setRetail(String(row.retail_price || ""));
-  }, [row.quantity, row.cost_price, row.retail_price]);
+  }, [row.code, row.unit, row.quantity, row.cost_price, row.retail_price]);
 
   const suggestApply = (price: number) => {
     onRequestChange({
@@ -95,35 +106,70 @@ export function StockListRow({
           {statusLabel[row.stock_status]}
         </span>
       </TableCell>
-      <TableCell className="font-mono text-xs">{row.code ?? "—"}</TableCell>
+      <TableCell className="font-mono text-xs">
+        <Input
+          className="min-h-10 font-mono text-xs"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          onBlur={() => {
+            const v = code.trim();
+            if (v && v !== (row.code ?? "") && onSaveCatalogField) {
+              onSaveCatalogField("code", v);
+            }
+          }}
+        />
+      </TableCell>
       <TableCell className="min-w-[10rem]">
-        <p className="font-medium leading-snug">{row.product_name}</p>
+        {onEdit ? (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="min-h-10 rounded-md text-left font-medium leading-snug text-primary underline-offset-2 hover:underline"
+          >
+            {row.product_name}
+          </button>
+        ) : (
+          <p className="font-medium leading-snug">{row.product_name}</p>
+        )}
         <p className="text-xs text-muted-foreground">{row.category_name}</p>
       </TableCell>
       <TableCell className="text-right">
-        <Input
-          type="number"
-          min={0}
-          step="any"
-          className="ml-auto min-h-10 w-24 text-right font-money"
-          value={qty}
-          onChange={(e) => setQty(e.target.value)}
-          onBlur={() => {
-            const n = Number(qty);
-            if (Number.isFinite(n) && n >= 0 && n !== row.quantity) {
-              onRequestChange({
-                productId: row.product_id,
-                productName: row.product_name,
-                kind: "quantity",
-                previousValue: `${row.quantity} ${row.unit}`,
-                newValue: `${n} ${row.unit}`,
-                numericValue: n,
-              });
-            }
-          }}
-          disabled={!outletId}
-        />
-        <span className="text-xs text-muted-foreground">{row.unit}</span>
+        <div className="flex items-center justify-end gap-1">
+          <Input
+            type="number"
+            min={0}
+            step="any"
+            className="ml-auto min-h-10 w-24 text-right font-money"
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+            onBlur={() => {
+              const n = Number(qty);
+              if (Number.isFinite(n) && n >= 0 && n !== row.quantity) {
+                onRequestChange({
+                  productId: row.product_id,
+                  productName: row.product_name,
+                  kind: "quantity",
+                  previousValue: `${row.quantity} ${row.unit}`,
+                  newValue: `${n} ${row.unit}`,
+                  numericValue: n,
+                });
+              }
+            }}
+            disabled={!outletId}
+          />
+          <Input
+            className="min-h-10 w-16 text-center text-xs"
+            value={unit}
+            onChange={(e) => setUnit(e.target.value)}
+            onBlur={() => {
+              const v = unit.trim();
+              if (v && v !== row.unit && onSaveCatalogField) {
+                onSaveCatalogField("unit", v);
+              }
+            }}
+            title="Base unit of measure"
+          />
+        </div>
       </TableCell>
       <TableCell className="text-right">
         <Input
@@ -195,6 +241,17 @@ export function StockListRow({
       </TableCell>
       <TableCell className="text-right">
         <div className="flex flex-wrap justify-end gap-1">
+          {onEdit ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onEdit}
+              title="Edit product & units"
+            >
+              <Pencil className="size-3.5" />
+            </Button>
+          ) : null}
           {row.quantity > 0 && onTransfer ? (
             <Button
               type="button"
