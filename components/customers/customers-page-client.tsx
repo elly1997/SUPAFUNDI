@@ -5,6 +5,7 @@ import {
   ExternalLink,
   FileText,
   Loader2,
+  MessageSquare,
   Pencil,
   Plus,
   Trash2,
@@ -37,7 +38,8 @@ import {
 } from "@/components/ui/table";
 import { PartyStatementDialog } from "@/components/finance/party-statement-dialog";
 import { RecordPartyPaymentDialog } from "@/components/finance/record-party-payment-dialog";
-import { canManageSettings, isUserRole } from "@/lib/auth/roles";
+import { SendCreditSmsDialog } from "@/components/customers/send-credit-sms-dialog";
+import { canManageSettings, canViewFinance, isUserRole } from "@/lib/auth/roles";
 import {
   createCustomerApi,
   deleteCustomerApi,
@@ -46,6 +48,7 @@ import {
   invalidateCustomerQueries,
   updateCustomerApi,
 } from "@/lib/api/customers-fetch";
+import { sendBulkCreditRemindersApi } from "@/lib/api/sms-fetch";
 import type { CustomerListRow } from "@/lib/actions/customers";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
@@ -85,11 +88,14 @@ export function CustomersPageClient() {
   };
 
   const role = useAuthStore((s) => s.session?.role ?? null);
-  const canManage = canManageSettings(isUserRole(role ?? "") ? role : null);
+  const userRole = isUserRole(role ?? "") ? role : null;
+  const canManage = canManageSettings(userRole);
+  const canSendSms = canViewFinance(userRole);
 
   const [open, setOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<CustomerListRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CustomerListRow | null>(null);
+  const [smsTarget, setSmsTarget] = useState<CustomerListRow | null>(null);
   const [payCustomer, setPayCustomer] = useState<{
     id: string;
     name: string;
@@ -201,6 +207,18 @@ export function CustomersPageClient() {
     },
   });
 
+  const bulkSmsMut = useMutation({
+    mutationFn: () => sendBulkCreditRemindersApi(),
+    onSuccess: (r) => {
+      toast.success(
+        `SMS: ${r.sent} sent, ${r.skipped} skipped, ${r.failed} failed`
+      );
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Bulk SMS failed");
+    },
+  });
+
   const openEdit = (c: CustomerListRow) => {
     setEditTarget(c);
     resetEdit({
@@ -292,10 +310,27 @@ export function CustomersPageClient() {
               </Button>
             </div>
           </div>
-          <Button type="button" onClick={() => setOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Add customer
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {canSendSms && view === "credit" && customersWithBalance > 0 ? (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={bulkSmsMut.isPending}
+                onClick={() => bulkSmsMut.mutate()}
+              >
+                {bulkSmsMut.isPending ? (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                ) : (
+                  <MessageSquare className="mr-2 size-4" />
+                )}
+                Remind all (SMS)
+              </Button>
+            ) : null}
+            <Button type="button" onClick={() => setOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add customer
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {isError ? (
@@ -411,6 +446,19 @@ export function CustomersPageClient() {
                             Pay
                           </Button>
                         )}
+                        {canSendSms &&
+                          balance.netDue > 0 &&
+                          c.phone?.trim() ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            title="Send credit reminder SMS"
+                            onClick={() => setSmsTarget(c)}
+                          >
+                            <MessageSquare className="size-3.5" />
+                          </Button>
+                        ) : null}
                         <Button
                           type="button"
                           size="sm"
@@ -617,6 +665,12 @@ export function CustomersPageClient() {
           partyName={stmtCustomer.name}
         />
       )}
+      <SendCreditSmsDialog
+        customerId={smsTarget?.id ?? null}
+        customerName={smsTarget?.name ?? ""}
+        open={!!smsTarget}
+        onOpenChange={(o) => !o && setSmsTarget(null)}
+      />
     </>
   );
 }

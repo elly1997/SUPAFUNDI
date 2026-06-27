@@ -5,6 +5,7 @@ import { CatalogBackupPanel } from "@/components/settings/catalog-backup-panel";
 import { ExpenseCategoriesSettings } from "@/components/settings/expense-categories-settings";
 import { GeneralSettingsClient } from "@/components/settings/general-settings-client";
 import { OrganizationAdminPanel } from "@/components/settings/organization-admin-panel";
+import { SmsSettingsPanel } from "@/components/settings/sms-settings-panel";
 import {
   getOrganizationSettings,
   seedOrgSettingsIfMissing,
@@ -38,6 +39,7 @@ export default async function GeneralSettingsPage() {
           <CatalogBackupPanel />
           <BusinessDataExportPanel />
           <ExpenseCategoriesSettings />
+          <SmsSettingsPanel />
           <OrganizationAdminPanel />
         </>
       ) : (
