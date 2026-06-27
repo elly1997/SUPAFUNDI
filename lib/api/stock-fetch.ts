@@ -41,6 +41,7 @@ export async function fetchStockLevelsSummary(
 ): Promise<StockLevelsSummary> {
   const q = new URLSearchParams();
   if (outletId) q.set("outletId", outletId);
+  q.set("_", String(Date.now()));
   const res = await fetch(`/api/inventory/stock-levels/summary?${q}`, {
     cache: "no-store",
     credentials: "include",

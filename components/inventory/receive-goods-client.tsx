@@ -46,6 +46,7 @@ import { CollectionAccountSelect } from "@/components/finance/collection-account
 import { needsCollectionAccount } from "@/lib/finance/collection-accounts";
 import { fetchProductPricingRecommendation } from "@/lib/api/pricing-insights-fetch";
 import { patchCatalogField } from "@/lib/api/inventory-catalog-fetch";
+import { invalidateStockLevelsQueries } from "@/lib/query/invalidate-stock-queries";
 import { retailPriceFromCost } from "@/lib/utils/calculations";
 import { formatTzs } from "@/lib/utils/currency";
 import { useOrgSettingsStore } from "@/stores/orgSettingsStore";
@@ -298,7 +299,7 @@ export function ReceiveGoodsClient() {
           queryKey: ["product-price-catalog"],
         });
         void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
-        void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+        void invalidateStockLevelsQueries(queryClient, outletId);
       } else toast.error(r.message);
     },
     onError: (e) =>
@@ -340,7 +341,7 @@ export function ReceiveGoodsClient() {
         void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
         void queryClient.invalidateQueries({ queryKey: ["pos-products"] });
         void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
-        void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+        void invalidateStockLevelsQueries(queryClient, outletId);
         void queryClient.invalidateQueries({ queryKey: ["payables-open"] });
         void queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
         void queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });

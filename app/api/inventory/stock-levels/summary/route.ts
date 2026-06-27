@@ -2,12 +2,22 @@ import { NextResponse } from "next/server";
 import { getStockLevelsSummary } from "@/lib/actions/stock";
 import { requireOrgContext } from "@/lib/server/org-context";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET(request: Request) {
   try {
     await requireOrgContext();
     const outletId = new URL(request.url).searchParams.get("outletId");
     const summary = await getStockLevelsSummary(outletId);
-    return NextResponse.json({ summary });
+    return NextResponse.json(
+      { summary },
+      {
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+        },
+      }
+    );
   } catch (e) {
     const message =
       e instanceof Error ? e.message : "Failed to load stock summary";

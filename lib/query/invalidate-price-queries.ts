@@ -1,13 +1,14 @@
 import type { QueryClient } from "@tanstack/react-query";
+import { invalidateStockLevelsQueries } from "@/lib/query/invalidate-stock-queries";
 
 /** Invalidate client caches that depend on catalog / retail prices. */
 export function invalidatePriceDependentQueries(
-  queryClient: QueryClient
+  queryClient: QueryClient,
+  outletId?: string | null
 ): void {
   const keys = [
     "product-price-catalog",
     "pos-products",
-    "stock-levels",
     "stock-valuation",
     "inventory-analytics",
   ] as const;
@@ -17,4 +18,5 @@ export function invalidatePriceDependentQueries(
       refetchType: "all",
     });
   }
+  void invalidateStockLevelsQueries(queryClient, outletId);
 }

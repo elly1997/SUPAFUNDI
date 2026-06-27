@@ -54,6 +54,7 @@ import {
 import type { CompleteSaleInput } from "@/lib/actions/sales";
 import type { PosCustomer } from "@/lib/api/customers-fetch";
 import { completeSaleApi } from "@/lib/api/daily-ops-fetch";
+import { invalidateStockLevelsQueries } from "@/lib/query/invalidate-stock-queries";
 import {
   cartLineKey,
   formatSellQty,
@@ -448,6 +449,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       });
       void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard-kpis"] });
+      void invalidateStockLevelsQueries(queryClient, effectiveOutletId);
       toast.success(
         businessDate !== new Date().toISOString().slice(0, 10)
           ? `Sale ${result.invoiceNo} recorded for ${businessDate}`

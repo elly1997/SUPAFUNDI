@@ -9,6 +9,7 @@ import {
   fetchAllPaginated,
   fetchByInChunks,
 } from "@/lib/supabase/query-chunks";
+import { stockStatus, type StockStatus } from "@/lib/inventory/stock-status";
 import { roundMoney } from "@/lib/utils/calculations";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -32,7 +33,7 @@ function pricesDb(supabase: Supabase) {
   };
 }
 
-export type StockStatus = "out_of_stock" | "low" | "ok";
+export type { StockStatus };
 
 export type StockLevelRow = {
   outlet_id: string;
@@ -83,12 +84,6 @@ export type StockLevelsPageInput = {
   categoryId?: string | null;
   status?: StockStatus | "all";
 };
-
-function stockStatus(qty: number, reorder: number): StockStatus {
-  if (qty <= 0) return "out_of_stock";
-  if (reorder > 0 && qty <= reorder) return "low";
-  return "ok";
-}
 
 async function fetchOutletStockMap(
   supabase: Supabase,

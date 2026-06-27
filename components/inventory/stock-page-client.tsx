@@ -73,6 +73,9 @@ import {
 import { downloadCatalogXlsx } from "@/lib/api/backup-fetch";
 import { fetchPricingInsights } from "@/lib/api/pricing-insights-fetch";
 import { invalidatePriceDependentQueries } from "@/lib/query/invalidate-price-queries";
+import { invalidateStockLevelsQueries } from "@/lib/query/invalidate-stock-queries";
+import { applyStockChangeToSummary } from "@/lib/inventory/stock-summary-optimistic";
+import type { StockLevelsSummary } from "@/lib/actions/stock";
 import { useOrgSettingsStore } from "@/stores/orgSettingsStore";
 import { canManageSettings, isUserRole } from "@/lib/auth/roles";
 import { groupCatalogByCategory } from "@/lib/products/catalog-grouping";
@@ -133,7 +136,7 @@ export function StockPageClient() {
   );
 
   const invalidateAfterImport = () => {
-    void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+    void invalidateStockLevelsQueries(queryClient, outletId);
     void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
     void queryClient.invalidateQueries({ queryKey: ["categories"] });
   };
@@ -163,7 +166,7 @@ export function StockPageClient() {
         status: statusFilter,
       }),
     enabled: !!outletId,
-    staleTime: 60_000,
+    staleTime: 0,
     placeholderData: (prev) => prev,
   });
 
@@ -176,10 +179,20 @@ export function StockPageClient() {
     queryKey: ["stock-levels", "summary", outletId],
     queryFn: () => fetchStockLevelsSummary(outletId),
     enabled: !!outletId,
-    staleTime: 15_000,
+    staleTime: 0,
     refetchOnWindowFocus: true,
+    refetchOnMount: "always",
   });
 
+  useEffect(() => {
+    if (!outletId || !data?.summary) return;
+    queryClient.setQueryData<StockLevelsSummary>(
+      ["stock-levels", "summary", outletId],
+      data.summary
+    );
+  }, [data?.summary, outletId, queryClient]);
+
+  const kpiSummary = summary ?? data?.summary;
   const rows = useMemo(() => data?.rows ?? [], [data?.rows]);
   const total = data?.total ?? 0;
   const rowIds = useMemo(() => rows.map((r) => r.product_id), [rows]);
@@ -218,8 +231,7 @@ export function StockPageClient() {
             ? `Set retail on ${r.updated} product(s) using ${r.marginPct}% margin`
             : "All products with cost already have a retail price"
         );
-        invalidatePriceDependentQueries(queryClient);
-        void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+        invalidatePriceDependentQueries(queryClient, outletId);
       } else toast.error(r.message);
     },
   });
@@ -229,12 +241,12 @@ export function StockPageClient() {
     onMutate: (vars) => setSavingFieldId(`${vars.productId}-${vars.field}`),
     onSettled: () => setSavingFieldId(null),
     onSuccess: () => {
-      invalidatePriceDependentQueries(queryClient);
+      invalidatePriceDependentQueries(queryClient, outletId);
       toast.success("Updated");
     },
     onError: (e) => {
       toast.error(e instanceof Error ? e.message : "Save failed");
-      void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      void invalidateStockLevelsQueries(queryClient, outletId);
     },
   });
 
@@ -276,17 +288,26 @@ export function StockPageClient() {
         });
       }
     },
-    onMutate: ({ change }) => setSavingFieldId(change.productId),
+    onMutate: ({ change }) => {
+      setSavingFieldId(change.productId);
+      if (!outletId) return;
+      const row = rows.find((r) => r.product_id === change.productId);
+      if (!row) return;
+      queryClient.setQueryData<StockLevelsSummary>(
+        ["stock-levels", "summary", outletId],
+        (prev) =>
+          applyStockChangeToSummary(prev ?? kpiSummary, change, row)
+      );
+    },
     onSettled: () => setSavingFieldId(null),
     onSuccess: () => {
       setPendingChange(null);
-      invalidatePriceDependentQueries(queryClient);
-      void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      invalidatePriceDependentQueries(queryClient, outletId);
       toast.success("Updated");
     },
     onError: (e) => {
       toast.error(e instanceof Error ? e.message : "Update failed");
-      void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+      void invalidateStockLevelsQueries(queryClient, outletId);
     },
   });
 
@@ -296,7 +317,7 @@ export function StockPageClient() {
       if (r.ok) {
         toast.success("Product removed from catalogue");
         setDeleteTarget(null);
-        void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+        void invalidateStockLevelsQueries(queryClient, outletId);
         void queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
       } else toast.error(r.message);
     },
@@ -317,7 +338,10 @@ export function StockPageClient() {
   });
 
   const attentionCount =
-    (summary?.lowStockCount ?? 0) + (summary?.outOfStockCount ?? 0);
+    (kpiSummary?.lowStockCount ?? 0) + (kpiSummary?.outOfStockCount ?? 0);
+
+  const kpiLoading = (summaryLoading || isLoading) && !kpiSummary;
+  const kpiUpdating = summaryFetching || isFetching;
 
   const categoryOptions = data?.categories ?? [];
 
@@ -405,7 +429,7 @@ export function StockPageClient() {
             disabled={summaryFetching || isFetching}
             onClick={() => {
               void refetchSummary();
-              void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+              void invalidateStockLevelsQueries(queryClient, outletId);
             }}
           >
             {(summaryFetching || isFetching) ? (
@@ -444,35 +468,37 @@ export function StockPageClient() {
         <KpiCard
           title="Stock valuation"
           value={
-            summaryLoading && !summary
-              ? "…"
-              : formatTzs(summary?.totalValue ?? 0)
+            kpiLoading ? "…" : formatTzs(kpiSummary?.totalValue ?? 0)
           }
-          subtitle="Active catalogue · qty × buying at outlet"
+          subtitle={
+            kpiUpdating
+              ? "Updating live totals…"
+              : "Σ qty × buying (active products on hand)"
+          }
           variant="inflow"
         />
         <KpiCard
           title="Retail stock value"
           value={
-            summaryLoading && !summary
-              ? "…"
-              : formatTzs(summary?.totalRetailValue ?? 0)
+            kpiLoading ? "…" : formatTzs(kpiSummary?.totalRetailValue ?? 0)
           }
-          subtitle="Active catalogue · qty × selling price"
+          subtitle={
+            kpiUpdating
+              ? "Updating live totals…"
+              : "Σ qty × selling (active products on hand)"
+          }
         />
         <KpiCard
           title="SKUs with qty"
           value={
-            summaryLoading && !summary ? "…" : String(summary?.skusWithQty ?? 0)
+            kpiLoading ? "…" : String(kpiSummary?.skusWithQty ?? 0)
           }
-          subtitle={`${summary?.lineCount ?? 0} products in catalogue`}
+          subtitle={`${kpiSummary?.lineCount ?? 0} products in catalogue`}
         />
         <KpiCard
           title="Low stock"
           value={
-            summaryLoading && !summary
-              ? "…"
-              : String(summary?.lowStockCount ?? 0)
+            kpiLoading ? "…" : String(kpiSummary?.lowStockCount ?? 0)
           }
           subtitle="On hand but at/below reorder level"
           variant="warning"
@@ -480,9 +506,7 @@ export function StockPageClient() {
         <KpiCard
           title="Out of stock"
           value={
-            summaryLoading && !summary
-              ? "…"
-              : String(summary?.outOfStockCount ?? 0)
+            kpiLoading ? "…" : String(kpiSummary?.outOfStockCount ?? 0)
           }
           subtitle="Zero quantity on hand"
           variant="outflow"
@@ -729,7 +753,7 @@ export function StockPageClient() {
         fromOutletId={outletId}
         outlets={outlets}
         onSuccess={() => {
-          void queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+          void invalidateStockLevelsQueries(queryClient, outletId);
           void queryClient.invalidateQueries({ queryKey: ["incoming-transfers"] });
           void queryClient.invalidateQueries({ queryKey: ["stock-transfers"] });
         }}
