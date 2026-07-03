@@ -832,6 +832,109 @@ export type Database = {
         Update: Record<string, never>;
         Relationships: [];
       };
+      employees: {
+        Row: {
+          id: string;
+          organization_id: string;
+          profile_id: string | null;
+          full_name: string;
+          phone: string | null;
+          job_title: string | null;
+          gross_monthly_salary: number;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          profile_id?: string | null;
+          full_name: string;
+          phone?: string | null;
+          job_title?: string | null;
+          gross_monthly_salary?: number;
+          is_active?: boolean;
+        };
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
+      employee_bonuses: {
+        Row: {
+          id: string;
+          organization_id: string;
+          employee_id: string;
+          amount: number;
+          bonus_date: string;
+          description: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          employee_id: string;
+          amount: number;
+          bonus_date?: string;
+          description?: string | null;
+          created_by?: string | null;
+        };
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
+      payroll_runs: {
+        Row: {
+          id: string;
+          organization_id: string;
+          payroll_month: string;
+          status: string;
+          closed_at: string | null;
+          closed_by: string | null;
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          payroll_month: string;
+          status?: string;
+          closed_at?: string | null;
+          closed_by?: string | null;
+          notes?: string | null;
+        };
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
+      payroll_lines: {
+        Row: {
+          id: string;
+          payroll_run_id: string;
+          employee_id: string;
+          gross_salary: number;
+          advances_total: number;
+          bonuses_total: number;
+          net_salary: number;
+          payment_method: string | null;
+          bank_account_id: string | null;
+          reference_no: string | null;
+          paid_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          payroll_run_id: string;
+          employee_id: string;
+          gross_salary?: number;
+          advances_total?: number;
+          bonuses_total?: number;
+          net_salary?: number;
+          payment_method?: string | null;
+          bank_account_id?: string | null;
+          reference_no?: string | null;
+          paid_at?: string | null;
+        };
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
       expenses: {
         Row: {
           id: string;
@@ -844,6 +947,7 @@ export type Database = {
           payment_method: string | null;
           reference_no: string | null;
           created_by: string | null;
+          employee_id: string | null;
         };
         Insert: {
           id?: string;
@@ -856,6 +960,7 @@ export type Database = {
           reference_no?: string | null;
           expense_date?: string;
           created_by?: string | null;
+          employee_id?: string | null;
         };
         Update: Record<string, never>;
         Relationships: [];

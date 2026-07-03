@@ -36,6 +36,7 @@ const recordExpenseInput = z.object({
   bankAccountId: z.string().uuid().optional(),
   referenceNo: z.string().max(100).optional(),
   expenseDate: z.string().optional(),
+  employeeId: z.string().uuid().optional(),
 });
 
 function resolveExpensePayment(
@@ -53,6 +54,7 @@ export type ExpenseListRow = {
   expense_date: string;
   payment_method: string | null;
   outlet_id: string | null;
+  employee_id: string | null;
 };
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -109,7 +111,7 @@ export async function listExpenses(
   let query = supabase
     .from("expenses")
     .select(
-      "id, category, description, amount, expense_date, payment_method, outlet_id"
+      "id, category, description, amount, expense_date, payment_method, outlet_id, employee_id"
     )
     .eq("organization_id", ctx.organizationId);
   if (filters?.outletId) {
@@ -133,6 +135,7 @@ export async function listExpenses(
     expense_date: e.expense_date,
     payment_method: e.payment_method,
     outlet_id: e.outlet_id,
+    employee_id: e.employee_id ?? null,
   }));
 }
 
@@ -183,6 +186,7 @@ export async function voidExpense(
 
     revalidatePath("/finance/expenses");
     revalidatePath("/finance/banking");
+    revalidatePath("/finance/payroll");
     revalidatePath("/daily-closing");
     revalidatePath("/pos");
     revalidatePath("/reports");
@@ -204,6 +208,28 @@ export async function recordExpense(
     const supabase = await createServerSupabaseClient();
 
     const categoryKey = input.category.trim().toLowerCase();
+    if (
+      categoryKey === "salary_advance" ||
+      categoryKey === "salary advance"
+    ) {
+      if (!input.employeeId) {
+        return {
+          ok: false,
+          message: "Select the employee receiving this salary advance.",
+        };
+      }
+      const { data: emp } = await supabase
+        .from("employees")
+        .select("id")
+        .eq("id", input.employeeId)
+        .eq("organization_id", ctx.organizationId)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (!emp) {
+        return { ok: false, message: "Employee not found or inactive." };
+      }
+    }
+
     if (
       categoryKey === "bank" ||
       categoryKey === "bank_deposit" ||
@@ -241,6 +267,7 @@ export async function recordExpense(
         reference_no: input.referenceNo?.trim() || null,
         expense_date: expenseDate,
         created_by: ctx.userId,
+        employee_id: input.employeeId ?? null,
       })
       .select("id")
       .single();
@@ -285,8 +312,17 @@ export async function recordExpense(
       }
     }
 
+    if (
+      categoryKey === "salary_advance" ||
+      categoryKey === "salary advance"
+    ) {
+      const { refreshPayrollRun } = await import("@/lib/actions/payroll");
+      await refreshPayrollRun(expenseDate.slice(0, 7));
+    }
+
     revalidatePath("/finance/expenses");
     revalidatePath("/finance/banking");
+    revalidatePath("/finance/payroll");
     return { ok: true, expenseId: expense.id };
   } catch (e) {
     return {

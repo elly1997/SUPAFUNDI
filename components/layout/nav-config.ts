@@ -15,6 +15,7 @@ import {
   Sun,
   History,
   Users,
+  UserCog,
   Warehouse,
 } from "lucide-react";
 import type { UserRole } from "@/lib/auth/roles";
@@ -63,6 +64,12 @@ export const PRIMARY_NAV_TABS: NavItem[] = [
     label: "Expenses",
     href: "/finance/expenses",
     icon: Banknote,
+    roles: ["owner", "manager", "accountant"],
+  },
+  {
+    label: "Staff & payroll",
+    href: "/finance/payroll",
+    icon: UserCog,
     roles: ["owner", "manager", "accountant"],
   },
   {
@@ -165,6 +172,12 @@ export const NAV_SECTIONS: NavSection[] = [
         label: "Expenses",
         href: "/finance/expenses",
         icon: Banknote,
+        roles: ["owner", "manager", "accountant"],
+      },
+      {
+        label: "Staff & payroll",
+        href: "/finance/payroll",
+        icon: UserCog,
         roles: ["owner", "manager", "accountant"],
       },
       {

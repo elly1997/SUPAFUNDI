@@ -9,6 +9,7 @@ export const DEFAULT_EXPENSE_CATEGORIES: ExpenseCategory[] = [
   { id: "rent", label: "Rent", accountCode: "6000" },
   { id: "utilities", label: "Utilities", accountCode: "6010" },
   { id: "wages", label: "Wages", accountCode: "6020" },
+  { id: "salary_advance", label: "Salary advance", accountCode: "1150" },
   { id: "bank", label: "Bank charges", accountCode: "6030" },
   { id: "stock", label: "Stock", accountCode: "6040" },
   { id: "misc", label: "Misc", accountCode: "6040" },

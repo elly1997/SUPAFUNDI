@@ -6,6 +6,7 @@ export const DEFAULT_CATEGORY_ACCOUNT_CODES: Record<string, string> = {
   rent: "6000",
   utilities: "6010",
   wages: "6020",
+  salary_advance: "1150",
   bank: "6030",
   stock: "6040",
   misc: "6040",

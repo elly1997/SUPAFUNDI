@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/table";
 import { ExpenseVoidActions } from "@/components/finance/expense-void-actions";
 import { CollectionAccountSelect } from "@/components/finance/collection-account-select";
+import { EmployeeSelect } from "@/components/finance/employee-select";
 import { needsCollectionAccount } from "@/lib/finance/collection-accounts";
 import { fetchExpenses, recordExpenseApi } from "@/lib/api/daily-ops-fetch";
 import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
@@ -52,7 +53,11 @@ export function ExpensesPageClient() {
   >("cash");
   const [bankAccountId, setBankAccountId] = useState("");
   const [referenceNo, setReferenceNo] = useState("");
+  const [employeeId, setEmployeeId] = useState("");
   const queryClient = useQueryClient();
+
+  const isSalaryAdvance =
+    category === "salary_advance" || category === "salary advance";
 
   const { data: expenses = [], isLoading } = useQuery({
     queryKey: ["expenses"],
@@ -71,6 +76,7 @@ export function ExpensesPageClient() {
         queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
         queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
         queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
+        queryClient.invalidateQueries({ queryKey: ["payroll-run"] });
       } else toast.error(r.message);
     },
     onError: (e) =>
@@ -182,9 +188,20 @@ export function ExpensesPageClient() {
               <Label>Category</Label>
               <PosExpenseCategorySelect
                 value={category}
-                onValueChange={setCategory}
+                onValueChange={(v) => {
+                  setCategory(v);
+                  if (v !== "salary_advance" && v !== "salary advance") {
+                    setEmployeeId("");
+                  }
+                }}
               />
             </div>
+            {isSalaryAdvance ? (
+              <EmployeeSelect
+                value={employeeId}
+                onChange={setEmployeeId}
+              />
+            ) : null}
             <div className="space-y-2">
               <Label>Description</Label>
               <Input value={description} onChange={(e) => setDescription(e.target.value)} />
@@ -242,6 +259,10 @@ export function ExpensesPageClient() {
                   toast.error("Select the bank or M-Pesa account for this payment");
                   return;
                 }
+                if (isSalaryAdvance && !employeeId) {
+                  toast.error("Select the employee for this salary advance");
+                  return;
+                }
                 recordMut.mutate({
                   category,
                   description,
@@ -251,11 +272,13 @@ export function ExpensesPageClient() {
                   referenceNo: referenceNo.trim() || undefined,
                   expenseDate: businessDate,
                   outletId: outletId ?? undefined,
+                  employeeId: employeeId || undefined,
                 });
               }}
               disabled={
                 recordMut.isPending ||
                 !amount ||
+                (isSalaryAdvance && !employeeId) ||
                 (needsCollectionAccount(paymentMethod) && !bankAccountId)
               }
             >

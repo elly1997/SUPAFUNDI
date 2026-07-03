@@ -456,6 +456,52 @@ export function buildCustomerPaymentJournalLines(
   ];
 }
 
+/** Monthly net salary payment: wage expense, advance recovery, cash/bank out. */
+export function buildPayrollPaymentJournalLines(input: {
+  grossSalary: number;
+  bonusesTotal: number;
+  advancesTotal: number;
+  netSalary: number;
+  paymentMethod: "cash" | "mpesa" | "bank_transfer";
+  employeeName: string;
+}): JournalLineInput[] {
+  const wageExpense = input.grossSalary + input.bonusesTotal;
+  const lines: JournalLineInput[] = [];
+
+  if (wageExpense > 0) {
+    lines.push({
+      accountCode: "6020",
+      debit: wageExpense,
+      credit: 0,
+      memo: `Wages — ${input.employeeName}`,
+    });
+  }
+  if (input.advancesTotal > 0) {
+    lines.push({
+      accountCode: SYSTEM_ACCOUNT_CODES.employeeAdvances,
+      debit: 0,
+      credit: input.advancesTotal,
+      memo: "Salary advance recovery",
+    });
+  }
+  if (input.netSalary > 0) {
+    const cashAccount =
+      input.paymentMethod === "mpesa"
+        ? SYSTEM_ACCOUNT_CODES.mpesa
+        : input.paymentMethod === "bank_transfer"
+          ? SYSTEM_ACCOUNT_CODES.bank
+          : SYSTEM_ACCOUNT_CODES.cash;
+    lines.push({
+      accountCode: cashAccount,
+      debit: 0,
+      credit: input.netSalary,
+      memo: "Net salary paid",
+    });
+  }
+
+  return lines;
+}
+
 /** Validate debits = credits before persisting. */
 export function assertBalanced(lines: JournalLineInput[]): void {
   const debit = lines.reduce((s, l) => s + l.debit, 0);
