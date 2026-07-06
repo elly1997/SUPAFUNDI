@@ -21,6 +21,7 @@ import {
   fetchAllPaginated,
   fetchByInChunks,
 } from "@/lib/supabase/query-chunks";
+import { resolveCategoryName } from "@/lib/products/catalog-grouping";
 import { roundMoney } from "@/lib/utils/calculations";
 import {
   buildInventorySeasonalInsights,
@@ -37,20 +38,24 @@ export type { InventoryReportPreset } from "@/lib/inventory/report-range";
 
 export type { StockValuePoint } from "@/lib/inventory/stock-value-series";
 
+export type { CategoryMetricRow } from "@/lib/inventory/category-metrics";
 export type { CostRetailMarginAnalysis } from "@/lib/inventory/cost-retail-insights";
+export type { InventoryDecisionInsight } from "@/lib/inventory/inventory-decision-insights";
 
-export type CategoryMetricRow = {
-  categoryId: string | null;
-  categoryName: string;
-  revenue: number;
-  quantitySold: number;
-  cost: number;
-  margin: number;
-  marginPct: number;
-  /** Lower = faster turnover (sells through stock quicker). */
-  avgDaysOnShelf: number | null;
-  turnoverRate: number;
-};
+import {
+  buildCategoryBuckets,
+  buildCategoryMetricRows,
+  finalizeProductCogs,
+  saleMovementLineCost,
+  sortCategoriesByMarginContribution,
+  sortCategoriesBySales,
+  sortCategoriesByVelocity,
+  type CategoryMetricRow,
+} from "@/lib/inventory/category-metrics";
+import {
+  buildInventoryDecisionInsights,
+  type InventoryDecisionInsight,
+} from "@/lib/inventory/inventory-decision-insights";
 
 export type FastMovingProductRow = {
   productId: string;
@@ -91,6 +96,7 @@ export type InventoryAnalyticsReport = {
   fastMovingProducts: FastMovingProductRow[];
   purchaseHints: PurchaseAllocationHint[];
   lowStockCount: number;
+  inventoryInsights: InventoryDecisionInsight[];
   seasonal: SeasonalAnalysis;
   categorySeasonalTrends: CategorySeasonalTrend[];
   seasonalInsights: SeasonalInsight[];
@@ -137,6 +143,7 @@ export async function getInventoryAnalyticsReport(
     fastMovingProducts: [],
     purchaseHints: [],
     lowStockCount: 0,
+    inventoryInsights: [],
     seasonal: {
       hasEnoughData: false,
       lookbackDays: 0,
@@ -284,6 +291,9 @@ export async function getInventoryAnalyticsReport(
       },
     ])
   );
+  const productCategoryId = new Map(
+    reorderRows.map((p) => [p.id, p.category_id as string | null])
+  );
 
   const salesInRange = await fetchAllPaginated(async (fromIdx, toIdx) => {
     const { data, error } = await supabase
@@ -358,102 +368,38 @@ export async function getInventoryAnalyticsReport(
         qty: 0,
         cost: 0,
       };
-      const lineCost = Number(m.quantity) * Number(m.unit_cost ?? 0);
+      const lineCost = saleMovementLineCost(
+        Number(m.quantity),
+        m.unit_cost != null ? Number(m.unit_cost) : null
+      );
       byProduct.set(m.product_id, {
         ...prev,
         cost: prev.cost + lineCost,
       });
     }
 
-    for (const [pid, agg] of Array.from(byProduct.entries())) {
-      if (agg.cost === 0 && agg.qty > 0) {
-        agg.cost = agg.qty * (costByProduct.get(pid) ?? 0);
-      }
-    }
+    finalizeProductCogs(byProduct, costByProduct);
   }
 
-  type CatAgg = {
-    revenue: number;
-    qty: number;
-    cost: number;
-    daysOnShelfSum: number;
-    daysOnShelfWeight: number;
-    turnoverSum: number;
-  };
-  const byCategory = new Map<string, CatAgg>();
-
-  function catKey(categoryId: string | null) {
-    return categoryId ?? "__general__";
-  }
-
-  function catLabel(categoryId: string | null) {
-    if (!categoryId) return "General";
-    return categoryName.get(categoryId) ?? "General";
-  }
-
-  for (const [productId, agg] of Array.from(byProduct.entries())) {
-    const meta = productMeta.get(productId);
-    const key = catKey(meta?.categoryId ?? null);
-    const prev = byCategory.get(key) ?? {
-      revenue: 0,
-      qty: 0,
-      cost: 0,
-      daysOnShelfSum: 0,
-      daysOnShelfWeight: 0,
-      turnoverSum: 0,
-    };
-    const currentQty = qtyNow.get(productId) ?? 0;
-    const dailySales = agg.qty / daysInPeriod;
-    const daysOnShelf =
-      dailySales > 0 ? Math.round((currentQty / dailySales) * 10) / 10 : null;
-    const turnover =
-      currentQty > 0 ? roundMoney(agg.qty / currentQty) : agg.qty > 0 ? 99 : 0;
-
-    byCategory.set(key, {
-      revenue: prev.revenue + agg.revenue,
-      qty: prev.qty + agg.qty,
-      cost: prev.cost + agg.cost,
-      daysOnShelfSum:
-        prev.daysOnShelfSum +
-        (daysOnShelf != null ? daysOnShelf * agg.revenue : 0),
-      daysOnShelfWeight:
-        prev.daysOnShelfWeight + (daysOnShelf != null ? agg.revenue : 0),
-      turnoverSum: prev.turnoverSum + turnover,
-    });
-  }
-
-  const categoriesBySales: CategoryMetricRow[] = [];
-  for (const [key, agg] of Array.from(byCategory.entries())) {
-    const categoryId = key === "__general__" ? null : key;
-    const margin = roundMoney(agg.revenue - agg.cost);
-    const marginPct =
-      agg.revenue > 0 ? roundMoney((margin / agg.revenue) * 100) : 0;
-    const avgDaysOnShelf =
-      agg.daysOnShelfWeight > 0
-        ? roundMoney(agg.daysOnShelfSum / agg.daysOnShelfWeight)
-        : null;
-    categoriesBySales.push({
-      categoryId,
-      categoryName: catLabel(categoryId),
-      revenue: roundMoney(agg.revenue),
-      quantitySold: roundMoney(agg.qty),
-      cost: roundMoney(agg.cost),
-      margin,
-      marginPct,
-      avgDaysOnShelf,
-      turnoverRate: roundMoney(agg.turnoverSum),
-    });
-  }
-
-  const categoriesByMargin = [...categoriesBySales].sort(
-    (a, b) => b.marginPct - a.marginPct
-  );
-  const categoriesByVelocity = [...categoriesBySales].sort((a, b) => {
-    const da = a.avgDaysOnShelf ?? 9999;
-    const db = b.avgDaysOnShelf ?? 9999;
-    return da - db;
+  const categoryBuckets = buildCategoryBuckets({
+    productIds,
+    byProduct,
+    productCategoryId,
+    categoryNameById: categoryName,
+    qtyNow,
+    costByProduct,
+    retailByProduct,
   });
-  categoriesBySales.sort((a, b) => b.revenue - a.revenue);
+
+  const categoryRows = buildCategoryMetricRows(categoryBuckets, daysInPeriod);
+  const totalCategoryRevenue = categoryRows.reduce((s, c) => s + c.revenue, 0);
+
+  const categoriesBySales = sortCategoriesBySales(categoryRows).slice(0, 10);
+  const categoriesByMargin = sortCategoriesByMarginContribution(
+    categoryRows,
+    totalCategoryRevenue
+  ).slice(0, 10);
+  const categoriesByVelocity = sortCategoriesByVelocity(categoryRows).slice(0, 10);
 
   const fastMovingProducts: FastMovingProductRow[] = Array.from(byProduct.entries())
     .map(([productId, agg]) => {
@@ -467,7 +413,10 @@ export async function getInventoryAnalyticsReport(
       return {
         productId,
         productName: meta?.name ?? "Unknown",
-        categoryName: catLabel(meta?.categoryId ?? null),
+        categoryName: resolveCategoryName(
+          meta?.categoryId ?? null,
+          categoryName
+        ),
         quantitySold: roundMoney(agg.qty),
         revenue: roundMoney(agg.revenue),
         margin: roundMoney(agg.revenue - agg.cost),
@@ -491,6 +440,19 @@ export async function getInventoryAnalyticsReport(
     fastMovingProducts,
     lowStockCount
   );
+
+  const inventoryInsights = buildInventoryDecisionInsights({
+    categories: categoryRows,
+    fastMoving: fastMovingProducts,
+    purchaseHints,
+    costRetailMargin,
+    stockBuildUpCost,
+    stockValueChangePct,
+    closingStockValue,
+    potentialMargin,
+    lowStockCount,
+    periodLabel: `${from} → ${to}`,
+  });
 
   const [seasonal, categorySeasonalTrends] = await Promise.all([
     computeSalesSeasonalAnalysis(
@@ -525,12 +487,13 @@ export async function getInventoryAnalyticsReport(
     stockValueChangePct,
     retailStockValueChangePct,
     costRetailMargin,
-    categoriesBySales: categoriesBySales.slice(0, 10),
-    categoriesByMargin: categoriesByMargin.slice(0, 10),
-    categoriesByVelocity: categoriesByVelocity.slice(0, 10),
+    categoriesBySales,
+    categoriesByMargin,
+    categoriesByVelocity,
     fastMovingProducts,
     purchaseHints,
     lowStockCount,
+    inventoryInsights,
     seasonal,
     categorySeasonalTrends,
     seasonalInsights,
@@ -585,7 +548,7 @@ function buildPurchaseHints(
   }
 
   const highMargin = [...bySales]
-    .filter((c) => c.marginPct >= 25 && c.revenue > 0)
+    .filter((c) => c.margin >= 100_000 && c.marginPct >= 15)
     .sort((a, b) => b.margin - a.margin)[0];
   if (highMargin) {
     hints.push({

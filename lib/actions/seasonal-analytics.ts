@@ -16,6 +16,8 @@ import {
 } from "@/lib/supabase/query-chunks";
 import { businessDateFromTimestamptz } from "@/lib/utils/iso-date";
 import { roundMoney } from "@/lib/utils/calculations";
+import { categoryAggregationKey } from "@/lib/inventory/category-metrics";
+import { resolveCategoryName } from "@/lib/products/catalog-grouping";
 
 function reportPeriodBounds(fromDate: string, toDate: string) {
   return {
@@ -149,20 +151,22 @@ export async function fetchCategorySalesByMonth(
   );
 
   const agg = new Map<string, number>();
+  const labelByKey = new Map<string, string>();
   for (const item of items) {
     if (!item.sale_id || !item.product_id) continue;
     const monthKey = saleMonth.get(item.sale_id);
     if (!monthKey) continue;
     const catId = prodCat.get(item.product_id);
-    const categoryName = catId
-      ? (catName.get(catId) ?? "General")
-      : "General";
-    const key = `${categoryName}|${monthKey}`;
+    const categoryName = resolveCategoryName(catId ?? null, catName);
+    const catKey = categoryAggregationKey(categoryName);
+    const key = `${catKey}|${monthKey}`;
+    labelByKey.set(catKey, categoryName);
     agg.set(key, (agg.get(key) ?? 0) + Number(item.total_price));
   }
 
   return Array.from(agg.entries()).map(([key, revenue]) => {
-    const [categoryName, monthKey] = key.split("|");
+    const [catKey, monthKey] = key.split("|");
+    const categoryName = labelByKey.get(catKey) ?? catKey;
     const monthLabel = format(parseISO(`${monthKey}-01`), "MMM yyyy");
     return {
       categoryName,

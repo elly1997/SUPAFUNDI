@@ -8,6 +8,7 @@ import { StockValueTrendChart } from "@/components/reports/report-charts";
 import { CostRetailInsightsPanel } from "@/components/reports/cost-retail-insights-panel";
 import { BundleInsightsPanel } from "@/components/reports/bundle-insights-panel";
 import { SeasonalInsightsPanel } from "@/components/reports/seasonal-insights-panel";
+import { InventoryInsightsPanel } from "@/components/reports/inventory-insights-panel";
 import { fetchPricingInsights } from "@/lib/api/pricing-insights-fetch";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,16 +27,21 @@ function CategoryRankList({
   rows,
   valueKey,
   formatValue,
+  formatSubline,
 }: {
   rows: {
     categoryName: string;
     revenue: number;
     margin: number;
     marginPct: number;
+    quantitySold: number;
+    cost: number;
     avgDaysOnShelf: number | null;
+    stockCostValue: number;
   }[];
   valueKey: "revenue" | "marginPct" | "avgDaysOnShelf";
   formatValue: (row: (typeof rows)[0]) => string;
+  formatSubline?: (row: (typeof rows)[0]) => string | null;
 }) {
   if (rows.length === 0) {
     return (
@@ -49,7 +55,7 @@ function CategoryRankList({
     valueKey === "revenue"
       ? Math.max(...rows.map((r) => r.revenue), 1)
       : valueKey === "marginPct"
-        ? 100
+        ? Math.max(...rows.map((r) => Math.max(0, r.margin)), 1)
         : Math.max(
             ...rows.map((r) => (r.avgDaysOnShelf != null ? r.avgDaysOnShelf : 0)),
             1
@@ -62,19 +68,24 @@ function CategoryRankList({
           valueKey === "revenue"
             ? row.revenue
             : valueKey === "marginPct"
-              ? row.marginPct
+              ? Math.max(0, row.margin)
               : row.avgDaysOnShelf ?? 0;
         const pct = Math.min(100, (raw / max) * 100);
         return (
-          <div key={`${row.categoryName}-${i}`} className="space-y-1">
-            <div className="flex justify-between text-sm">
-              <span>
+          <div key={row.categoryName} className="space-y-1">
+            <div className="flex justify-between gap-2 text-sm">
+              <span className="min-w-0 truncate">
                 {i + 1}. {row.categoryName}
               </span>
-              <span className="font-money font-semibold tabular-nums">
+              <span className="shrink-0 font-money font-semibold tabular-nums">
                 {formatValue(row)}
               </span>
             </div>
+            {formatSubline?.(row) ? (
+              <p className="text-[11px] text-muted-foreground">
+                {formatSubline(row)}
+              </p>
+            ) : null}
             <div className="h-2 overflow-hidden rounded-full bg-surface-1">
               <div
                 className={cn(
@@ -276,29 +287,45 @@ export function InventoryReportPanel({ enabled = true }: InventoryReportPanelPro
 
           <CostRetailInsightsPanel analysis={data.costRetailMargin} />
 
+          <InventoryInsightsPanel insights={data.inventoryInsights} />
+
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="glass-card">
               <CardHeader>
                 <CardTitle className="text-base">Top categories by sales</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  POS revenue in period — uncategorised items merged into General.
+                </p>
               </CardHeader>
               <CardContent>
                 <CategoryRankList
                   rows={data.categoriesBySales}
                   valueKey="revenue"
                   formatValue={(r) => formatTzs(r.revenue)}
+                  formatSubline={(r) =>
+                    r.stockCostValue > 0
+                      ? `${formatTzs(r.stockCostValue)} stock at cost · ${r.marginPct}% sold margin`
+                      : `${r.marginPct}% sold margin`
+                  }
                 />
               </CardContent>
             </Card>
             <Card className="glass-card">
               <CardHeader>
                 <CardTitle className="text-base">Top categories by margin</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Ranked by profit contribution (TZS), not %. Tiny sales lines excluded.
+                </p>
               </CardHeader>
               <CardContent>
                 <CategoryRankList
                   rows={data.categoriesByMargin}
                   valueKey="marginPct"
                   formatValue={(r) =>
-                    `${r.marginPct}% (${formatTzs(r.margin)})`
+                    `${formatTzs(r.margin)} (${r.marginPct}%)`
+                  }
+                  formatSubline={(r) =>
+                    `${formatTzs(r.revenue)} sales · COGS ${formatTzs(r.cost)}`
                   }
                 />
               </CardContent>
@@ -307,7 +334,7 @@ export function InventoryReportPanel({ enabled = true }: InventoryReportPanelPro
               <CardHeader>
                 <CardTitle className="text-base">Shelf life (fast → slow)</CardTitle>
                 <p className="text-xs text-muted-foreground">
-                  Days of cover from POS sales velocity — lower is faster moving.
+                  Category stock qty ÷ daily sales rate — lower means faster turnover.
                 </p>
               </CardHeader>
               <CardContent>
@@ -318,6 +345,11 @@ export function InventoryReportPanel({ enabled = true }: InventoryReportPanelPro
                     r.avgDaysOnShelf != null
                       ? `${r.avgDaysOnShelf} days`
                       : "No sales"
+                  }
+                  formatSubline={(r) =>
+                    r.avgDaysOnShelf != null
+                      ? `${r.quantitySold} units sold · ${formatTzs(r.stockCostValue)} on shelf`
+                      : null
                   }
                 />
               </CardContent>
