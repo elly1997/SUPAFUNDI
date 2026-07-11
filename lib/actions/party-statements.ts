@@ -2,6 +2,7 @@
 
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { isCustomerDepositRef } from "@/lib/constants/party-payments";
 import { roundMoney } from "@/lib/utils/calculations";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -21,6 +22,9 @@ export type PartyStatementLine = {
   credit: number;
   balance: number;
   payment_method: string | null;
+  /** + received / − applied against invoices */
+  deposit_delta?: number;
+  deposit_balance?: number;
 };
 
 export async function getSupplierStatement(
@@ -105,8 +109,8 @@ export async function getCustomerStatement(
   customerId: string,
   limit = 120
 ): Promise<PartyStatementLine[]> {
-  const { applyCustomerDepositToCredit } = await import("@/lib/actions/credit");
-  await applyCustomerDepositToCredit(customerId);
+  const { syncCustomerDeposits } = await import("@/lib/actions/credit");
+  await syncCustomerDeposits(customerId);
 
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
@@ -147,15 +151,6 @@ export async function getCustomerStatement(
           .limit(limit)
       : { data: [] as const };
 
-  const { data: deposits } = await apDb(supabase)
-    .from("payments")
-    .select("id, amount, payment_method, reference_no, payment_date, created_at")
-    .eq("organization_id", ctx.organizationId)
-    .eq("customer_id", customerId)
-    .ilike("reference_no", "DEP-%")
-    .order("payment_date", { ascending: false })
-    .limit(50);
-
   type Raw = {
     id: string;
     date: string;
@@ -164,7 +159,16 @@ export async function getCustomerStatement(
     debit: number;
     credit: number;
     payment_method: string | null;
+    deposit_delta: number;
   };
+
+  function paymentDateOnly(value: string | null | undefined): string {
+    if (!value) return "";
+    const s = String(value);
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? s.slice(0, 10) : d.toISOString().slice(0, 10);
+  }
 
   const raw: Raw[] = [];
 
@@ -176,38 +180,41 @@ export async function getCustomerStatement(
 
     raw.push({
       id: `sale-${s.id}`,
-      date: String(s.sale_date).slice(0, 10),
+      date: paymentDateOnly(String(s.sale_date)),
       type: due > 0 ? "Invoice (credit)" : "Invoice (paid)",
       reference: String(s.invoice_no),
       debit: total,
       credit: 0,
       payment_method: null,
+      deposit_delta: 0,
     });
 
     if (depositApplied > 0) {
       raw.push({
         id: `sale-dep-${s.id}`,
-        date: String(s.sale_date).slice(0, 10),
-        type: "Deposit applied",
+        date: paymentDateOnly(String(s.sale_date)),
+        type: "Deposit applied to invoice",
         reference: String(s.invoice_no),
         debit: 0,
         credit: depositApplied,
         payment_method: "deposit",
+        deposit_delta: -depositApplied,
       });
     }
   }
 
   for (const p of salePayments ?? []) {
     const ref = String(p.reference_no ?? "");
-    if (ref.startsWith("DEP-")) continue;
+    if (isCustomerDepositRef(ref)) continue;
     raw.push({
       id: `sale-pay-${p.id}`,
-      date: String(p.payment_date ?? p.created_at).slice(0, 10),
+      date: paymentDateOnly(String(p.payment_date ?? p.created_at)),
       type: "Payment (sale)",
       reference: ref || "—",
       debit: 0,
       credit: Number(p.amount),
       payment_method: String(p.payment_method),
+      deposit_delta: 0,
     });
   }
 
@@ -228,7 +235,7 @@ export async function getCustomerStatement(
     }
     raw.push({
       id: `led-${e.id}`,
-      date: String(e.entry_date ?? e.created_at).slice(0, 10),
+      date: paymentDateOnly(String(e.entry_date ?? e.created_at)),
       type:
         e.entry_type === "payment"
           ? "Payment (credit)"
@@ -239,29 +246,51 @@ export async function getCustomerStatement(
       debit,
       credit,
       payment_method: null,
+      deposit_delta: 0,
     });
   }
 
-  for (const d of deposits ?? []) {
+  const { data: depositReceipts } = await supabase
+    .from("payments")
+    .select("id, amount, payment_method, reference_no, payment_date, created_at")
+    .eq("organization_id", ctx.organizationId)
+    .eq("customer_id", customerId)
+    .is("sale_id", null)
+    .order("payment_date", { ascending: false })
+    .limit(50);
+
+  for (const d of depositReceipts ?? []) {
+    const ref = String(d.reference_no ?? "");
+    if (!isCustomerDepositRef(ref)) continue;
+    const amount = roundMoney(Number(d.amount));
     raw.push({
       id: `dep-${d.id}`,
-      date: String(d.payment_date ?? d.created_at).slice(0, 10),
-      type: "Deposit on account",
-      reference: `${String(d.reference_no ?? "Deposit")} — ${Number(d.amount).toLocaleString("en-TZ")}`,
+      date: paymentDateOnly(String(d.payment_date ?? d.created_at)),
+      type: "Deposit received",
+      reference: ref,
       debit: 0,
       credit: 0,
       payment_method: String(d.payment_method),
+      deposit_delta: amount,
     });
   }
 
-  raw.sort((a, b) => b.date.localeCompare(a.date));
+  raw.sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
 
   let running = 0;
+  let depositRunning = 0;
   const chronological = [...raw].reverse();
   const withBalance: PartyStatementLine[] = [];
   for (const row of chronological) {
     running = roundMoney(running + row.debit - row.credit);
-    withBalance.push({ ...row, balance: running });
+    depositRunning = roundMoney(depositRunning + row.deposit_delta);
+    withBalance.push({
+      ...row,
+      balance: running,
+      deposit_delta: row.deposit_delta !== 0 ? row.deposit_delta : undefined,
+      deposit_balance:
+        row.deposit_delta !== 0 ? depositRunning : undefined,
+    });
   }
 
   return withBalance.reverse();

@@ -20,7 +20,7 @@ import {
   fetchCustomerStatement,
   fetchSupplierStatement,
 } from "@/lib/api/party-statements-fetch";
-import { formatTzs } from "@/lib/utils/currency";
+import { formatTzs, formatDateEAT } from "@/lib/utils/currency";
 
 type Props = {
   open: boolean;
@@ -69,6 +69,12 @@ export function PartyStatementDialog({
                 <TableHead>Type</TableHead>
                 <TableHead>Reference</TableHead>
                 <TableHead>Method</TableHead>
+                {partyType === "customer" ? (
+                  <>
+                    <TableHead className="text-right">Deposit ±</TableHead>
+                    <TableHead className="text-right">Dep. balance</TableHead>
+                  </>
+                ) : null}
                 <TableHead className="text-right">Debit</TableHead>
                 <TableHead className="text-right">Credit</TableHead>
                 <TableHead className="text-right">Balance</TableHead>
@@ -78,7 +84,7 @@ export function PartyStatementDialog({
               {lines.map((l) => (
                 <TableRow key={l.id}>
                   <TableCell className="text-xs whitespace-nowrap">
-                    {l.date}
+                    {l.date ? formatDateEAT(`${l.date}T12:00:00.000Z`) : "—"}
                   </TableCell>
                   <TableCell className="text-xs">{l.type}</TableCell>
                   <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">
@@ -87,6 +93,20 @@ export function PartyStatementDialog({
                   <TableCell className="text-xs capitalize">
                     {l.payment_method ?? "—"}
                   </TableCell>
+                  {partyType === "customer" ? (
+                    <>
+                      <TableCell className="text-right font-money text-xs">
+                        {l.deposit_delta != null && l.deposit_delta !== 0
+                          ? `${l.deposit_delta > 0 ? "+" : "−"}${formatTzs(Math.abs(l.deposit_delta))}`
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-right font-money text-xs text-inflow">
+                        {l.deposit_balance != null
+                          ? formatTzs(l.deposit_balance)
+                          : "—"}
+                      </TableCell>
+                    </>
+                  ) : null}
                   <TableCell className="text-right font-money text-xs">
                     {l.debit > 0 ? formatTzs(l.debit) : "—"}
                   </TableCell>

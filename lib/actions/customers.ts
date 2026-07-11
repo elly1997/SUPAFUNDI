@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   applyAmountToCustomerCredit,
   applyCustomerDepositToCredit,
+  syncCustomerDeposits,
   syncCustomersWithDepositAndCredit,
 } from "@/lib/actions/credit";
 import { buildCustomerDepositReceiptJournalLines } from "@/lib/accounting/posting-rules";
@@ -285,7 +286,8 @@ export async function createCustomer(
         credit_days: input.creditDays,
         price_type: input.priceType,
         outstanding_balance: input.openingCredit,
-        deposit_balance: input.openingDeposit,
+        deposit_balance:
+          input.openingDeposit > 0 && ctx.outletId ? 0 : input.openingDeposit,
         is_active: true,
       })
       .select("id")
@@ -474,6 +476,7 @@ export type CustomerDetail = CustomerListRow & {
     sale_date: string;
     total_amount: number;
     balance_due: number;
+    deposit_applied: number;
   }[];
 };
 
@@ -485,16 +488,12 @@ export async function getCustomerById(
 
   const { data: snapshot } = await supabase
     .from("customers")
-    .select("outstanding_balance, deposit_balance")
+    .select("deposit_balance")
     .eq("id", id)
     .eq("organization_id", ctx.organizationId)
     .maybeSingle();
-  if (
-    snapshot &&
-    Number(snapshot.outstanding_balance) > 0 &&
-    Number(snapshot.deposit_balance ?? 0) > 0
-  ) {
-    await applyCustomerDepositToCredit(id);
+  if (snapshot && Number(snapshot.deposit_balance ?? 0) > 0) {
+    await syncCustomerDeposits(id);
   }
 
   const { data: c, error } = await supabase
@@ -509,7 +508,9 @@ export async function getCustomerById(
 
   const { data: sales } = await supabase
     .from("sales")
-    .select("id, invoice_no, sale_date, total_amount, balance_due")
+    .select(
+      "id, invoice_no, sale_date, total_amount, balance_due, deposit_applied"
+    )
     .eq("customer_id", id)
     .order("sale_date", { ascending: false })
     .limit(10);
@@ -533,6 +534,7 @@ export async function getCustomerById(
       sale_date: s.sale_date,
       total_amount: Number(s.total_amount),
       balance_due: Number(s.balance_due),
+      deposit_applied: Number(s.deposit_applied ?? 0),
     })),
   };
 }

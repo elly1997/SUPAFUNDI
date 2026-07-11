@@ -281,6 +281,174 @@ const paymentInput = z.object({
   allocations: z.array(allocationSchema).optional(),
 });
 
+/**
+ * Retroactively apply held deposit to sales that were marked paid on account
+ * without reducing deposit_balance (legacy POS bug). Idempotent.
+ */
+export async function repairCustomerDepositApplications(
+  customerId: string
+): Promise<{ ok: true; applied: number } | { ok: false; message: string }> {
+  try {
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: customer } = await supabase
+      .from("customers")
+      .select("id, name, deposit_balance")
+      .eq("id", customerId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!customer) {
+      return { ok: false, message: "Customer not found." };
+    }
+
+    let availableDeposit = roundMoney(Number(customer.deposit_balance ?? 0));
+    if (availableDeposit <= 0) {
+      return { ok: true, applied: 0 };
+    }
+
+    const { data: sales, error: salesErr } = await supabase
+      .from("sales")
+      .select(
+        "id, invoice_no, total_amount, amount_paid, balance_due, deposit_applied, sale_date"
+      )
+      .eq("customer_id", customerId)
+      .eq("organization_id", ctx.organizationId)
+      .eq("status", "completed")
+      .order("sale_date", { ascending: true });
+    if (salesErr) {
+      return { ok: false, message: salesErr.message };
+    }
+
+    let totalApplied = 0;
+
+    for (const sale of sales ?? []) {
+      if (availableDeposit <= 0) break;
+
+      const total = roundMoney(Number(sale.total_amount));
+      const depositApplied = roundMoney(Number(sale.deposit_applied ?? 0));
+      const balanceDue = roundMoney(Number(sale.balance_due));
+
+      const { data: payRows } = await supabase
+        .from("payments")
+        .select("id, amount, payment_method, reference_no")
+        .eq("sale_id", sale.id)
+        .eq("status", "completed");
+
+      const realCash = roundMoney(
+        (payRows ?? [])
+          .filter((p) => {
+            const method = String(p.payment_method);
+            const ref = String(p.reference_no ?? "");
+            return method !== "credit_account" && !ref.startsWith("DEP-");
+          })
+          .reduce((s, p) => s + Number(p.amount), 0)
+      );
+
+      let unsettled = roundMoney(total - realCash - depositApplied);
+      if (balanceDue > unsettled) {
+        unsettled = balanceDue;
+      }
+      if (unsettled <= 0) continue;
+
+      const toApply = roundMoney(Math.min(availableDeposit, unsettled));
+      if (toApply <= 0) continue;
+
+      const newDepositApplied = roundMoney(depositApplied + toApply);
+      const newAmountPaid = roundMoney(realCash + newDepositApplied);
+      const newBalanceDue = roundMoney(Math.max(0, total - newAmountPaid));
+
+      let creditToRemove = toApply;
+      for (const row of payRows ?? []) {
+        if (creditToRemove <= 0) break;
+        if (String(row.payment_method) !== "credit_account") continue;
+        const amt = roundMoney(Number(row.amount));
+        if (amt <= creditToRemove) {
+          const { error: delErr } = await supabase
+            .from("payments")
+            .delete()
+            .eq("id", row.id);
+          if (delErr) return { ok: false, message: delErr.message };
+          creditToRemove = roundMoney(creditToRemove - amt);
+        } else {
+          const { error: updErr } = await paymentsDb(supabase)
+            .from("payments")
+            .update({ amount: roundMoney(amt - creditToRemove) })
+            .eq("id", row.id);
+          if (updErr) return { ok: false, message: updErr.message };
+          creditToRemove = 0;
+        }
+      }
+
+      const { error: saleErr } = await paymentsDb(supabase)
+        .from("sales")
+        .update({
+          deposit_applied: newDepositApplied,
+          amount_paid: newAmountPaid,
+          balance_due: newBalanceDue,
+        })
+        .eq("id", sale.id);
+      if (saleErr) return { ok: false, message: saleErr.message };
+
+      availableDeposit = roundMoney(availableDeposit - toApply);
+      totalApplied = roundMoney(totalApplied + toApply);
+    }
+
+    if (totalApplied > 0) {
+      const { data: openSales, error: openErr } = await supabase
+        .from("sales")
+        .select("balance_due")
+        .eq("customer_id", customerId)
+        .eq("organization_id", ctx.organizationId)
+        .eq("status", "completed")
+        .gt("balance_due", 0);
+      if (openErr) return { ok: false, message: openErr.message };
+
+      const newOutstanding = roundMoney(
+        (openSales ?? []).reduce((s, row) => s + Number(row.balance_due), 0)
+      );
+
+      const { error: custErr } = await supabase
+        .from("customers")
+        .update({
+          deposit_balance: availableDeposit,
+          outstanding_balance: newOutstanding,
+        })
+        .eq("id", customerId);
+      if (custErr) return { ok: false, message: custErr.message };
+
+      revalidatePath("/customers");
+      revalidatePath(`/customers/${customerId}`);
+      revalidatePath("/finance/credit");
+      revalidatePath("/pos");
+      revalidatePath("/sales");
+    }
+
+    return { ok: true, applied: totalApplied };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Deposit repair failed",
+    };
+  }
+}
+
+/** Repair mis-recorded sales then apply remaining deposit to open credit (FIFO). */
+export async function syncCustomerDeposits(customerId: string): Promise<void> {
+  const repair = await repairCustomerDepositApplications(customerId);
+  if (!repair.ok) {
+    console.warn(
+      `Deposit repair skipped for customer ${customerId}: ${repair.message}`
+    );
+  }
+  const apply = await applyCustomerDepositToCredit(customerId);
+  if (!apply.ok) {
+    console.warn(
+      `Deposit apply skipped for customer ${customerId}: ${apply.message}`
+    );
+  }
+}
+
 /** Apply held deposits against open customer credit (FIFO). Safe to call repeatedly. */
 export async function syncCustomersWithDepositAndCredit(): Promise<void> {
   const ctx = await requireOrgContext();
@@ -289,16 +457,10 @@ export async function syncCustomersWithDepositAndCredit(): Promise<void> {
     .from("customers")
     .select("id")
     .eq("organization_id", ctx.organizationId)
-    .gt("deposit_balance", 0)
-    .gt("outstanding_balance", 0);
+    .gt("deposit_balance", 0);
   if (error) throw new Error(error.message);
   for (const row of data ?? []) {
-    const result = await applyCustomerDepositToCredit(row.id);
-    if (!result.ok) {
-      console.warn(
-        `Deposit sync skipped for customer ${row.id}: ${result.message}`
-      );
-    }
+    await syncCustomerDeposits(row.id);
   }
 }
 

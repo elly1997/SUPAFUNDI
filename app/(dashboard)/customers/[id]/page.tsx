@@ -105,6 +105,7 @@ export default async function CustomerDetailPage({ params }: Props) {
                   <TableHead>Invoice</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="text-right">Deposit used</TableHead>
                   <TableHead className="text-right">Due</TableHead>
                 </TableRow>
               </TableHeader>
@@ -118,6 +119,9 @@ export default async function CustomerDetailPage({ params }: Props) {
                     </TableCell>
                     <TableCell>{formatDateTimeEAT(s.sale_date)}</TableCell>
                     <TableCell className="text-right">{formatTzs(s.total_amount)}</TableCell>
+                    <TableCell className="text-right text-inflow">
+                      {s.deposit_applied > 0 ? formatTzs(s.deposit_applied) : "—"}
+                    </TableCell>
                     <TableCell className="text-right">
                       {s.balance_due > 0 ? formatTzs(s.balance_due) : "—"}
                     </TableCell>
