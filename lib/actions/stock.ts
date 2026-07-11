@@ -9,7 +9,11 @@ import {
   fetchAllPaginated,
   fetchByInChunks,
 } from "@/lib/supabase/query-chunks";
-import { stockStatus, type StockStatus } from "@/lib/inventory/stock-status";
+import {
+  stockStatus,
+  computeSuggestedOrderQty,
+  type StockStatus,
+} from "@/lib/inventory/stock-status";
 import { roundMoney } from "@/lib/utils/calculations";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -179,8 +183,7 @@ function toStockLevelRow(
   const avgDaily = roundMoney(sold30 / 30);
   const daysOfCover =
     avgDaily > 0 ? Math.round((qty / avgDaily) * 10) / 10 : null;
-  const targetQty = Math.max(reorder * 2, reorder);
-  const suggested = Math.max(0, roundMoney(targetQty - qty));
+  const suggested = computeSuggestedOrderQty(qty, reorder, sold30);
 
   return {
     outlet_id: outletId,
@@ -421,8 +424,7 @@ export async function listStockLevels(
     const avgDaily = roundMoney(sold30 / 30);
     const daysOfCover =
       avgDaily > 0 ? Math.round((qty / avgDaily) * 10) / 10 : null;
-    const targetQty = Math.max(reorder * 2, reorder);
-    const suggested = Math.max(0, roundMoney(targetQty - qty));
+    const suggested = computeSuggestedOrderQty(qty, reorder, sold30);
 
     return {
       outlet_id: filterOutlet,
