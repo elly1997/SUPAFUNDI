@@ -54,6 +54,12 @@ export function PartyStatementDialog({
             {partyType === "supplier" ? "Supplier" : "Customer"} statement —{" "}
             {partyName}
           </DialogTitle>
+          {partyType === "customer" ? (
+            <p className="text-sm text-muted-foreground">
+              Credit balance (debit/credit) and prepaid deposit (Deposit ± /
+              Dep. balance). Deposit dates show when money was recorded.
+            </p>
+          ) : null}
         </DialogHeader>
         {isLoading ? (
           <div className="flex justify-center py-8">
@@ -71,8 +77,8 @@ export function PartyStatementDialog({
                 <TableHead>Method</TableHead>
                 {partyType === "customer" ? (
                   <>
-                    <TableHead className="text-right">Deposit ±</TableHead>
-                    <TableHead className="text-right">Dep. balance</TableHead>
+                    <TableHead className="text-right">Deposit in/out</TableHead>
+                    <TableHead className="text-right">Prepaid bal.</TableHead>
                   </>
                 ) : null}
                 <TableHead className="text-right">Debit</TableHead>

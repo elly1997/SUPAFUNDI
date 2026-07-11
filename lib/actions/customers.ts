@@ -12,6 +12,11 @@ import { buildCustomerDepositReceiptJournalLines } from "@/lib/accounting/postin
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
 import { formatCustomerDepositReference } from "@/lib/constants/party-payments";
+import {
+  buildCustomerDepositLedger,
+  summarizeDepositLedger,
+  type CustomerDepositLedgerRow,
+} from "@/lib/finance/customer-deposit-ledger";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
@@ -465,6 +470,77 @@ export async function deleteCustomer(
   }
 }
 
+export type CustomerDepositSummary = {
+  balance: number;
+  total_received: number;
+  total_applied: number;
+};
+
+export async function getCustomerDepositLedger(
+  customerId: string
+): Promise<{
+  rows: CustomerDepositLedgerRow[];
+  summary: CustomerDepositSummary;
+}> {
+  await syncCustomerDeposits(customerId);
+
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+
+  const { data: receipts } = await supabase
+    .from("payments")
+    .select(
+      "id, amount, payment_method, reference_no, payment_date, created_at"
+    )
+    .eq("organization_id", ctx.organizationId)
+    .eq("customer_id", customerId)
+    .is("sale_id", null)
+    .order("payment_date", { ascending: true });
+
+  const { data: appliedSales } = await supabase
+    .from("sales")
+    .select("id, invoice_no, sale_date, deposit_applied")
+    .eq("organization_id", ctx.organizationId)
+    .eq("customer_id", customerId)
+    .eq("status", "completed")
+    .gt("deposit_applied", 0)
+    .order("sale_date", { ascending: true });
+
+  const rows = buildCustomerDepositLedger(
+    (receipts ?? []).map((r) => ({
+      id: r.id,
+      amount: Number(r.amount),
+      payment_method: String(r.payment_method),
+      reference_no: r.reference_no,
+      payment_date: r.payment_date,
+      created_at: r.created_at,
+    })),
+    (appliedSales ?? []).map((s) => ({
+      id: s.id,
+      invoice_no: s.invoice_no,
+      sale_date: s.sale_date,
+      deposit_applied: Number(s.deposit_applied ?? 0),
+    }))
+  );
+
+  const ledgerSummary = summarizeDepositLedger([...rows].reverse());
+  const { data: customer } = await supabase
+    .from("customers")
+    .select("deposit_balance")
+    .eq("id", customerId)
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+
+  return {
+    rows,
+    summary: {
+      balance: roundMoney(Number(customer?.deposit_balance ?? ledgerSummary.balance)),
+      total_received: ledgerSummary.total_received,
+      total_applied: ledgerSummary.total_applied,
+    },
+  };
+}
+
 export type CustomerDetail = CustomerListRow & {
   email: string | null;
   address: string | null;
@@ -478,6 +554,8 @@ export type CustomerDetail = CustomerListRow & {
     balance_due: number;
     deposit_applied: number;
   }[];
+  depositLedger: CustomerDepositLedgerRow[];
+  depositSummary: CustomerDepositSummary;
 };
 
 export async function getCustomerById(
@@ -486,15 +564,8 @@ export async function getCustomerById(
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
 
-  const { data: snapshot } = await supabase
-    .from("customers")
-    .select("deposit_balance")
-    .eq("id", id)
-    .eq("organization_id", ctx.organizationId)
-    .maybeSingle();
-  if (snapshot && Number(snapshot.deposit_balance ?? 0) > 0) {
-    await syncCustomerDeposits(id);
-  }
+  const { rows: depositLedger, summary: depositSummary } =
+    await getCustomerDepositLedger(id);
 
   const { data: c, error } = await supabase
     .from("customers")
@@ -525,7 +596,7 @@ export async function getCustomerById(
     credit_limit: Number(c.credit_limit),
     credit_days: c.credit_days,
     outstanding_balance: Number(c.outstanding_balance),
-    deposit_balance: Number(c.deposit_balance ?? 0),
+    deposit_balance: depositSummary.balance,
     price_type: c.price_type,
     is_active: c.is_active,
     recentSales: (sales ?? []).map((s) => ({
@@ -536,5 +607,7 @@ export async function getCustomerById(
       balance_due: Number(s.balance_due),
       deposit_applied: Number(s.deposit_applied ?? 0),
     })),
+    depositLedger,
+    depositSummary,
   };
 }

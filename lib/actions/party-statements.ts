@@ -3,6 +3,7 @@
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { isCustomerDepositRef } from "@/lib/constants/party-payments";
+import { paymentDateOnly } from "@/lib/finance/customer-deposit-ledger";
 import { roundMoney } from "@/lib/utils/calculations";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -162,14 +163,6 @@ export async function getCustomerStatement(
     deposit_delta: number;
   };
 
-  function paymentDateOnly(value: string | null | undefined): string {
-    if (!value) return "";
-    const s = String(value);
-    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-    const d = new Date(s);
-    return Number.isNaN(d.getTime()) ? s.slice(0, 10) : d.toISOString().slice(0, 10);
-  }
-
   const raw: Raw[] = [];
 
   for (const s of sales ?? []) {
@@ -279,17 +272,20 @@ export async function getCustomerStatement(
 
   let running = 0;
   let depositRunning = 0;
+  let depositActivity = false;
   const chronological = [...raw].reverse();
   const withBalance: PartyStatementLine[] = [];
   for (const row of chronological) {
     running = roundMoney(running + row.debit - row.credit);
-    depositRunning = roundMoney(depositRunning + row.deposit_delta);
+    if (row.deposit_delta !== 0) {
+      depositActivity = true;
+      depositRunning = roundMoney(depositRunning + row.deposit_delta);
+    }
     withBalance.push({
       ...row,
       balance: running,
       deposit_delta: row.deposit_delta !== 0 ? row.deposit_delta : undefined,
-      deposit_balance:
-        row.deposit_delta !== 0 ? depositRunning : undefined,
+      deposit_balance: depositActivity ? depositRunning : undefined,
     });
   }
 
