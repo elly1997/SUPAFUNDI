@@ -123,12 +123,29 @@ export async function getCustomerStatement(
 
   const { data: sales } = await supabase
     .from("sales")
-    .select("id, invoice_no, sale_date, total_amount, balance_due, status")
+    .select(
+      "id, invoice_no, sale_date, total_amount, amount_paid, balance_due, deposit_applied, status"
+    )
     .eq("organization_id", ctx.organizationId)
     .eq("customer_id", customerId)
     .eq("status", "completed")
     .order("sale_date", { ascending: false })
     .limit(limit);
+
+  const saleIds = (sales ?? []).map((s) => s.id);
+  const { data: salePayments } =
+    saleIds.length > 0
+      ? await supabase
+          .from("payments")
+          .select(
+            "id, sale_id, amount, payment_method, reference_no, payment_date, created_at"
+          )
+          .eq("organization_id", ctx.organizationId)
+          .in("sale_id", saleIds)
+          .eq("status", "completed")
+          .order("payment_date", { ascending: false })
+          .limit(limit)
+      : { data: [] as const };
 
   const { data: deposits } = await apDb(supabase)
     .from("payments")
@@ -154,17 +171,44 @@ export async function getCustomerStatement(
   for (const s of sales ?? []) {
     const due = Number(s.balance_due);
     const total = Number(s.total_amount);
-    if (due > 0 || total > 0) {
+    const depositApplied = Number(s.deposit_applied ?? 0);
+    if (total <= 0) continue;
+
+    raw.push({
+      id: `sale-${s.id}`,
+      date: String(s.sale_date).slice(0, 10),
+      type: due > 0 ? "Invoice (credit)" : "Invoice (paid)",
+      reference: String(s.invoice_no),
+      debit: total,
+      credit: 0,
+      payment_method: null,
+    });
+
+    if (depositApplied > 0) {
       raw.push({
-        id: `sale-${s.id}`,
+        id: `sale-dep-${s.id}`,
         date: String(s.sale_date).slice(0, 10),
-        type: due > 0 ? "Invoice (credit)" : "Invoice (paid)",
+        type: "Deposit applied",
         reference: String(s.invoice_no),
-        debit: due > 0 ? due : total,
-        credit: 0,
-        payment_method: null,
+        debit: 0,
+        credit: depositApplied,
+        payment_method: "deposit",
       });
     }
+  }
+
+  for (const p of salePayments ?? []) {
+    const ref = String(p.reference_no ?? "");
+    if (ref.startsWith("DEP-")) continue;
+    raw.push({
+      id: `sale-pay-${p.id}`,
+      date: String(p.payment_date ?? p.created_at).slice(0, 10),
+      type: "Payment (sale)",
+      reference: ref || "—",
+      debit: 0,
+      credit: Number(p.amount),
+      payment_method: String(p.payment_method),
+    });
   }
 
   for (const e of ledger ?? []) {
@@ -173,12 +217,20 @@ export async function getCustomerStatement(
     const isDepositApplied =
       e.reference_type === "deposit_applied" ||
       e.reference_type === "deposit_to_credit";
+    if (e.entry_type === "invoice" && e.reference_type === "sale") {
+      continue;
+    }
+    if (isDepositApplied) {
+      continue;
+    }
+    if (e.entry_type === "payment" && e.reference_type === "customer_payment") {
+      continue;
+    }
     raw.push({
       id: `led-${e.id}`,
       date: String(e.entry_date ?? e.created_at).slice(0, 10),
-      type: isDepositApplied
-        ? "Deposit applied"
-        : e.entry_type === "payment"
+      type:
+        e.entry_type === "payment"
           ? "Payment (credit)"
           : e.entry_type === "invoice"
             ? "Credit sale"
@@ -186,7 +238,7 @@ export async function getCustomerStatement(
       reference: String(e.description ?? "—").slice(0, 60),
       debit,
       credit,
-      payment_method: isDepositApplied ? "deposit" : null,
+      payment_method: null,
     });
   }
 

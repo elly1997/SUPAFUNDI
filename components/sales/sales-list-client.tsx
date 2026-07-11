@@ -202,6 +202,9 @@ export function SalesListClient() {
                   <div>
                     <span className="text-xs text-muted-foreground">Paid</span>
                     <p className="font-money">{formatTzs(sale.amount_paid)}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {sale.payment_summary}
+                    </p>
                   </div>
                   <div>
                     <span className="text-xs text-muted-foreground">Due</span>
@@ -235,6 +238,7 @@ export function SalesListClient() {
                 <TableHead>Customer</TableHead>
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead className="text-right">Paid</TableHead>
+                <TableHead>Payment</TableHead>
                 <TableHead className="text-right">Due</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -263,6 +267,9 @@ export function SalesListClient() {
                   </TableCell>
                   <TableCell className="text-right font-money">
                     {formatTzs(sale.amount_paid)}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {sale.payment_summary}
                   </TableCell>
                   <TableCell className="text-right font-money">
                     {formatTzs(sale.balance_due)}

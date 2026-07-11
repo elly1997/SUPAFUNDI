@@ -10,10 +10,16 @@ import {
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { applyCustomerDepositToCredit } from "@/lib/actions/credit";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
+import {
+  buildSalePaymentBreakdown,
+  summarizeSalePaymentLabels,
+  type SalePaymentLine,
+} from "@/lib/finance/sale-payment-display";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { fetchByInChunks } from "@/lib/supabase/query-chunks";
 import {
   computeLineTotal,
   roundMoney,
@@ -277,17 +283,27 @@ export async function completeSale(
     });
 
     let depositApplied = 0;
-    if (input.customerId && (input.depositApplied ?? 0) > 0) {
+    if (input.customerId) {
       const { data: depCust } = await supabase
         .from("customers")
         .select("deposit_balance")
         .eq("id", input.customerId)
         .eq("organization_id", ctx.organizationId)
         .maybeSingle();
-      const available = Number(depCust?.deposit_balance ?? 0);
-      depositApplied = roundMoney(
-        Math.min(available, totalAmount, input.depositApplied ?? 0)
-      );
+      const available = roundMoney(Number(depCust?.deposit_balance ?? 0));
+      if (available > 0) {
+        const unpaidPortion = roundMoney(
+          Math.max(0, totalAmount - input.amountPaid)
+        );
+        if (unpaidPortion > 0) {
+          const explicit = roundMoney(input.depositApplied ?? 0);
+          depositApplied = roundMoney(
+            explicit > 0
+              ? Math.min(available, unpaidPortion, explicit)
+              : Math.min(available, unpaidPortion)
+          );
+        }
+      }
     }
 
     const totalPaid = roundMoney(input.amountPaid + depositApplied);
@@ -600,10 +616,15 @@ export async function completeSale(
     revalidatePath("/inventory/stock");
 
     if (input.customerId) {
-      await applyCustomerDepositToCredit(input.customerId, {
+      const depositSync = await applyCustomerDepositToCredit(input.customerId, {
         outletId: input.outletId,
         entryDate: input.businessDate,
       });
+      if (!depositSync.ok) {
+        console.warn(
+          `Deposit sync after sale failed for customer ${input.customerId}: ${depositSync.message}`
+        );
+      }
     }
 
     return {
@@ -632,8 +653,10 @@ export type SaleListRow = {
   total_amount: number;
   amount_paid: number;
   balance_due: number;
+  deposit_applied: number;
   status: string;
   customer_name: string | null;
+  payment_summary: string;
 };
 
 export type SalesPageResult = {
@@ -656,6 +679,50 @@ function normalizeSalesPageSize(input?: number) {
 
 function escapeSaleSearch(value: string) {
   return value.replace(/[%_]/g, (m) => `\\${m}`);
+}
+
+async function attachSalePaymentSummaries<
+  T extends {
+    id: string;
+    balance_due: number;
+    deposit_applied: number;
+  },
+>(rows: T[]): Promise<(T & { payment_summary: string })[]> {
+  if (rows.length === 0) return [];
+
+  const supabase = await createServerSupabaseClient();
+  const saleIds = rows.map((r) => r.id);
+  const payments = await fetchByInChunks(saleIds, async (chunk) => {
+    const { data, error } = await supabase
+      .from("payments")
+      .select("sale_id, payment_method, amount")
+      .in("sale_id", chunk)
+      .eq("status", "completed");
+    return { data, error };
+  });
+
+  const bySale = new Map<string, { payment_method: string; amount: number }[]>();
+  for (const p of payments) {
+    if (!p.sale_id) continue;
+    const list = bySale.get(p.sale_id) ?? [];
+    list.push({
+      payment_method: String(p.payment_method),
+      amount: Number(p.amount),
+    });
+    bySale.set(p.sale_id, list);
+  }
+
+  return rows.map((row) => {
+    const lines = buildSalePaymentBreakdown({
+      payments: bySale.get(row.id) ?? [],
+      depositApplied: row.deposit_applied,
+      balanceDue: row.balance_due,
+    });
+    return {
+      ...row,
+      payment_summary: summarizeSalePaymentLabels(lines),
+    };
+  });
 }
 
 async function attachSaleCustomerNames(
@@ -683,8 +750,12 @@ async function attachSaleCustomerNames(
     total_amount: row.total_amount,
     amount_paid: row.amount_paid,
     balance_due: row.balance_due,
+    deposit_applied: row.deposit_applied ?? 0,
     status: row.status,
-    customer_name: row.customer_id ? (customerNames.get(row.customer_id) ?? null) : null,
+    customer_name: row.customer_id
+      ? (customerNames.get(row.customer_id) ?? null)
+      : null,
+    payment_summary: row.payment_summary ?? "",
   }));
 }
 
@@ -707,7 +778,7 @@ export async function listSalesPage(input?: {
   let query = supabase
     .from("sales")
     .select(
-      "id, invoice_no, sale_type, sale_date, total_amount, amount_paid, balance_due, status, customer_id",
+      "id, invoice_no, sale_type, sale_date, total_amount, amount_paid, balance_due, deposit_applied, status, customer_id",
       { count: "exact" }
     )
     .eq("organization_id", ctx.organizationId);
@@ -723,7 +794,7 @@ export async function listSalesPage(input?: {
     .range(from, to);
   if (error) throw new Error(error.message);
 
-  const sales = await attachSaleCustomerNames(
+  const salesWithCustomers = await attachSaleCustomerNames(
     (data ?? []).map((row) => ({
       id: row.id,
       invoice_no: row.invoice_no,
@@ -732,11 +803,14 @@ export async function listSalesPage(input?: {
       total_amount: Number(row.total_amount),
       amount_paid: Number(row.amount_paid),
       balance_due: Number(row.balance_due),
+      deposit_applied: Number(row.deposit_applied ?? 0),
       status: row.status,
       customer_id: row.customer_id,
       customer_name: null,
+      payment_summary: "",
     }))
   );
+  const sales = await attachSalePaymentSummaries(salesWithCustomers);
 
   const total = count ?? sales.length;
   return {
@@ -761,7 +835,7 @@ export async function listRecentSales(
   let query = supabase
     .from("sales")
     .select(
-      "id, invoice_no, sale_type, sale_date, total_amount, amount_paid, balance_due, status, customer_id"
+      "id, invoice_no, sale_type, sale_date, total_amount, amount_paid, balance_due, deposit_applied, status, customer_id"
     )
     .eq("organization_id", ctx.organizationId);
   if (filters?.outletId) {
@@ -780,7 +854,7 @@ export async function listRecentSales(
     throw new Error(error.message);
   }
   const rows = data ?? [];
-  return attachSaleCustomerNames(
+  const withCustomers = await attachSaleCustomerNames(
     rows.map((row) => ({
       id: row.id,
       invoice_no: row.invoice_no,
@@ -789,11 +863,14 @@ export async function listRecentSales(
       total_amount: Number(row.total_amount),
       amount_paid: Number(row.amount_paid),
       balance_due: Number(row.balance_due),
+      deposit_applied: Number(row.deposit_applied ?? 0),
       status: row.status,
       customer_id: row.customer_id,
       customer_name: null,
+      payment_summary: "",
     }))
   );
+  return attachSalePaymentSummaries(withCustomers);
 }
 
 /** Exact invoice/receipt lookup for sales history navigation. */
@@ -832,7 +909,10 @@ export type SaleDetail = {
   amount_paid: number;
   change_given: number;
   balance_due: number;
+  deposit_applied: number;
   notes: string | null;
+  payment_lines: SalePaymentLine[];
+  payment_summary: string;
   customer_id: string | null;
   customer_name: string | null;
   customer_phone: string | null;
@@ -854,7 +934,7 @@ export async function getSaleById(saleId: string): Promise<SaleDetail | null> {
   const { data: sale, error } = await supabase
     .from("sales")
     .select(
-      "id, invoice_no, sale_type, sale_date, status, subtotal, discount_amount, tax_rate, tax_amount, total_amount, amount_paid, change_given, balance_due, notes, customer_id"
+      "id, invoice_no, sale_type, sale_date, status, subtotal, discount_amount, tax_rate, tax_amount, total_amount, amount_paid, change_given, balance_due, deposit_applied, notes, customer_id"
     )
     .eq("id", saleId)
     .eq("organization_id", ctx.organizationId)
@@ -868,6 +948,20 @@ export async function getSaleById(saleId: string): Promise<SaleDetail | null> {
       "product_id, product_name, quantity, unit_price, discount_pct, total_price"
     )
     .eq("sale_id", saleId);
+  const { data: payments } = await supabase
+    .from("payments")
+    .select("payment_method, amount")
+    .eq("sale_id", saleId)
+    .eq("status", "completed")
+    .order("payment_date", { ascending: true });
+  const paymentLines = buildSalePaymentBreakdown({
+    payments: (payments ?? []).map((p) => ({
+      payment_method: String(p.payment_method),
+      amount: Number(p.amount),
+    })),
+    depositApplied: Number(sale.deposit_applied ?? 0),
+    balanceDue: Number(sale.balance_due),
+  });
   let customerName: string | null = null;
   let customerPhone: string | null = null;
   let customerEmail: string | null = null;
@@ -895,7 +989,10 @@ export async function getSaleById(saleId: string): Promise<SaleDetail | null> {
     amount_paid: Number(sale.amount_paid),
     change_given: Number(sale.change_given),
     balance_due: Number(sale.balance_due),
+    deposit_applied: Number(sale.deposit_applied ?? 0),
     notes: sale.notes,
+    payment_lines: paymentLines,
+    payment_summary: summarizeSalePaymentLabels(paymentLines),
     customer_id: sale.customer_id,
     customer_name: customerName,
     customer_phone: customerPhone,
@@ -1109,6 +1206,11 @@ export async function voidSale(
 export async function listCustomersForPos(): Promise<PosCustomer[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+
+  const { syncCustomersWithDepositAndCredit } = await import(
+    "@/lib/actions/credit"
+  );
+  await syncCustomersWithDepositAndCredit();
 
   const { data, error } = await supabase
     .from("customers")

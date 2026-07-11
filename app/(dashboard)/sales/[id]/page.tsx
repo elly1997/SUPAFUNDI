@@ -139,9 +139,36 @@ export default async function SalesDetailPage({
               <span>Total</span>
               <span>{formatTzs(sale.total_amount)}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Paid</span>
-              <span>{formatTzs(sale.amount_paid)}</span>
+            <div className="space-y-1.5 border-t pt-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Payment
+              </p>
+              {sale.payment_lines.length > 0 ? (
+                sale.payment_lines.map((line) => (
+                  <div
+                    key={`${line.method}-${line.amount}`}
+                    className="flex justify-between gap-3"
+                  >
+                    <span className="text-muted-foreground">{line.label}</span>
+                    <span className="font-money tabular-nums">
+                      {formatTzs(line.amount)}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Paid</span>
+                  <span>{formatTzs(sale.amount_paid)}</span>
+                </div>
+              )}
+              {sale.payment_lines.length > 0 ? (
+                <div className="flex justify-between border-t border-border/60 pt-1.5 font-medium">
+                  <span>Total received</span>
+                  <span className="font-money tabular-nums">
+                    {formatTzs(sale.amount_paid)}
+                  </span>
+                </div>
+              ) : null}
             </div>
             {sale.balance_due > 0 && (
               <div className="flex justify-between text-amber-700">

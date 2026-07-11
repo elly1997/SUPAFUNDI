@@ -281,6 +281,27 @@ const paymentInput = z.object({
   allocations: z.array(allocationSchema).optional(),
 });
 
+/** Apply held deposits against open customer credit (FIFO). Safe to call repeatedly. */
+export async function syncCustomersWithDepositAndCredit(): Promise<void> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("customers")
+    .select("id")
+    .eq("organization_id", ctx.organizationId)
+    .gt("deposit_balance", 0)
+    .gt("outstanding_balance", 0);
+  if (error) throw new Error(error.message);
+  for (const row of data ?? []) {
+    const result = await applyCustomerDepositToCredit(row.id);
+    if (!result.ok) {
+      console.warn(
+        `Deposit sync skipped for customer ${row.id}: ${result.message}`
+      );
+    }
+  }
+}
+
 /** Net deposit balance against open credit when both exist (FIFO invoice allocation). */
 export async function applyCustomerDepositToCredit(
   customerId: string,
@@ -317,7 +338,7 @@ export async function applyCustomerDepositToCredit(
     for (const slice of slices) {
       const { data: sale } = await supabase
         .from("sales")
-        .select("id, amount_paid, balance_due, invoice_no")
+        .select("id, amount_paid, balance_due, deposit_applied, invoice_no")
         .eq("id", slice.saleId)
         .eq("customer_id", customerId)
         .maybeSingle();
@@ -326,12 +347,16 @@ export async function applyCustomerDepositToCredit(
       }
       const newPaid = roundMoney(Number(sale.amount_paid) + slice.amount);
       const newDue = roundMoney(Number(sale.balance_due) - slice.amount);
-      const { error: saleErr } = await supabase
+      const newDepositApplied = roundMoney(
+        Number(sale.deposit_applied ?? 0) + slice.amount
+      );
+      const { error: saleErr } = await paymentsDb(supabase)
         .from("sales")
         .update({
           amount_paid: newPaid,
           balance_due: Math.max(0, newDue),
-        } as { amount_paid: number; balance_due: number })
+          deposit_applied: newDepositApplied,
+        })
         .eq("id", slice.saleId);
       if (saleErr) return { ok: false, message: saleErr.message };
     }

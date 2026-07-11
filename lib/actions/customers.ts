@@ -2,7 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { applyAmountToCustomerCredit, applyCustomerDepositToCredit } from "@/lib/actions/credit";
+import {
+  applyAmountToCustomerCredit,
+  applyCustomerDepositToCredit,
+  syncCustomersWithDepositAndCredit,
+} from "@/lib/actions/credit";
 import { buildCustomerDepositReceiptJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
@@ -64,6 +68,8 @@ export type CustomerListRow = {
 export async function listCustomers(): Promise<CustomerListRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+
+  await syncCustomersWithDepositAndCredit();
 
   const { data, error } = await supabase
     .from("customers")

@@ -294,6 +294,9 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
 
   useEffect(() => {
     setPaymentAccountId("");
+    if (paymentMethod === "credit_account") {
+      setAmountPaid("0");
+    }
   }, [paymentMethod]);
 
   useEffect(() => {
@@ -378,7 +381,10 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       if (!effectiveOutletId) {
         throw new Error("Select an outlet before checkout.");
       }
-      const paid = Number(amountPaid) || 0;
+      const paid =
+        paymentMethod === "credit_account"
+          ? Math.max(0, Number(amountPaid) || 0)
+          : Number(amountPaid) || 0;
       const payload: CompleteSaleInput = {
         outletId: effectiveOutletId,
         customerId: customerId || null,
@@ -466,10 +472,14 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       toast.error("Cart is empty");
       return;
     }
-    setAmountPaid(String(Math.round(effectiveTotal)));
+    setAmountPaid(
+      paymentMethod === "credit_account"
+        ? "0"
+        : String(Math.round(effectiveTotal))
+    );
     setCartSheetOpen(false);
     setCheckoutOpen(true);
-  }, [lines.length, effectiveTotal]);
+  }, [lines.length, effectiveTotal, paymentMethod]);
 
   const openMobileCart = useCallback(() => {
     if (lines.length === 0) {
