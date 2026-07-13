@@ -1,23 +1,15 @@
-"use server";
-
 import { requireOrgContext } from "@/lib/server/org-context";
+import {
+  PRIOR_DAY_GATE_EFFECTIVE_FROM,
+  type PriorDayBlocker,
+} from "@/lib/server/prior-day-gate-config";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { addDaysIso } from "@/lib/utils/iso-date";
 
-/**
- * Prior-day close → reconcile → director send is enforced only for operating
- * days on or after this EAT calendar date. Earlier unreconciled history does
- * not block opening a new session or selling.
- */
-export const PRIOR_DAY_GATE_EFFECTIVE_FROM = "2026-07-13";
-
-export type PriorDayBlocker = {
-  /** Business date that must be finished first. */
-  businessDate: string;
-  reason: "open_session" | "unreconciled" | "report_not_sent";
-  message: string;
-  catchUpHref: string;
-};
+export {
+  PRIOR_DAY_GATE_EFFECTIVE_FROM,
+  type PriorDayBlocker,
+} from "@/lib/server/prior-day-gate-config";
 
 function catchUpHref(date: string): string {
   return `/inventory/catch-up?date=${encodeURIComponent(date)}`;
@@ -35,7 +27,6 @@ export async function getPriorDayBlocker(
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
 
-  /** Gate only applies when starting a day on/after the effective date. */
   if (businessDate < PRIOR_DAY_GATE_EFFECTIVE_FROM) {
     return null;
   }
