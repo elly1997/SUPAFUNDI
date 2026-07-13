@@ -35,7 +35,11 @@ import {
   outletInvoicePrefix,
 } from "@/lib/utils/invoice-number";
 import type { PosCustomer } from "@/lib/api/customers-fetch";
-import { isoDateToTimestamptz, resolveBusinessDate } from "@/lib/utils/iso-date";
+import {
+  businessDateFromTimestamptz,
+  isoDateToTimestamptz,
+  resolveBusinessDate,
+} from "@/lib/utils/iso-date";
 import {
   maxSellQtyInUnit,
   sellQtyToBaseQty,
@@ -585,6 +589,7 @@ export async function completeSale(
       sourceType: "sale",
       sourceId: sale.id,
       outletId: input.outletId,
+      entryDate: businessDate,
       lines: journalLines,
     });
 
@@ -1100,6 +1105,7 @@ export async function voidSale(
         sourceType: "sale_return",
         sourceId: saleId,
         outletId: sale.outlet_id ?? undefined,
+        entryDate: businessDateFromTimestamptz(String(sale.sale_date)),
         lines: reverseLines,
       });
       if (!journal.ok) {
