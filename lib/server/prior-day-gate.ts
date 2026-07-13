@@ -4,6 +4,13 @@ import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { addDaysIso } from "@/lib/utils/iso-date";
 
+/**
+ * Prior-day close → reconcile → director send is enforced only for operating
+ * days on or after this EAT calendar date. Earlier unreconciled history does
+ * not block opening a new session or selling.
+ */
+export const PRIOR_DAY_GATE_EFFECTIVE_FROM = "2026-07-13";
+
 export type PriorDayBlocker = {
   /** Business date that must be finished first. */
   businessDate: string;
@@ -18,7 +25,8 @@ function catchUpHref(date: string): string {
 
 /**
  * Before opening a session or selling on `businessDate` (EAT calendar day),
- * the previous operating day must be: drawer closed → reconciled → director report sent.
+ * the previous operating day (from 13 Jul 2026 onward) must be:
+ * drawer closed → reconciled → director report sent.
  */
 export async function getPriorDayBlocker(
   outletId: string,
@@ -26,6 +34,11 @@ export async function getPriorDayBlocker(
 ): Promise<PriorDayBlocker | null> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+
+  /** Gate only applies when starting a day on/after the effective date. */
+  if (businessDate < PRIOR_DAY_GATE_EFFECTIVE_FROM) {
+    return null;
+  }
 
   const { data: openSession } = await supabase
     .from("cash_sessions")
@@ -42,15 +55,21 @@ export async function getPriorDayBlocker(
     openSession.business_date < businessDate
   ) {
     const d = openSession.business_date;
+    const needsFullClose = d >= PRIOR_DAY_GATE_EFFECTIVE_FROM;
     return {
       businessDate: d,
       reason: "open_session",
-      message: `Close and reconcile ${d} on Catch-up before opening ${businessDate}. The prior day’s drawer is still open.`,
+      message: needsFullClose
+        ? `Close and reconcile ${d} on Catch-up before opening ${businessDate}. The prior day’s drawer is still open.`
+        : `Close the open drawer for ${d} before opening ${businessDate}. (Days before ${PRIOR_DAY_GATE_EFFECTIVE_FROM} do not require director reconcile to proceed.)`,
       catchUpHref: catchUpHref(d),
     };
   }
 
-  const lookbackFrom = addDaysIso(businessDate, -60);
+  const lookbackFrom =
+    PRIOR_DAY_GATE_EFFECTIVE_FROM > addDaysIso(businessDate, -60)
+      ? PRIOR_DAY_GATE_EFFECTIVE_FROM
+      : addDaysIso(businessDate, -60);
 
   const [{ data: sessions }, { data: sales }, { data: closings }] =
     await Promise.all([
@@ -90,7 +109,9 @@ export async function getPriorDayBlocker(
   }
 
   const priorOperatingDay = Array.from(operatingDates)
-    .filter((d) => d < businessDate)
+    .filter(
+      (d) => d < businessDate && d >= PRIOR_DAY_GATE_EFFECTIVE_FROM
+    )
     .sort()
     .reverse()[0];
 
