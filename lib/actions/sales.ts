@@ -17,6 +17,7 @@ import {
 } from "@/lib/finance/sale-payment-display";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
+import { assertPriorDayClear } from "@/lib/server/prior-day-gate";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { fetchByInChunks } from "@/lib/supabase/query-chunks";
@@ -225,6 +226,13 @@ export async function completeSale(
     }
 
     const businessDate = resolveBusinessDate(input.businessDate);
+    const prior = await assertPriorDayClear(input.outletId, businessDate);
+    if (!prior.ok) {
+      return {
+        ok: false,
+        message: prior.message,
+      };
+    }
     const dayCheck = await checkBusinessDayMutable(input.outletId, businessDate);
     if (!dayCheck.ok) return dayCheck;
 

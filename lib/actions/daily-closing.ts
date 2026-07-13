@@ -602,13 +602,43 @@ async function getDirectorWhatsAppFromSettings(): Promise<string | null> {
 export async function markClosingReportSent(
   outletId: string,
   businessDate: string
-): Promise<void> {
-  const ctx = await requireOrgContext();
-  const supabase = await createServerSupabaseClient();
-  await supabase
-    .from("daily_closings")
-    .update({ report_sent_at: new Date().toISOString() })
-    .eq("organization_id", ctx.organizationId)
-    .eq("outlet_id", outletId)
-    .eq("business_date", businessDate);
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const { data: row, error: findErr } = await supabase
+      .from("daily_closings")
+      .select("id, status")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", outletId)
+      .eq("business_date", businessDate)
+      .maybeSingle();
+    if (findErr) return { ok: false, message: findErr.message };
+    if (!row) {
+      return {
+        ok: false,
+        message: "Reconcile this day before sending the director report.",
+      };
+    }
+    if (row.status !== "reconciled") {
+      return {
+        ok: false,
+        message: "Day must be reconciled before marking the report as sent.",
+      };
+    }
+    const { error } = await supabase
+      .from("daily_closings")
+      .update({ report_sent_at: new Date().toISOString() })
+      .eq("id", row.id);
+    if (error) return { ok: false, message: error.message };
+    revalidatePath("/inventory/catch-up");
+    revalidatePath("/daily-closing");
+    revalidatePath("/pos");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not mark report sent",
+    };
+  }
 }

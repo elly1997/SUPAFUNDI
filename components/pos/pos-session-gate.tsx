@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
+import { AlertTriangle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ShieldCheck } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { CashSessionBar } from "@/components/pos/cash-session-bar";
 import { canBypassCashSession } from "@/lib/auth/roles";
 import { fetchDrawerStatus } from "@/lib/api/cash-session-fetch";
@@ -42,16 +43,40 @@ export function PosSessionGate({
     refetchOnWindowFocus: false,
   });
 
+  const priorBlocker = drawer?.priorDayBlocker ?? null;
   const dayReconciled = !!drawer?.reconciled;
   const sessionOpen = !!drawer?.session && !drawer.dateMismatch;
   const canSell =
     mounted &&
+    !priorBlocker &&
     !dayReconciled &&
     (sessionOpen || canBypass || sessionOverride);
 
   return (
     <>
-      {mounted && dayReconciled && !isLoading && (
+      {mounted && priorBlocker && !isLoading && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-destructive/15 px-4 py-3">
+          <div className="flex min-w-0 items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">
+                Finish {priorBlocker.businessDate} before selling today
+              </p>
+              <p className="text-xs text-muted-foreground">{priorBlocker.message}</p>
+            </div>
+          </div>
+          <Link
+            href={priorBlocker.catchUpHref}
+            className={cn(
+              buttonVariants({ size: "sm" }),
+              "min-h-11 shrink-0 rounded-full"
+            )}
+          >
+            Open Catch-up
+          </Link>
+        </div>
+      )}
+      {mounted && !priorBlocker && dayReconciled && !isLoading && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-destructive/10 px-4 py-2.5">
           <div className="flex min-w-0 items-start gap-2">
             <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
@@ -64,7 +89,11 @@ export function PosSessionGate({
           </div>
         </div>
       )}
-      {mounted && !dayReconciled && !sessionOpen && !isLoading && (
+      {mounted &&
+        !priorBlocker &&
+        !dayReconciled &&
+        !sessionOpen &&
+        !isLoading && (
         <div
           className={cn(
             "flex flex-wrap items-center justify-between gap-3 border-b px-4 py-2.5",
@@ -79,11 +108,11 @@ export function PosSessionGate({
               )}
             />
             <div className="min-w-0">
-              <p className="text-sm font-semibold">Cash drawer closed</p>
+              <p className="text-sm font-semibold">Open today’s cash drawer</p>
               <p className="text-xs text-muted-foreground">
                 {canSell
                   ? "You can still sell with manager access."
-                  : "Open the drawer before completing sales."}
+                  : "Opening float is taken from yesterday’s reconciled closing — one tap to start the day."}
               </p>
             </div>
           </div>
@@ -97,7 +126,6 @@ export function PosSessionGate({
                 className="h-9 rounded-full"
                 onClick={onSessionOverride}
               >
-                <ShieldCheck className="mr-1.5 size-3.5" />
                 Sell anyway
               </Button>
             )}

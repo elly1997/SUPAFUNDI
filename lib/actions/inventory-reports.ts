@@ -56,6 +56,8 @@ import {
   buildInventoryDecisionInsights,
   type InventoryDecisionInsight,
 } from "@/lib/inventory/inventory-decision-insights";
+import { buildCategoryInvestmentScoreboard } from "@/lib/inventory/category-investment";
+import type { CategoryInvestmentRow } from "@/lib/inventory/category-investment";
 
 export type FastMovingProductRow = {
   productId: string;
@@ -97,6 +99,7 @@ export type InventoryAnalyticsReport = {
   purchaseHints: PurchaseAllocationHint[];
   lowStockCount: number;
   inventoryInsights: InventoryDecisionInsight[];
+  investmentScoreboard: CategoryInvestmentRow[];
   seasonal: SeasonalAnalysis;
   categorySeasonalTrends: CategorySeasonalTrend[];
   seasonalInsights: SeasonalInsight[];
@@ -144,6 +147,7 @@ export async function getInventoryAnalyticsReport(
     purchaseHints: [],
     lowStockCount: 0,
     inventoryInsights: [],
+    investmentScoreboard: [],
     seasonal: {
       hasEnoughData: false,
       lookbackDays: 0,
@@ -454,6 +458,8 @@ export async function getInventoryAnalyticsReport(
     periodLabel: `${from} → ${to}`,
   });
 
+  const investmentScoreboard = buildCategoryInvestmentScoreboard(categoryRows);
+
   const [seasonal, categorySeasonalTrends] = await Promise.all([
     computeSalesSeasonalAnalysis(
       ctx.organizationId,
@@ -494,6 +500,7 @@ export async function getInventoryAnalyticsReport(
     purchaseHints,
     lowStockCount,
     inventoryInsights,
+    investmentScoreboard,
     seasonal,
     categorySeasonalTrends,
     seasonalInsights,

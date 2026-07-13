@@ -7,6 +7,11 @@ import {
   getPreviousReconciledClosing,
   getReconciledDatesInRange,
 } from "@/lib/actions/daily-closing";
+import {
+  assertPriorDayClear,
+  getPriorDayBlocker,
+  type PriorDayBlocker,
+} from "@/lib/server/prior-day-gate";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
@@ -14,6 +19,7 @@ import {
   businessDateFromTimestamptz,
   isoDateToTimestamptz,
   resolveBusinessDate,
+  todayIso,
 } from "@/lib/utils/iso-date";
 
 export type CashSessionRow = {
@@ -41,6 +47,10 @@ export type DrawerStatus = {
   suggestedOpening: number;
   reconciled: boolean;
   reconciledClosing: number | null;
+  /** Blocker when prior day must be closed/reconciled/sent first. */
+  priorDayBlocker: PriorDayBlocker | null;
+  /** East Africa "today" for display. */
+  eatToday: string;
 };
 
 function mapSessionRow(data: {
@@ -98,7 +108,8 @@ export async function getDrawerStatus(
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
 
-  const [session, suggestedOpening, closingResult] = await Promise.all([
+  const [session, suggestedOpening, closingResult, priorDayBlocker] =
+    await Promise.all([
     getOpenCashSession(outletId),
     getPreviousReconciledClosing(
       supabase,
@@ -113,6 +124,7 @@ export async function getDrawerStatus(
       .eq("outlet_id", outletId)
       .eq("business_date", date)
       .maybeSingle(),
+    getPriorDayBlocker(outletId, date),
   ]);
 
   const closing = closingResult.data;
@@ -142,6 +154,8 @@ export async function getDrawerStatus(
     suggestedOpening: roundMoney(suggestedOpening),
     reconciled,
     reconciledClosing,
+    priorDayBlocker,
+    eatToday: todayIso(),
   };
 }
 
@@ -199,6 +213,11 @@ export async function openCashSession(
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
     const businessDate = resolveBusinessDate(input.businessDate);
+
+    const prior = await assertPriorDayClear(input.outletId, businessDate);
+    if (!prior.ok) {
+      return { ok: false, message: prior.message };
+    }
 
     const existing = await getOpenCashSession(input.outletId);
     if (existing) {

@@ -5,7 +5,7 @@ import { Banknote, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -22,11 +22,13 @@ import {
 } from "@/lib/api/cash-session-fetch";
 import {
   buildClosingWhatsAppApi,
+  markClosingReportSentApi,
   reconcileDailyClosingApi,
 } from "@/lib/api/daily-ops-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
+import Link from "next/link";
 
 type Props = {
   outletId: string;
@@ -180,7 +182,7 @@ export function CashSessionBar({
       outletId: string;
       businessDate: string;
     }) => buildClosingWhatsAppApi(oid, date),
-    onSuccess: async (r) => {
+    onSuccess: async (r, vars) => {
       if (!r.ok) {
         toast.error(r.message);
         return;
@@ -195,6 +197,16 @@ export function CashSessionBar({
         } catch {
           toast.message(r.message.slice(0, 120) + "…");
         }
+      }
+      const marked = await markClosingReportSentApi(
+        vars.outletId,
+        vars.businessDate
+      );
+      if (marked.ok) {
+        toast.success("Director report marked as sent");
+        await invalidateDrawer();
+      } else {
+        toast.error(marked.message);
       }
     },
     onError: (e) => {
@@ -280,8 +292,10 @@ export function CashSessionBar({
     }
   };
 
-  const handleOpen = () => {
-    const openingBalance = Number(opening);
+  const handleOpen = (useSuggested = false) => {
+    const openingBalance = useSuggested
+      ? Math.round(drawer?.suggestedOpening ?? 0)
+      : Number(opening);
     if (!Number.isFinite(openingBalance) || openingBalance < 0) {
       toast.error("Enter a valid opening float");
       return;
@@ -290,12 +304,18 @@ export function CashSessionBar({
       toast.error("Select an active outlet first");
       return;
     }
+    if (drawer?.priorDayBlocker) {
+      toast.error(drawer.priorDayBlocker.message);
+      return;
+    }
     openMut.mutate({
       outletId,
       openingBalance,
       businessDate: workingDate,
     });
   };
+
+  const priorBlocker = drawer?.priorDayBlocker ?? null;
 
   const statusPill = (
     <span
@@ -358,15 +378,32 @@ export function CashSessionBar({
       type="button"
       size="sm"
       className="min-h-11 shrink-0 rounded-full px-4"
-      onClick={() => setOpenDialog(true)}
+      onClick={() => {
+        if (priorBlocker) {
+          toast.error(priorBlocker.message);
+          return;
+        }
+        setOpenDialog(true);
+      }}
       disabled={drawer?.reconciled}
     >
-      Open drawer
+      Open day
     </Button>
   );
 
   return (
     <>
+      {priorBlocker && variant === "inline" ? (
+        <Link
+          href={priorBlocker.catchUpHref}
+          className={cn(
+            buttonVariants({ size: "sm", variant: "destructive" }),
+            "min-h-11 shrink-0 rounded-full"
+          )}
+        >
+          Finish {priorBlocker.businessDate}
+        </Link>
+      ) : null}
       {variant === "bar" ? (
         <div className="flex items-center justify-between gap-2 border-b bg-card/80 px-4 py-2.5 backdrop-blur-sm">
           {statusPill}
@@ -382,62 +419,88 @@ export function CashSessionBar({
       <Dialog open={openDialog} onOpenChange={setOpenDialog}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Open cash drawer</DialogTitle>
+            <DialogTitle>Start today’s session</DialogTitle>
             <p className="text-sm text-muted-foreground">
-              Business date:{" "}
+              East Africa date:{" "}
               <span className="font-medium text-foreground">{workingDate}</span>
+              {drawer?.eatToday && drawer.eatToday !== workingDate
+                ? ` (today is ${drawer.eatToday})`
+                : null}
             </p>
           </DialogHeader>
-          <form
-            className="space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleOpen();
-            }}
-          >
-            {drawer ? (
-              <p className="form-hint text-xs">
-                Suggested opening (prior reconciled closing):{" "}
-                <span className="font-money font-semibold text-foreground">
-                  {formatTzs(drawer.suggestedOpening)}
-                </span>
-              </p>
-            ) : null}
-            <div className="space-y-2">
-              <Label htmlFor="opening-float">Opening float (TZS)</Label>
-              <Input
-                id="opening-float"
-                type="number"
-                min={0}
-                step={1}
-                className="h-11 rounded-xl font-money"
-                value={opening}
-                onChange={(e) => setOpening(e.target.value)}
-                autoFocus
-              />
+          {priorBlocker ? (
+            <div className="space-y-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
+              <p>{priorBlocker.message}</p>
+              <Link
+                href={priorBlocker.catchUpHref}
+                className={cn(buttonVariants({ size: "sm" }), "rounded-full")}
+              >
+                Go to Catch-up
+              </Link>
             </div>
-            <DialogFooter>
+          ) : (
+            <form
+              className="space-y-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleOpen(false);
+              }}
+            >
+              <div className="rounded-lg border border-border bg-muted/40 p-3">
+                <p className="text-xs text-muted-foreground">
+                  Opening float (yesterday’s closing)
+                </p>
+                <p className="font-money mt-1 text-2xl font-semibold text-inflow">
+                  {formatTzs(drawer?.suggestedOpening ?? 0)}
+                </p>
+              </div>
               <Button
                 type="button"
-                variant="outline"
-                className="h-11 rounded-xl"
-                onClick={() => setOpenDialog(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                className="h-11 flex-1 rounded-xl"
-                disabled={openMut.isPending || !outletId}
+                className="h-11 w-full rounded-xl"
+                disabled={openMut.isPending}
+                onClick={() => handleOpen(true)}
               >
                 {openMut.isPending ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
-                  "Open drawer"
+                  "Open with this float"
                 )}
               </Button>
-            </DialogFooter>
-          </form>
+              <div className="space-y-2">
+                <Label htmlFor="opening-float">Or adjust (TZS)</Label>
+                <Input
+                  id="opening-float"
+                  type="number"
+                  min={0}
+                  step={1}
+                  className="h-11 rounded-xl font-money"
+                  value={opening}
+                  onChange={(e) => setOpening(e.target.value)}
+                />
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11 rounded-xl"
+                  onClick={() => setOpenDialog(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  className="h-11 flex-1 rounded-xl"
+                  disabled={openMut.isPending || !outletId}
+                >
+                  {openMut.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    "Open with adjusted float"
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
 

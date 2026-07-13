@@ -37,6 +37,8 @@ export type CatchUpDayRow = {
   sessionExpected: number | null;
   sessionClosing: number | null;
   sessionVariance: number | null;
+  /** Director closing report marked sent. */
+  reportSent: boolean;
 };
 
 function dateKey(isoOrTs: string): string {
@@ -85,7 +87,9 @@ export async function listCatchUpDays(
       .lte("sale_date", `${toDate}T23:59:59.999Z`),
     supabase
       .from("daily_closings")
-      .select("business_date, status, closing_balance, expected_cash, opening_balance")
+      .select(
+        "business_date, status, closing_balance, expected_cash, opening_balance, report_sent_at"
+      )
       .eq("organization_id", ctx.organizationId)
       .eq("outlet_id", outletId)
       .gte("business_date", fromDate)
@@ -202,6 +206,7 @@ export async function listCatchUpDays(
         : null,
       sessionVariance:
         session?.variance != null ? Number(session.variance) : null,
+      reportSent: !!closing?.report_sent_at,
     };
     })
   );

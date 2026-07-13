@@ -9,6 +9,7 @@ import { CostRetailInsightsPanel } from "@/components/reports/cost-retail-insigh
 import { BundleInsightsPanel } from "@/components/reports/bundle-insights-panel";
 import { SeasonalInsightsPanel } from "@/components/reports/seasonal-insights-panel";
 import { InventoryInsightsPanel } from "@/components/reports/inventory-insights-panel";
+import { CategoryInvestmentPanel } from "@/components/reports/category-investment-panel";
 import { fetchPricingInsights } from "@/lib/api/pricing-insights-fetch";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -287,6 +288,7 @@ export function InventoryReportPanel({ enabled = true }: InventoryReportPanelPro
 
           <CostRetailInsightsPanel analysis={data.costRetailMargin} />
 
+          <CategoryInvestmentPanel rows={data.investmentScoreboard} />
           <InventoryInsightsPanel insights={data.inventoryInsights} />
 
           <div className="grid gap-4 lg:grid-cols-3">

@@ -29,12 +29,14 @@ import {
 } from "@/components/ui/table";
 import type { CatchUpDayRow, CatchUpDayStatus } from "@/lib/actions/catch-up";
 import { CashSessionBar } from "@/components/pos/cash-session-bar";
+import { CatchUpCloseAndNotify } from "@/components/inventory/catch-up-close-and-notify";
 import { fetchCatchUpDays } from "@/lib/api/catch-up-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { parseIsoDate, todayIso } from "@/lib/utils/iso-date";
 import { useAuthStore } from "@/stores/authStore";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
+import { useSearchParams } from "next/navigation";
 
 const OPENING_IMPORT_DATE = "2026-05-11";
 
@@ -81,6 +83,8 @@ export function HistoricalCatchUpClient() {
   const outletId = useAuthStore((s) => s.activeOutletId);
   const setBusinessDate = useBusinessDateStore((s) => s.setBusinessDate);
   const businessDate = useBusinessDateStore((s) => s.businessDate);
+  const searchParams = useSearchParams();
+  const dateFromUrl = searchParams.get("date");
 
   const defaultFrom = format(
     subDays(parseIsoDate(OPENING_IMPORT_DATE), -1),
@@ -90,7 +94,9 @@ export function HistoricalCatchUpClient() {
   const [toDate, setToDate] = useState(() =>
     format(subDays(parseIsoDate(todayIso()), 1), "yyyy-MM-dd")
   );
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(
+    dateFromUrl
+  );
   const [zNotes, setZNotes] = useState<ZNotes>({});
 
   const { data: days = [], isLoading, refetch, isFetching } = useQuery({
@@ -103,6 +109,14 @@ export function HistoricalCatchUpClient() {
     () => days.find((d) => d.businessDate === selectedDate) ?? null,
     [days, selectedDate]
   );
+
+  useEffect(() => {
+    if (!dateFromUrl) return;
+    setSelectedDate(dateFromUrl);
+    setBusinessDate(dateFromUrl);
+    if (dateFromUrl < fromDate) setFromDate(dateFromUrl);
+    if (dateFromUrl > toDate) setToDate(dateFromUrl);
+  }, [dateFromUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!outletId || !selectedDate) return;
@@ -322,6 +336,11 @@ export function HistoricalCatchUpClient() {
                   label="Daily reconcile"
                   href="/daily-closing"
                 />
+                <CatchUpStep
+                  done={selected.reportSent}
+                  label="Send director report"
+                  href="/inventory/catch-up"
+                />
 
                 <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
                   <p className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
@@ -359,6 +378,10 @@ export function HistoricalCatchUpClient() {
                     <CashSessionBar outletId={outletId} variant="inline" />
                   ) : null}
                 </div>
+
+                {outletId ? (
+                  <CatchUpCloseAndNotify outletId={outletId} day={selected} />
+                ) : null}
 
                 <div className="space-y-2 border-t border-border pt-4">
                   <p className="text-xs font-semibold uppercase text-muted-foreground">

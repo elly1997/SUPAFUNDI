@@ -492,7 +492,7 @@ export async function backfillMissingGlJournals(
     const expenses = await fetchAllPaginated<{
       id: string;
       outlet_id: string | null;
-      category: string;
+      category: string | null;
       description: string | null;
       amount: number;
       payment_method: string | null;
@@ -540,7 +540,10 @@ export async function backfillMissingGlJournals(
       description: string | null;
       customer_id: string;
     }>(async (from, to) => {
-      let q = supabase
+      const ledger = supabase as unknown as {
+        from: (t: string) => ReturnType<typeof supabase.from>;
+      };
+      let q = ledger
         .from("credit_ledger")
         .select("id, credit, entry_date, description, customer_id")
         .eq("organization_id", ctx.organizationId)
@@ -550,7 +553,16 @@ export async function backfillMissingGlJournals(
         .range(from, to);
       if (fromDate) q = q.gte("entry_date", fromDate);
       if (toDate) q = q.lte("entry_date", toDate);
-      return q;
+      return q as Promise<{
+        data: {
+          id: string;
+          credit: number;
+          entry_date: string | null;
+          description: string | null;
+          customer_id: string;
+        }[] | null;
+        error: { message: string } | null;
+      }>;
     });
 
     const deposits = await fetchAllPaginated<{
@@ -697,7 +709,9 @@ export async function backfillMissingGlJournals(
         continue;
       }
       try {
-        const accountCode = await resolveExpenseAccountCode(expense.category);
+        const accountCode = await resolveExpenseAccountCode(
+          expense.category ?? "general"
+        );
         const paymentMethod =
           expense.payment_method === "mpesa" ||
           expense.payment_method === "bank_transfer" ||

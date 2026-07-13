@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { HistoricalCatchUpClient } from "@/components/inventory/historical-catch-up-client";
 import { PageHeader } from "@/components/ui/page-header";
 import Link from "next/link";
@@ -8,15 +9,15 @@ export default function HistoricalCatchUpPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Historical catch-up"
-        description="Backfill purchases and sales by business date after your opening stock import. Work day by day using delivery notes and Z-reports — no full recount required if every transaction is entered."
+        title="Catch-up & day close"
+        description="Finish a prior business day here before a new East Africa day can open on POS: close the drawer, reconcile, and send the director report on this page."
         actions={
           <>
             <Link
-              href="/inventory/stock"
+              href="/daily-closing"
               className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
             >
-              Stock
+              Daily closing
             </Link>
             <Link href="/pos" className={cn(buttonVariants({ size: "sm" }))}>
               POS
@@ -24,7 +25,11 @@ export default function HistoricalCatchUpPage() {
           </>
         }
       />
-      <HistoricalCatchUpClient />
+      <Suspense
+        fallback={<p className="text-sm text-muted-foreground">Loading…</p>}
+      >
+        <HistoricalCatchUpClient />
+      </Suspense>
     </div>
   );
 }

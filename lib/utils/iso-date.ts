@@ -1,3 +1,6 @@
+/** Business calendar for Tanzania / East Africa (UTC+3). */
+export const BUSINESS_TZ = "Africa/Nairobi";
+
 /** Parse YYYY-MM-DD as local noon to avoid timezone drift. */
 export function parseIsoDate(iso: string): Date {
   const [y, m, d] = iso.split("-").map(Number);
@@ -11,8 +14,21 @@ export function toIsoDate(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+/** Today's business date in East Africa Time (always YYYY-MM-DD). */
 export function todayIso(): string {
-  return toIsoDate(new Date());
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUSINESS_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+/** Add (or subtract) whole calendar days from a YYYY-MM-DD string. */
+export function addDaysIso(iso: string, days: number): string {
+  const d = parseIsoDate(iso);
+  d.setDate(d.getDate() + days);
+  return toIsoDate(d);
 }
 
 /** UTC noon on a business date — use for sale_date, movement created_at, etc. */

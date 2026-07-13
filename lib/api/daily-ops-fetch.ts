@@ -83,6 +83,19 @@ export async function buildClosingWhatsAppApi(
   return res.json();
 }
 
+export async function markClosingReportSentApi(
+  outletId: string,
+  businessDate: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await fetch("/api/daily-closing/mark-report-sent", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ outletId, businessDate }),
+  });
+  return res.json();
+}
+
 /** POS sale */
 export async function completeSaleApi(
   payload: CompleteSaleInput
