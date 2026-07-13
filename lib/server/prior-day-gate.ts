@@ -6,11 +6,6 @@ import {
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { addDaysIso } from "@/lib/utils/iso-date";
 
-export {
-  PRIOR_DAY_GATE_EFFECTIVE_FROM,
-  type PriorDayBlocker,
-} from "@/lib/server/prior-day-gate-config";
-
 function catchUpHref(date: string): string {
   return `/inventory/catch-up?date=${encodeURIComponent(date)}`;
 }

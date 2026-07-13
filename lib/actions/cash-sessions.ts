@@ -10,8 +10,8 @@ import {
 import {
   assertPriorDayClear,
   getPriorDayBlocker,
-  type PriorDayBlocker,
 } from "@/lib/server/prior-day-gate";
+import type { PriorDayBlocker } from "@/lib/server/prior-day-gate-config";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
