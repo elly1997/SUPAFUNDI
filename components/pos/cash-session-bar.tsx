@@ -157,7 +157,7 @@ export function CashSessionBar({
 
   const reconcileMut = useMutation({
     mutationFn: reconcileDailyClosingApi,
-    onSuccess: async (r) => {
+    onSuccess: async (r, vars) => {
       if (r.ok) {
         toast.success("Day locked — reports updated");
         await invalidateDrawer();
@@ -165,6 +165,11 @@ export function CashSessionBar({
           queryKey: ["reconciled-business-dates"],
         });
         setEodStep("done");
+        // Open WhatsApp with the closing report pre-typed for the director.
+        whatsappMut.mutate({
+          outletId: vars.outletId,
+          businessDate: vars.businessDate,
+        });
       } else {
         toast.error(r.message);
       }
@@ -285,6 +290,11 @@ export function CashSessionBar({
       });
       setEodStep("done");
       toast.success("Drawer closed and day locked");
+      // Open WhatsApp with the closing report pre-typed for the director.
+      whatsappMut.mutate({
+        outletId,
+        businessDate: closed.businessDate,
+      });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "End of day failed");
     } finally {

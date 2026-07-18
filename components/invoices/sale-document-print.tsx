@@ -2,6 +2,7 @@
 
 import { saleTypeLabel } from "@/lib/constants/sale-documents";
 import { formatTzs } from "@/lib/utils/currency";
+import { buildWhatsAppUrl } from "@/lib/utils/whatsapp";
 import {
   buildSaleDocumentWhatsAppMessage,
   type SaleDocumentPrintData,
@@ -209,10 +210,7 @@ export function shareSaleDocumentWhatsApp(
   phone?: string | null
 ): boolean {
   const text = buildSaleDocumentWhatsAppMessage(data);
-  const digits = phone?.replace(/\D/g, "") ?? "";
-  const url = digits
-    ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}`
-    : `https://wa.me/?text=${encodeURIComponent(text)}`;
+  const url = buildWhatsAppUrl(phone, text);
   window.open(url, "_blank", "noopener,noreferrer");
   return true;
 }

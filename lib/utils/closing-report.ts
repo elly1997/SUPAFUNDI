@@ -1,5 +1,6 @@
 import { format } from "date-fns";
 import { formatTzs } from "@/lib/utils/currency";
+import { buildWhatsAppUrl } from "@/lib/utils/whatsapp";
 
 export type ClosingReportData = {
   outletName: string;
@@ -63,6 +64,5 @@ export function formatClosingReportText(data: ClosingReportData): string {
 
 /** Opens WhatsApp with pre-filled message (no API key required). */
 export function buildWhatsAppShareUrl(phoneE164: string, message: string): string {
-  const digits = phoneE164.replace(/\D/g, "");
-  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
+  return buildWhatsAppUrl(phoneE164, message);
 }
