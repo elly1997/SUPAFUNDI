@@ -107,6 +107,7 @@ export function PosCashflowPanel({
   const dayDeposits = bankTransactions.filter(
     (t) =>
       t.transaction_type === "deposit" &&
+      !t.reversed_at &&
       t.transaction_date === businessDate &&
       (t.outlet_id === outletId || t.outlet_id == null) &&
       (t.description?.startsWith("Cash drawer deposit") ?? false)

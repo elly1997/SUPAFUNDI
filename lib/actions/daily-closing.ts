@@ -206,6 +206,7 @@ export async function computeDayCashSummary(
     .eq("outlet_id", outletId)
     .eq("transaction_type", "deposit")
     .eq("transaction_date", businessDate)
+    .is("reversed_at", null)
     .ilike("description", "Cash drawer deposit%");
   for (const d of drawerDeposits ?? []) {
     bankDeposits += Number(d.amount);

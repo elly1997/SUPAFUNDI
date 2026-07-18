@@ -1,7 +1,15 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Landmark, Loader2, Plus, ShieldCheck, Smartphone, Wallet } from "lucide-react";
+import {
+  Landmark,
+  Loader2,
+  Plus,
+  ShieldCheck,
+  Smartphone,
+  Undo2,
+  Wallet,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -39,7 +47,9 @@ import {
 import {
   fetchBankTransactions,
   fetchPaymentAccounts,
+  reverseBankTransactionApi,
 } from "@/lib/api/banking-fetch";
+import type { BankTransactionRow } from "@/lib/actions/banking";
 import {
   createPaymentAccount,
   recordBankTransaction,
@@ -72,9 +82,13 @@ export function BankingPageClient() {
   const [txnAmount, setTxnAmount] = useState("");
   const [txnDesc, setTxnDesc] = useState("");
   const [adjustOpen, setAdjustOpen] = useState(false);
+  const [reverseTarget, setReverseTarget] = useState<BankTransactionRow | null>(
+    null
+  );
 
   const role = useAuthStore((s) => s.session?.role ?? null);
   const canAdjustBalance = canManageSettings(role);
+  const canReverse = canManageSettings(role);
 
   const {
     data: accounts = [],
@@ -177,6 +191,31 @@ export function BankingPageClient() {
       } else toast.error(r.message);
     },
   });
+
+  const reverseMut = useMutation({
+    mutationFn: (transactionId: string) =>
+      reverseBankTransactionApi(transactionId),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Transaction reversed");
+        setReverseTarget(null);
+        void queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
+        void queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
+        void queryClient.invalidateQueries({ queryKey: ["pos-bank-deposits"] });
+        void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
+        void queryClient.invalidateQueries({ queryKey: ["drawer-status"] });
+      } else toast.error(r.message);
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Reversal failed");
+    },
+  });
+
+  const isReversible = (t: BankTransactionRow) =>
+    canReverse &&
+    !t.reversed_at &&
+    !t.reversal_of &&
+    (t.transaction_type === "deposit" || t.transaction_type === "withdrawal");
 
   const typeHint = PAYMENT_ACCOUNT_TYPES.find((t) => t.value === accountType)?.hint;
 
@@ -377,6 +416,15 @@ export function BankingPageClient() {
                       <p className="font-medium">{t.account_name}</p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         {t.transaction_date ?? t.created_at.slice(0, 10)} · {t.transaction_type}
+                        {t.reversed_at ? (
+                          <span className="ml-1.5 rounded-full bg-destructive/15 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">
+                            Reversed
+                          </span>
+                        ) : t.reversal_of ? (
+                          <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                            Reversal
+                          </span>
+                        ) : null}
                       </p>
                       <p className="mt-1 truncate text-sm text-muted-foreground">
                         {t.description ?? t.reference_no ?? "No reference"}
@@ -385,27 +433,42 @@ export function BankingPageClient() {
                     <p
                       className={cn(
                         "shrink-0 font-money font-semibold",
-                        t.transaction_type === "withdrawal" && "text-outflow"
+                        t.transaction_type === "withdrawal" && "text-outflow",
+                        t.reversed_at && "line-through opacity-60"
                       )}
                     >
                       {t.transaction_type === "withdrawal" ? "−" : "+"}
                       {formatTzs(t.amount)}
                     </p>
                   </div>
-                  <label className="mt-3 flex min-h-11 items-center gap-3 rounded-lg bg-muted/40 px-3 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={t.is_reconciled}
-                      onChange={(e) =>
-                        reconcileMut.mutate({
-                          id: t.id,
-                          reconciled: e.target.checked,
-                        })
-                      }
-                      className="size-5"
-                    />
-                    Reconciled
-                  </label>
+                  <div className="mt-3 flex items-center gap-2">
+                    <label className="flex min-h-11 flex-1 items-center gap-3 rounded-lg bg-muted/40 px-3 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={t.is_reconciled}
+                        onChange={(e) =>
+                          reconcileMut.mutate({
+                            id: t.id,
+                            reconciled: e.target.checked,
+                          })
+                        }
+                        className="size-5"
+                      />
+                      Reconciled
+                    </label>
+                    {isReversible(t) && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="min-h-11 shrink-0 text-destructive"
+                        onClick={() => setReverseTarget(t)}
+                      >
+                        <Undo2 className="mr-1.5 size-4" />
+                        Reverse
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -419,6 +482,7 @@ export function BankingPageClient() {
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead>Reference</TableHead>
                   <TableHead>Reconciled</TableHead>
+                  <TableHead className="w-10" aria-label="Actions" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -428,11 +492,23 @@ export function BankingPageClient() {
                         {t.transaction_date ?? t.created_at.slice(0, 10)}
                       </TableCell>
                       <TableCell>{t.account_name}</TableCell>
-                      <TableCell className="capitalize">{t.transaction_type}</TableCell>
+                      <TableCell className="capitalize">
+                        {t.transaction_type}
+                        {t.reversed_at ? (
+                          <span className="ml-1.5 rounded-full bg-destructive/15 px-1.5 py-0.5 text-[10px] font-semibold normal-case text-destructive">
+                            Reversed
+                          </span>
+                        ) : t.reversal_of ? (
+                          <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold normal-case text-muted-foreground">
+                            Reversal
+                          </span>
+                        ) : null}
+                      </TableCell>
                       <TableCell
                         className={cn(
                           "text-right font-money",
-                          t.transaction_type === "withdrawal" && "text-outflow"
+                          t.transaction_type === "withdrawal" && "text-outflow",
+                          t.reversed_at && "line-through opacity-60"
                         )}
                       >
                         {t.transaction_type === "withdrawal" ? "−" : "+"}
@@ -454,6 +530,21 @@ export function BankingPageClient() {
                           }
                           className="size-5"
                         />
+                      </TableCell>
+                      <TableCell>
+                        {isReversible(t) && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-8 text-destructive hover:text-destructive"
+                            title="Reverse this transaction"
+                            aria-label={`Reverse ${t.transaction_type} of ${formatTzs(t.amount)} on ${t.account_name}`}
+                            onClick={() => setReverseTarget(t)}
+                          >
+                            <Undo2 className="size-4" />
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -644,6 +735,82 @@ export function BankingPageClient() {
           void queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
         }}
       />
+
+      <Dialog
+        open={!!reverseTarget}
+        onOpenChange={(open) => {
+          if (!open) setReverseTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reverse transaction</DialogTitle>
+          </DialogHeader>
+          {reverseTarget && (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm">
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Account</span>
+                  <span className="font-medium">{reverseTarget.account_name}</span>
+                </div>
+                <div className="mt-1 flex justify-between gap-2">
+                  <span className="text-muted-foreground">Type</span>
+                  <span className="font-medium capitalize">
+                    {reverseTarget.transaction_type}
+                  </span>
+                </div>
+                <div className="mt-1 flex justify-between gap-2">
+                  <span className="text-muted-foreground">Amount</span>
+                  <span className="font-money font-semibold">
+                    {formatTzs(reverseTarget.amount)}
+                  </span>
+                </div>
+                <div className="mt-1 flex justify-between gap-2">
+                  <span className="text-muted-foreground">Date</span>
+                  <span className="font-medium">
+                    {reverseTarget.transaction_date ??
+                      reverseTarget.created_at.slice(0, 10)}
+                  </span>
+                </div>
+                {reverseTarget.description ? (
+                  <p className="mt-2 border-t border-border/60 pt-2 text-xs text-muted-foreground">
+                    {reverseTarget.description}
+                  </p>
+                ) : null}
+              </div>
+              <p className="form-hint text-xs">
+                A counter-entry will be posted for the same amount and the
+                account balance restored. Cash drawer deposits also update the
+                day&apos;s expected drawer cash — this only works while the day
+                is not yet reconciled.
+              </p>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setReverseTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={reverseMut.isPending}
+              onClick={() => {
+                if (reverseTarget) reverseMut.mutate(reverseTarget.id);
+              }}
+            >
+              {reverseMut.isPending ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                "Reverse transaction"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

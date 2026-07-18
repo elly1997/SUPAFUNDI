@@ -99,6 +99,30 @@ export async function fetchCashDepositAccounts(): Promise<PaymentAccountRow[]> {
   return body.accounts ?? [];
 }
 
+export async function reverseBankTransactionApi(
+  transactionId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await fetch("/api/finance/banking/reverse-transaction", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transactionId }),
+  });
+  const body = (await res.json()) as
+    | { ok: true }
+    | { ok: false; message?: string };
+  if (!res.ok || !body.ok) {
+    return {
+      ok: false,
+      message:
+        body.ok === false
+          ? body.message ?? "Reversal failed"
+          : "Reversal failed",
+    };
+  }
+  return { ok: true };
+}
+
 export async function adjustAccountBalanceApi(params: {
   bankAccountId: string;
   newBalance: number;

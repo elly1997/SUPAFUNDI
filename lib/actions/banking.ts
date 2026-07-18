@@ -9,6 +9,7 @@ import {
 import { buildCashToBankJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { CASH_DRAWER_DEPOSIT_PREFIX } from "@/lib/constants/cash-deposit";
+import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { verifyManagerPassword } from "@/lib/auth/verify-manager-password";
@@ -53,6 +54,10 @@ export type BankTransactionRow = {
   transaction_date: string | null;
   outlet_id: string | null;
   created_at: string;
+  /** Set when this transaction has been reversed by a counter-entry. */
+  reversed_at: string | null;
+  /** Set when this row is itself the counter-entry for another transaction. */
+  reversal_of: string | null;
 };
 
 /** Build a JSON-safe plain object (Supabase rows can have non-serializable prototypes). */
@@ -188,7 +193,7 @@ export async function listBankTransactions(
   let q = bankDb(supabase)
     .from("bank_transactions")
     .select(
-      "id, bank_account_id, outlet_id, transaction_type, amount, reference_no, description, is_reconciled, transaction_date, created_at"
+      "id, bank_account_id, outlet_id, transaction_type, amount, reference_no, description, is_reconciled, transaction_date, created_at, reversed_at, reversal_of"
     )
     .eq("organization_id", ctx.organizationId)
     .order("created_at", { ascending: false })
@@ -209,6 +214,8 @@ export async function listBankTransactions(
     is_reconciled: boolean;
     transaction_date: string | null;
     created_at: string;
+    reversed_at?: string | null;
+    reversal_of?: string | null;
   }) => {
     const accId =
       r.bank_account_id != null ? String(r.bank_account_id) : null;
@@ -225,6 +232,8 @@ export async function listBankTransactions(
         r.transaction_date != null ? String(r.transaction_date) : null,
       outlet_id: r.outlet_id != null ? String(r.outlet_id) : null,
       created_at: String(r.created_at ?? ""),
+      reversed_at: r.reversed_at != null ? String(r.reversed_at) : null,
+      reversal_of: r.reversal_of != null ? String(r.reversal_of) : null,
     };
   });
 }
@@ -572,6 +581,178 @@ export async function toggleBankTransactionReconciled(
   if (error) return { ok: false, message: error.message };
   revalidatePath("/finance/banking");
   return { ok: true };
+}
+
+/**
+ * Reverse a mistaken deposit or withdrawal (owner/manager).
+ * Posts a linked counter-entry, restores the account balance, and for cash
+ * drawer deposits also mirrors the GL entry so daily closing stays correct.
+ */
+export async function reverseBankTransaction(
+  transactionId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const { organizationId, userId } = await requireManagerContext();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: txn } = await bankDb(supabase)
+      .from("bank_transactions")
+      .select(
+        "id, bank_account_id, outlet_id, transaction_type, amount, reference_no, description, transaction_date, reversed_at, reversal_of"
+      )
+      .eq("id", transactionId)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (!txn) return { ok: false, message: "Transaction not found." };
+    if (txn.reversed_at) {
+      return { ok: false, message: "This transaction is already reversed." };
+    }
+    if (txn.reversal_of) {
+      return {
+        ok: false,
+        message: "This entry is itself a reversal and cannot be reversed.",
+      };
+    }
+    const type = String(txn.transaction_type);
+    if (type !== "deposit" && type !== "withdrawal") {
+      return {
+        ok: false,
+        message: "Only deposits and withdrawals can be reversed.",
+      };
+    }
+    if (!txn.bank_account_id) {
+      return { ok: false, message: "Transaction has no account." };
+    }
+
+    const description = String(txn.description ?? "");
+    const isDrawerDeposit =
+      type === "deposit" &&
+      description.startsWith(CASH_DRAWER_DEPOSIT_PREFIX);
+    const txnDate = txn.transaction_date
+      ? String(txn.transaction_date)
+      : new Date().toISOString().slice(0, 10);
+
+    if (isDrawerDeposit) {
+      // Drawer deposits change expected drawer cash — block on reconciled days.
+      const dayCheck = await checkBusinessDayMutable(
+        txn.outlet_id ? String(txn.outlet_id) : null,
+        txnDate
+      );
+      if (!dayCheck.ok) return dayCheck;
+    }
+
+    const { data: account } = await bankDb(supabase)
+      .from("bank_accounts")
+      .select("id, name, current_balance")
+      .eq("id", txn.bank_account_id)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (!account) return { ok: false, message: "Account not found." };
+
+    const amount = roundMoney(Number(txn.amount));
+    const previousBalance = roundMoney(Number(account.current_balance));
+    const newBalance = roundMoney(
+      previousBalance + (type === "deposit" ? -amount : amount)
+    );
+
+    const { data: reversal, error: revErr } = await bankDb(supabase)
+      .from("bank_transactions")
+      .insert({
+        organization_id: organizationId,
+        bank_account_id: txn.bank_account_id,
+        outlet_id: txn.outlet_id ?? null,
+        transaction_type: type === "deposit" ? "withdrawal" : "deposit",
+        amount,
+        reference_no: `REV-${txn.reference_no ?? String(txn.id).slice(0, 8)}`,
+        description: `Reversal: ${description || type}`,
+        transaction_date: txnDate,
+        created_by: userId,
+        is_reconciled: true,
+        reversal_of: txn.id,
+      })
+      .select("id")
+      .single();
+    if (revErr || !reversal) {
+      return {
+        ok: false,
+        message: revErr?.message ?? "Could not record reversal.",
+      };
+    }
+
+    const { error: markErr } = await bankDb(supabase)
+      .from("bank_transactions")
+      .update({
+        reversed_at: new Date().toISOString(),
+        reversed_by: userId,
+      })
+      .eq("id", txn.id);
+    if (markErr) {
+      await bankDb(supabase)
+        .from("bank_transactions")
+        .delete()
+        .eq("id", reversal.id);
+      return { ok: false, message: markErr.message };
+    }
+
+    const { error: balErr } = await bankDb(supabase)
+      .from("bank_accounts")
+      .update({ current_balance: newBalance })
+      .eq("id", txn.bank_account_id);
+    if (balErr) {
+      await bankDb(supabase)
+        .from("bank_transactions")
+        .update({ reversed_at: null, reversed_by: null })
+        .eq("id", txn.id);
+      await bankDb(supabase)
+        .from("bank_transactions")
+        .delete()
+        .eq("id", reversal.id);
+      return { ok: false, message: balErr.message };
+    }
+
+    if (isDrawerDeposit) {
+      // Original posted Dr Bank / Cr Cash — post the mirror entry.
+      const lines = buildCashToBankJournalLines(amount).map((l) => ({
+        accountCode: l.accountCode,
+        debit: l.credit,
+        credit: l.debit,
+        memo: `Reversal — ${l.memo ?? ""}`.trim(),
+      }));
+      const journal = await postJournalEntry({
+        description: `Reversal of ${description} → ${account.name}`,
+        sourceType: "transfer",
+        sourceId: reversal.id,
+        outletId: txn.outlet_id ? String(txn.outlet_id) : undefined,
+        entryDate: txnDate,
+        lines,
+      });
+      if (!journal.ok) {
+        await bankDb(supabase)
+          .from("bank_accounts")
+          .update({ current_balance: previousBalance })
+          .eq("id", txn.bank_account_id);
+        await bankDb(supabase)
+          .from("bank_transactions")
+          .update({ reversed_at: null, reversed_by: null })
+          .eq("id", txn.id);
+        await bankDb(supabase)
+          .from("bank_transactions")
+          .delete()
+          .eq("id", reversal.id);
+        return { ok: false, message: journal.message };
+      }
+    }
+
+    revalidatePath("/finance/banking");
+    revalidatePath("/pos");
+    revalidatePath("/daily-closing");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Reversal failed",
+    };
+  }
 }
 
 const adjustBalanceInput = z.object({
