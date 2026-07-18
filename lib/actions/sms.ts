@@ -539,3 +539,48 @@ export async function previewCreditReminderSms(
     };
   }
 }
+
+const testSmsSchema = z.object({
+  phone: z.string().min(9).max(20),
+});
+
+/** Verify Africa's Talking credentials by sending a test message. */
+export async function sendTestSms(
+  raw: z.infer<typeof testSmsSchema>
+): Promise<{ ok: true; messageId: string } | { ok: false; message: string }> {
+  try {
+    const input = testSmsSchema.parse(raw);
+    await requireSmsSender();
+    if (!isSmsConfigured()) {
+      return {
+        ok: false,
+        message:
+          "SMS provider not configured. Add AT_API_KEY and AT_USERNAME to server environment.",
+      };
+    }
+
+    const phone = normalizeTzPhone(input.phone);
+    if (!phone) {
+      return {
+        ok: false,
+        message:
+          "Invalid Tanzania mobile number. Use 07XXXXXXXX or +2557XXXXXXXX.",
+      };
+    }
+
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const shop = await loadShopContext(supabase, ctx.organizationId);
+    const body = `${shop.shopName}: SMS test OK. Your Africa's Talking connection is working.`;
+
+    const result = await sendViaAfricasTalking({ to: phone, message: body });
+    if (!result.ok) return { ok: false, message: result.message };
+
+    return { ok: true, messageId: result.messageId };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Test SMS failed",
+    };
+  }
+}

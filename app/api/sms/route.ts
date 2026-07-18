@@ -6,6 +6,7 @@ import {
   sendBulkCreditReminders,
   sendCustomerCreditReminder,
   sendMarketingSms,
+  sendTestSms,
   updateSmsSettings,
 } from "@/lib/actions/sms";
 import { requireOrgContext } from "@/lib/server/org-context";
@@ -71,6 +72,10 @@ const sendMarketingSchema = z.object({
   customerIds: z.array(z.string().uuid()).min(1),
 });
 
+const testSmsSchema = z.object({
+  phone: z.string().min(9).max(20),
+});
+
 export async function POST(request: Request) {
   try {
     await requireOrgContext();
@@ -99,6 +104,15 @@ export async function POST(request: Request) {
     if (action === "marketing") {
       const body = sendMarketingSchema.parse(json);
       const result = await sendMarketingSms(body);
+      if (!result.ok) {
+        return NextResponse.json({ error: result.message }, { status: 400 });
+      }
+      return NextResponse.json(result);
+    }
+
+    if (action === "test") {
+      const body = testSmsSchema.parse(json);
+      const result = await sendTestSms(body);
       if (!result.ok) {
         return NextResponse.json({ error: result.message }, { status: 400 });
       }

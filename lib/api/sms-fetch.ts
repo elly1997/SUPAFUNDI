@@ -135,3 +135,23 @@ export async function sendMarketingSmsApi(input: {
     errors: body.errors ?? [],
   };
 }
+
+export async function sendTestSmsApi(
+  phone: string
+): Promise<{ ok: true; messageId: string } | { ok: false; message: string }> {
+  const res = await fetch("/api/sms?action=test", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone }),
+  });
+  const body = (await res.json()) as {
+    ok?: boolean;
+    error?: string;
+    messageId?: string;
+  };
+  if (!res.ok || body.error) {
+    return { ok: false, message: body.error ?? "Test SMS failed" };
+  }
+  return { ok: true, messageId: body.messageId ?? "" };
+}

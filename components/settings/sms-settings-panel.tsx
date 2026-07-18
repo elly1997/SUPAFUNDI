@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   fetchSmsSettings,
+  sendTestSmsApi,
   updateSmsSettingsApi,
 } from "@/lib/api/sms-fetch";
 
@@ -27,6 +28,7 @@ export function SmsSettingsPanel() {
     reminderCooldownDays: 7,
     marketingEnabled: false,
   });
+  const [testPhone, setTestPhone] = useState("");
 
   useEffect(() => {
     if (!data) return;
@@ -45,6 +47,14 @@ export function SmsSettingsPanel() {
         toast.success("SMS settings saved");
         void queryClient.invalidateQueries({ queryKey: ["sms-settings"] });
       } else toast.error(r.message);
+    },
+  });
+
+  const testMut = useMutation({
+    mutationFn: () => sendTestSmsApi(testPhone.trim()),
+    onSuccess: (r) => {
+      if (r.ok) toast.success("Test SMS sent — check the phone.");
+      else toast.error(r.message);
     },
   });
 
@@ -83,7 +93,37 @@ export function SmsSettingsPanel() {
         >
           {data?.configured
             ? "Provider configured — SMS can be sent from Customers."
-            : "Provider not configured — add AT_API_KEY and AT_USERNAME on the server (Netlify env). Use AT_SANDBOX=true for testing."}
+            : "Provider not configured — add AT_API_KEY and AT_USERNAME to .env.local (dev) or Netlify env (production). Use AT_SANDBOX=true while testing."}
+        </div>
+
+        <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-4">
+          <Label htmlFor="sms-test-phone">Test connection</Label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              id="sms-test-phone"
+              type="tel"
+              placeholder="07XXXXXXXX"
+              value={testPhone}
+              onChange={(e) => setTestPhone(e.target.value)}
+              className="sm:flex-1"
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-11 shrink-0"
+              disabled={!data?.configured || !testPhone.trim() || testMut.isPending}
+              onClick={() => testMut.mutate()}
+            >
+              {testMut.isPending ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : null}
+              Send test SMS
+            </Button>
+          </div>
+          <p className="form-hint">
+            Sends a one-line test to verify your Africa&apos;s Talking API key
+            and sender ID. Tanzania mobile numbers only.
+          </p>
         </div>
 
         <div className="space-y-2">
