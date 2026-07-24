@@ -6,7 +6,7 @@ import { PosPricingToggle } from "@/components/pos/pos-pricing-toggle";
 import { PosSyncStatus } from "@/components/pos/pos-sync-status";
 import type { PosPricingMode } from "@/hooks/usePosProducts";
 
-export type PosOutletOption = { id: string; name: string };
+export type PosOutletOption = { id: string; name: string; is_active?: boolean };
 
 type Props = {
   outlets: PosOutletOption[];

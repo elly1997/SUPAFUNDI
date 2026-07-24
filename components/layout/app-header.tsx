@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useTransition } from "react";
-import { LogOut, Menu, Search, User } from "lucide-react";
+import { KeyRound, LogOut, Menu, Search, User } from "lucide-react";
 import { toast } from "sonner";
 import { performSignOut } from "@/lib/auth/sign-out-client";
 import { updateActiveOutlet } from "@/lib/actions/auth";
+import { redeemOutletAccessOtp } from "@/lib/actions/outlet-access";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui/button";
@@ -16,9 +17,11 @@ import { filterNavForRole } from "@/components/layout/nav-config";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { useState } from "react";
 
 type OutletOption = {
@@ -37,6 +40,9 @@ export function AppHeader({ outlets }: AppHeaderProps) {
   const pathname = usePathname();
   const [pending, startTransition] = useTransition();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [codeOpen, setCodeOpen] = useState(false);
+  const [code, setCode] = useState("");
+  const [redeeming, setRedeeming] = useState(false);
   const session = useAuthStore((s) => s.session);
   const activeOutletId = useAuthStore((s) => s.activeOutletId);
   const setActiveOutletId = useAuthStore((s) => s.setActiveOutletId);
@@ -64,6 +70,29 @@ export function AppHeader({ outlets }: AppHeaderProps) {
         toast.error(res.message);
       }
     });
+  };
+
+  const onRedeemCode = async () => {
+    const trimmed = code.trim();
+    if (!/^\d{6}$/.test(trimmed)) {
+      toast.error("Enter the 6-digit code from the owner.");
+      return;
+    }
+    setRedeeming(true);
+    try {
+      const res = await redeemOutletAccessOtp(trimmed);
+      if (res.ok) {
+        toast.success(`Access granted to ${res.outletName}.`);
+        setActiveOutletId(res.outletId);
+        setCode("");
+        setCodeOpen(false);
+        router.refresh();
+      } else {
+        toast.error(res.message);
+      }
+    } finally {
+      setRedeeming(false);
+    }
   };
 
   const onSignOut = () => {
@@ -120,6 +149,16 @@ export function AppHeader({ outlets }: AppHeaderProps) {
           </div>
           <Button
             type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setCodeOpen(true)}
+            title="Redeem an outlet access code from the owner"
+          >
+            <KeyRound className="mr-1.5 size-4" />
+            <span className="hidden sm:inline">Access code</span>
+          </Button>
+          <Button
+            type="button"
             variant="outline"
             size="sm"
             onClick={onSignOut}
@@ -138,6 +177,43 @@ export function AppHeader({ outlets }: AppHeaderProps) {
           outletChangeDisabled={pending}
         />
       ) : null}
+
+      <Dialog open={codeOpen} onOpenChange={setCodeOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Redeem outlet access code</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Enter the 6-digit code the owner shared with you to unlock access
+              to your assigned outlet.
+            </p>
+            <Input
+              inputMode="numeric"
+              autoFocus
+              maxLength={6}
+              placeholder="123456"
+              value={code}
+              onChange={(e) =>
+                setCode(e.target.value.replace(/\D/g, "").slice(0, 6))
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !redeeming) onRedeemCode();
+              }}
+              className="text-center text-2xl font-mono tracking-[0.3em]"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              disabled={redeeming || code.trim().length !== 6}
+              onClick={onRedeemCode}
+            >
+              {redeeming ? "Unlocking…" : "Unlock outlet"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-sm">

@@ -71,6 +71,7 @@ export function PosOutletPicker({
         {outlets.map((o) => (
           <option key={o.id} value={o.id} className="bg-card text-foreground">
             {o.name}
+            {o.is_active === false ? " (Inactive)" : ""}
           </option>
         ))}
       </select>

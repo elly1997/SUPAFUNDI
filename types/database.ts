@@ -136,6 +136,54 @@ export type Database = {
         };
         Relationships: [];
       };
+      outlet_access_otps: {
+        Row: {
+          id: string;
+          organization_id: string;
+          user_id: string;
+          outlet_id: string;
+          code_hash: string;
+          created_by: string;
+          expires_at: string;
+          consumed_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          user_id: string;
+          outlet_id: string;
+          code_hash: string;
+          created_by: string;
+          expires_at: string;
+          consumed_at?: string | null;
+        };
+        Update: {
+          consumed_at?: string | null;
+        };
+        Relationships: [];
+      };
+      user_outlet_access: {
+        Row: {
+          user_id: string;
+          outlet_id: string;
+          organization_id: string;
+          granted_by: string | null;
+          granted_at: string;
+        };
+        Insert: {
+          user_id: string;
+          outlet_id: string;
+          organization_id: string;
+          granted_by?: string | null;
+          granted_at?: string;
+        };
+        Update: {
+          granted_by?: string | null;
+          granted_at?: string;
+        };
+        Relationships: [];
+      };
       settings: {
         Row: {
           id: string;
