@@ -19,6 +19,7 @@ import { requireManagerContext } from "@/lib/server/require-manager";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { assertPriorDayClear } from "@/lib/server/prior-day-gate";
 import { requireOrgContext } from "@/lib/server/org-context";
+import { resolveWorkingOutletId } from "@/lib/customers/working-outlet";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { fetchByInChunks } from "@/lib/supabase/query-chunks";
 import {
@@ -298,11 +299,21 @@ export async function completeSale(
     if (input.customerId) {
       const { data: depCust } = await supabase
         .from("customers")
-        .select("deposit_balance")
+        .select("deposit_balance, outlet_id")
         .eq("id", input.customerId)
         .eq("organization_id", ctx.organizationId)
         .maybeSingle();
-      const available = roundMoney(Number(depCust?.deposit_balance ?? 0));
+      if (!depCust) {
+        return { ok: false, message: "Customer not found." };
+      }
+      if (depCust.outlet_id && depCust.outlet_id !== input.outletId) {
+        return {
+          ok: false,
+          message:
+            "This customer belongs to another outlet. Switch branch or create them here.",
+        };
+      }
+      const available = roundMoney(Number(depCust.deposit_balance ?? 0));
       if (available > 0) {
         const unpaidPortion = roundMoney(
           Math.max(0, totalAmount - input.amountPaid)
@@ -1220,13 +1231,14 @@ export async function voidSale(
 export async function listCustomersForPos(): Promise<PosCustomer[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const outletId = await resolveWorkingOutletId(ctx);
 
   const { syncCustomersWithDepositAndCredit } = await import(
     "@/lib/actions/credit"
   );
   await syncCustomersWithDepositAndCredit();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("customers")
     .select(
       "id, name, phone, outstanding_balance, deposit_balance, credit_limit, price_type"
@@ -1235,6 +1247,12 @@ export async function listCustomersForPos(): Promise<PosCustomer[]> {
     .eq("is_active", true)
     .order("name")
     .limit(200);
+
+  if (outletId) {
+    query = query.eq("outlet_id", outletId);
+  }
+
+  const { data, error } = await query;
   if (error) {
     throw new Error(error.message);
   }

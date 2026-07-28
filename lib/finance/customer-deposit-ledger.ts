@@ -11,7 +11,7 @@ export type CustomerDepositLedgerRow = {
   payment_method: string | null;
   /** Money in (deposit received) */
   amount_in: number;
-  /** Money out (applied to invoice) */
+  /** Money out (applied to invoice / prior credit) */
   amount_out: number;
   /** Running prepaid balance after this line */
   balance: number;
@@ -33,6 +33,14 @@ type DepositAppliedSale = {
   deposit_applied: number;
 };
 
+/** Legacy: deposit cash paid AR without sales.deposit_applied. */
+type DepositToCreditEntry = {
+  id: string;
+  amount: number;
+  entry_date: string;
+  description: string | null;
+};
+
 export function paymentDateOnly(value: string | null | undefined): string {
   if (!value) return "";
   const s = String(value);
@@ -43,7 +51,8 @@ export function paymentDateOnly(value: string | null | undefined): string {
 
 export function buildCustomerDepositLedger(
   receipts: DepositReceipt[],
-  appliedSales: DepositAppliedSale[]
+  appliedSales: DepositAppliedSale[],
+  depositToCredit: DepositToCreditEntry[] = []
 ): CustomerDepositLedgerRow[] {
   type Raw = {
     id: string;
@@ -95,6 +104,23 @@ export function buildCustomerDepositLedger(
     });
   }
 
+  for (const e of depositToCredit) {
+    const amount = roundMoney(Number(e.amount));
+    if (amount <= 0) continue;
+    const date = paymentDateOnly(String(e.entry_date));
+    raw.push({
+      id: `dep-ar-${e.id}`,
+      date,
+      sortAt: `${e.entry_date}T00:00:00.000Z`,
+      type: "applied",
+      label: "Applied to prior credit",
+      reference: e.description?.trim() || "Credit paydown",
+      payment_method: "deposit",
+      amount_in: 0,
+      amount_out: amount,
+    });
+  }
+
   raw.sort(
     (a, b) =>
       a.sortAt.localeCompare(b.sortAt) ||
@@ -134,4 +160,23 @@ export function summarizeDepositLedger(rows: CustomerDepositLedgerRow[]): {
   );
   const balance = roundMoney(total_received - total_applied);
   return { total_received, total_applied, balance };
+}
+
+/**
+ * Reconstruct prepaid from ledger inputs (for repair). Prefer live
+ * customers.deposit_balance after recording is fixed.
+ */
+export function computeDepositBalanceFromParts(parts: {
+  receiptsTotal: number;
+  appliedToInvoices: number;
+  appliedToPriorCredit: number;
+}): number {
+  return roundMoney(
+    Math.max(
+      0,
+      parts.receiptsTotal -
+        parts.appliedToInvoices -
+        parts.appliedToPriorCredit
+    )
+  );
 }

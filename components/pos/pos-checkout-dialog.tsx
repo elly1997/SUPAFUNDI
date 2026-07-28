@@ -27,6 +27,7 @@ import { PosPaymentChips, type PaymentMethod } from "@/components/pos/pos-paymen
 import { fetchPosCustomers, type PosCustomer } from "@/lib/api/customers-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
+import { useAuthStore } from "@/stores/authStore";
 
 const QUICK_PAY_INCREMENTS = [1000, 5000, 10000] as const;
 
@@ -75,8 +76,9 @@ export function PosCheckoutDialog({
   paymentAccountId = "",
   onPaymentAccountIdChange,
 }: Props) {
+  const activeOutletId = useAuthStore((s) => s.activeOutletId);
   const { data: customers = [] } = useQuery({
-    queryKey: ["pos-customers"],
+    queryKey: ["pos-customers", activeOutletId],
     queryFn: fetchPosCustomers,
     enabled: open,
   });

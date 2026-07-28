@@ -88,6 +88,7 @@ export function CustomersPageClient() {
   };
 
   const role = useAuthStore((s) => s.session?.role ?? null);
+  const activeOutletId = useAuthStore((s) => s.activeOutletId);
   const userRole = isUserRole(role ?? "") ? role : null;
   const canManage = canManageSettings(userRole);
   const canSendSms = canViewFinance(userRole);
@@ -122,14 +123,14 @@ export function CustomersPageClient() {
   } = useForm<EditFormValues>();
 
   const { data: customers = [], isLoading, isError, error } = useQuery({
-    queryKey: ["customers"],
+    queryKey: ["customers", activeOutletId],
     queryFn: fetchCustomers,
     staleTime: 90_000,
     refetchOnMount: false,
   });
 
   const { data: creditSummary, isLoading: summaryLoading } = useQuery({
-    queryKey: ["customer-credit-summary"],
+    queryKey: ["customer-credit-summary", activeOutletId],
     queryFn: fetchCustomerCreditSummary,
     staleTime: 90_000,
     refetchOnMount: false,
@@ -384,13 +385,22 @@ export function CustomersPageClient() {
                       {formatTzs(c.credit_limit)}
                     </TableCell>
                     <TableCell className="text-right font-money">
-                      {balance.netDue > 0 ? (
-                        <span className="text-warning" title="Amount due">
-                          Due {formatTzs(balance.netDue)}
+                      {balance.owesUs > 0 && balance.weHold > 0 ? (
+                        <span className="flex flex-col items-end gap-0.5 text-xs">
+                          <span className="text-warning">
+                            Owes {formatTzs(balance.owesUs)}
+                          </span>
+                          <span className="text-inflow">
+                            Hold {formatTzs(balance.weHold)}
+                          </span>
                         </span>
-                      ) : balance.depositHeld > 0 ? (
+                      ) : balance.owesUs > 0 ? (
+                        <span className="text-warning" title="Amount due">
+                          Owes {formatTzs(balance.owesUs)}
+                        </span>
+                      ) : balance.weHold > 0 ? (
                         <span className="text-inflow" title="Deposit on account">
-                          Dep {formatTzs(balance.depositHeld)}
+                          Hold {formatTzs(balance.weHold)}
                         </span>
                       ) : (
                         "—"

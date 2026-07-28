@@ -356,12 +356,18 @@ export async function sendBulkCreditReminders(
       .in("id", input.customerIds);
     targets = (data ?? []).map((c) => ({ id: c.id, name: c.name }));
   } else {
-    const { data } = await supabase
+    const { resolveWorkingOutletId } = await import(
+      "@/lib/customers/working-outlet"
+    );
+    const outletId = await resolveWorkingOutletId(ctx);
+    let q = supabase
       .from("customers")
       .select("id, name")
       .eq("organization_id", ctx.organizationId)
       .eq("is_active", true)
       .gt("outstanding_balance", 0);
+    if (outletId) q = q.eq("outlet_id", outletId);
+    const { data } = await q;
     targets = (data ?? []).map((c) => ({ id: c.id, name: c.name }));
   }
 

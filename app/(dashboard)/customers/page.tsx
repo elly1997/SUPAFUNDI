@@ -18,8 +18,8 @@ export default function CustomersPage() {
           Customers &amp; credit
         </h1>
         <p className="text-sm text-muted-foreground">
-          Customer accounts, credit limits, outstanding balances, and monthly
-          credit activity.
+          Per outlet: who owes us, what we hold as deposit, and the statement.
+          Switch branch in the header to work another outlet.
         </p>
       </div>
       <Suspense fallback={<CustomersLoading />}>

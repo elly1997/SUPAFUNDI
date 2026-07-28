@@ -432,6 +432,7 @@ export type Database = {
         Row: {
           id: string;
           organization_id: string;
+          outlet_id: string | null;
           name: string;
           phone: string | null;
           email: string | null;
@@ -447,6 +448,7 @@ export type Database = {
         Insert: {
           id?: string;
           organization_id: string;
+          outlet_id?: string | null;
           name: string;
           phone?: string | null;
           email?: string | null;
@@ -460,6 +462,7 @@ export type Database = {
           is_active?: boolean;
         };
         Update: {
+          outlet_id?: string | null;
           name?: string;
           phone?: string | null;
           email?: string | null;

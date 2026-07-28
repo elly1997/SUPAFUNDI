@@ -11,6 +11,7 @@ import { creditAccountFromPosSale } from "@/lib/actions/banking";
 import { formatCustomerArReference } from "@/lib/constants/party-payments";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
+import { resolveWorkingOutletId } from "@/lib/customers/working-outlet";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
 import { listCustomerOpenInvoices } from "@/lib/actions/party-statements";
@@ -196,24 +197,22 @@ function currentMonthLabel(): string {
 export async function getCustomerCreditSummary(): Promise<CustomerCreditSummary> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const outletId = await resolveWorkingOutletId(ctx);
   const monthStart = currentMonthStart();
 
-  const [customersRes, ledgerRes] = await Promise.all([
-    supabase
-      .from("customers")
-      .select("outstanding_balance")
-      .eq("organization_id", ctx.organizationId)
-      .eq("is_active", true),
-    supabase
-      .from("credit_ledger")
-      .select("entry_type, debit, credit")
-      .eq("organization_id", ctx.organizationId)
-      .gte("entry_date", monthStart),
-  ]);
+  let customersQuery = supabase
+    .from("customers")
+    .select("id, outstanding_balance")
+    .eq("organization_id", ctx.organizationId)
+    .eq("is_active", true);
+  if (outletId) {
+    customersQuery = customersQuery.eq("outlet_id", outletId);
+  }
 
+  const customersRes = await customersQuery;
   if (customersRes.error) throw new Error(customersRes.error.message);
-  if (ledgerRes.error) throw new Error(ledgerRes.error.message);
 
+  const customerIds = (customersRes.data ?? []).map((c) => c.id);
   const totalOutstanding = roundMoney(
     (customersRes.data ?? []).reduce(
       (s, c) => s + Number(c.outstanding_balance),
@@ -223,13 +222,23 @@ export async function getCustomerCreditSummary(): Promise<CustomerCreditSummary>
 
   let creditIssuedMonth = 0;
   let creditPaidMonth = 0;
-  for (const row of ledgerRes.data ?? []) {
-    const debit = Number(row.debit) || 0;
-    const credit = Number(row.credit) || 0;
-    if (row.entry_type === "invoice" || row.entry_type === "adjustment") {
-      creditIssuedMonth += debit;
-    } else if (row.entry_type === "payment") {
-      creditPaidMonth += credit;
+  if (customerIds.length > 0) {
+    const ledgerRes = await supabase
+      .from("credit_ledger")
+      .select("entry_type, debit, credit")
+      .eq("organization_id", ctx.organizationId)
+      .in("customer_id", customerIds)
+      .gte("entry_date", monthStart);
+    if (ledgerRes.error) throw new Error(ledgerRes.error.message);
+
+    for (const row of ledgerRes.data ?? []) {
+      const debit = Number(row.debit) || 0;
+      const credit = Number(row.credit) || 0;
+      if (row.entry_type === "invoice" || row.entry_type === "adjustment") {
+        creditIssuedMonth += debit;
+      } else if (row.entry_type === "payment") {
+        creditPaidMonth += credit;
+      }
     }
   }
 
@@ -244,13 +253,18 @@ export async function getCustomerCreditSummary(): Promise<CustomerCreditSummary>
 export async function listCustomersWithBalance(): Promise<CustomerBalanceRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
+  const outletId = await resolveWorkingOutletId(ctx);
+  let query = supabase
     .from("customers")
     .select("id, name, phone, outstanding_balance, credit_limit")
     .eq("organization_id", ctx.organizationId)
     .eq("is_active", true)
     .gt("outstanding_balance", 0)
     .order("outstanding_balance", { ascending: false });
+  if (outletId) {
+    query = query.eq("outlet_id", outletId);
+  }
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return (data ?? []).map((c) => ({
     id: c.id,

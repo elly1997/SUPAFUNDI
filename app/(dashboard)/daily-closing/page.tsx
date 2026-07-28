@@ -18,7 +18,7 @@ export default async function DailyClosingPage() {
     <div className="space-y-6">
       <PageHeader
         title="Daily closing"
-        description="Reconcile cash by business date. Opening balance carries from the prior reconciled day. Send the director report via WhatsApp."
+        description="Reconcile cash per outlet and business date. Each branch closes independently and sends its report to the owner via WhatsApp. Opening balance carries from that outlet’s prior reconciled day."
         actions={
           <Link href="/pos" className={cn(buttonVariants())}>
             Open POS

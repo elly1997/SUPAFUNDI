@@ -54,10 +54,10 @@ export function InventoryImportDialog({
   const [importProgress, setImportProgress] = useState<string | null>(null);
 
   useEffect(() => {
-    if (open && defaultOutletId && !importOutletId) {
+    if (open && defaultOutletId) {
       setImportOutletId(defaultOutletId);
     }
-  }, [open, defaultOutletId, importOutletId]);
+  }, [open, defaultOutletId]);
 
   useEffect(() => {
     if (!open) {
@@ -123,10 +123,12 @@ export function InventoryImportDialog({
         <DialogHeader>
           <DialogTitle>Import from Excel</DialogTitle>
           <DialogDescription>
-            Same layout as your General Stock list: Page, Code, Name,
-            Category, Quantity, Cost, Retail Price, Unit, Notes. Duplicate
-            product names are rejected. Blank code = auto-generated. Use the
-            same code as an existing item to update its stock only.
+            Import stock take into the selected outlet only. Product names/codes
+            are shared org-wide; quantities land on this branch. Same layout as
+            General Stock: Page, Code, Name, Category, Quantity, Cost, Retail
+            Price, Unit, Notes. Duplicate product names are rejected. Blank code
+            = auto-generated. Use the same code as an existing item to update
+            stock at this outlet only.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">

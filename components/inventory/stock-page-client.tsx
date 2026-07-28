@@ -131,8 +131,8 @@ export function StockPageClient() {
   });
 
   const defaultOutletId = useMemo(
-    () => resolveDefaultOutletId(outlets) ?? "",
-    [outlets]
+    () => outletId || resolveDefaultOutletId(outlets) || "",
+    [outletId, outlets]
   );
 
   const invalidateAfterImport = () => {

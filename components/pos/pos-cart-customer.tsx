@@ -29,6 +29,7 @@ import {
 } from "@/lib/api/customers-fetch";
 import { formatTzs } from "@/lib/utils/currency";
 import { customerBalanceView } from "@/lib/utils/customer-balance";
+import { useAuthStore } from "@/stores/authStore";
 
 type Props = {
   customerId: string;
@@ -42,12 +43,13 @@ export function PosCartCustomer({
   onCustomerSelect,
 }: Props) {
   const queryClient = useQueryClient();
+  const activeOutletId = useAuthStore((s) => s.activeOutletId);
   const [addOpen, setAddOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
 
   const { data: customers = [], isLoading } = useQuery({
-    queryKey: ["pos-customers"],
+    queryKey: ["pos-customers", activeOutletId],
     queryFn: fetchPosCustomers,
     staleTime: 5 * 60_000,
     refetchOnMount: false,
@@ -127,11 +129,13 @@ export function PosCartCustomer({
                   c.deposit_balance ?? 0
                 );
                 const hint =
-                  balance.netDue > 0
-                    ? ` · due ${formatTzs(balance.netDue)}`
-                    : balance.depositHeld > 0
-                      ? ` · dep ${formatTzs(balance.depositHeld)}`
-                      : "";
+                  balance.owesUs > 0 && balance.weHold > 0
+                    ? ` · owes ${formatTzs(balance.owesUs)} · hold ${formatTzs(balance.weHold)}`
+                    : balance.owesUs > 0
+                      ? ` · owes ${formatTzs(balance.owesUs)}`
+                      : balance.weHold > 0
+                        ? ` · hold ${formatTzs(balance.weHold)}`
+                        : "";
                 return (
                   <SelectItem key={c.id} value={c.id}>
                     {c.name}

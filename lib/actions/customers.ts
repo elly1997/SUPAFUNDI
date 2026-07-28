@@ -11,15 +11,20 @@ import {
 import { buildCustomerDepositReceiptJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
-import { formatCustomerDepositReference } from "@/lib/constants/party-payments";
+import {
+  formatCustomerDepositReference,
+  isCustomerDepositRef,
+} from "@/lib/constants/party-payments";
 import {
   buildCustomerDepositLedger,
+  computeDepositBalanceFromParts,
   summarizeDepositLedger,
   type CustomerDepositLedgerRow,
 } from "@/lib/finance/customer-deposit-ledger";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
+import { resolveWorkingOutletId } from "@/lib/customers/working-outlet";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
 
@@ -74,16 +79,23 @@ export type CustomerListRow = {
 export async function listCustomers(): Promise<CustomerListRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const outletId = await resolveWorkingOutletId(ctx);
 
   await syncCustomersWithDepositAndCredit();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("customers")
     .select(
       "id, name, phone, customer_type, credit_limit, credit_days, outstanding_balance, deposit_balance, is_active"
     )
     .eq("organization_id", ctx.organizationId)
     .order("name");
+
+  if (outletId) {
+    query = query.eq("outlet_id", outletId);
+  }
+
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   return (data ?? []).map((c) => ({
     id: c.id,
@@ -142,44 +154,98 @@ export async function recordCustomerDeposit(
     if (!customer) return { ok: false, message: "Customer not found." };
 
     const paymentTs = `${paymentDate}T12:00:00.000Z`;
-    const referenceNo = formatCustomerDepositReference(
-      customer.name,
-      input.notes
-    );
+    const depRef = formatCustomerDepositReference(customer.name, input.notes);
 
     const outstanding = roundMoney(Number(customer.outstanding_balance ?? 0));
     const prevDeposit = roundMoney(Number(customer.deposit_balance ?? 0));
-    /** When customer owes credit, deposit pays down AR first (same as a payment). */
+    /** Cash that pays existing AR is not prepaid — keep DEP rows = true prepaid only. */
     const toCredit = roundMoney(Math.min(input.amount, outstanding));
     const toDeposit = roundMoney(input.amount - toCredit);
     const newDepositBalance = roundMoney(prevDeposit + toDeposit);
 
-    const { data: payment, error: payErr } = await paymentsDb(supabase)
-      .from("payments")
-      .insert({
-        organization_id: ctx.organizationId,
-        outlet_id: input.outletId,
-        payment_method: input.paymentMethod,
-        amount: input.amount,
-        reference_no: referenceNo,
-        status: "completed",
-        payment_date: paymentTs,
-        received_by: ctx.userId,
-        customer_id: input.customerId,
-      })
-      .select("id")
-      .single();
-    if (payErr) {
-      return { ok: false, message: payErr.message };
+    const createdPaymentIds: string[] = [];
+    let journalSourceId: string | undefined;
+
+    /** Prepaid slice only — counted once as cashCustomerDeposits. */
+    if (toDeposit > 0) {
+      const { data: payment, error: payErr } = await paymentsDb(supabase)
+        .from("payments")
+        .insert({
+          organization_id: ctx.organizationId,
+          outlet_id: input.outletId,
+          payment_method: input.paymentMethod,
+          amount: toDeposit,
+          reference_no: depRef,
+          status: "completed",
+          payment_date: paymentTs,
+          received_by: ctx.userId,
+          customer_id: input.customerId,
+        })
+        .select("id")
+        .single();
+      if (payErr || !payment) {
+        return { ok: false, message: payErr?.message ?? "Deposit payment failed" };
+      }
+      createdPaymentIds.push(payment.id);
+      journalSourceId = payment.id;
+    }
+
+    const rollbackPayments = async () => {
+      for (const id of createdPaymentIds) {
+        await supabase.from("payments").delete().eq("id", id);
+      }
+      if (toDeposit > 0) {
+        await supabase
+          .from("customers")
+          .update({ deposit_balance: prevDeposit })
+          .eq("id", input.customerId);
+      }
+    };
+
+    if (toDeposit > 0) {
+      const { error: depErr } = await supabase
+        .from("customers")
+        .update({ deposit_balance: newDepositBalance })
+        .eq("id", input.customerId);
+      if (depErr) {
+        await rollbackPayments();
+        return { ok: false, message: depErr.message };
+      }
+    }
+
+    /** AR slice — cash counted once as cashCustomerPayments (invoice-linked). */
+    if (toCredit > 0) {
+      const credit = await applyAmountToCustomerCredit(supabase, ctx, {
+        customerId: input.customerId,
+        customerName: customer.name,
+        amount: toCredit,
+        currentOutstanding: outstanding,
+        entryDate: paymentDate,
+        paymentTs,
+        outletId: input.outletId,
+        ledgerReferenceType: "cash_to_credit",
+        ledgerDescription: "Cash applied to prior credit",
+        paymentMethod: input.paymentMethod,
+        paymentReference: undefined,
+      });
+      if (!credit.ok) {
+        await rollbackPayments();
+        return credit;
+      }
+      if (!journalSourceId && credit.ledgerId) {
+        journalSourceId = credit.ledgerId;
+      }
     }
 
     const journal = await postJournalEntry({
       description:
         toCredit > 0 && toDeposit <= 0
-          ? `Customer deposit — credit payment — ${customer.name}`
-          : `Customer deposit — ${customer.name}`,
+          ? `Customer payment (credit) — ${customer.name}`
+          : toCredit > 0
+            ? `Customer cash — credit + deposit — ${customer.name}`
+            : `Customer deposit — ${customer.name}`,
       sourceType: "payment",
-      sourceId: payment?.id,
+      sourceId: journalSourceId,
       outletId: input.outletId,
       entryDate: paymentDate,
       lines: buildCustomerDepositReceiptJournalLines(
@@ -190,7 +256,7 @@ export async function recordCustomerDeposit(
       ),
     });
     if (!journal.ok) {
-      await supabase.from("payments").delete().eq("id", payment?.id);
+      await rollbackPayments();
       return { ok: false, message: journal.message };
     }
 
@@ -199,54 +265,26 @@ export async function recordCustomerDeposit(
       (input.paymentMethod === "mpesa" ||
         input.paymentMethod === "bank_transfer")
     ) {
+      const bankSourceId = createdPaymentIds[0] ?? journalSourceId;
+      if (!bankSourceId) {
+        await rollbackPayments();
+        return { ok: false, message: "Missing payment id for bank credit." };
+      }
       const bank = await creditAccountFromPosSale(
         input.bankAccountId,
         input.amount,
-        payment!.id,
-        referenceNo,
+        bankSourceId,
+        toDeposit > 0 ? depRef : `AR-${customer.name}`,
         paymentDate,
-        `Customer deposit — ${customer.name}`
+        toDeposit > 0 && toCredit > 0
+          ? `Customer cash (deposit + credit) — ${customer.name}`
+          : toDeposit > 0
+            ? `Customer deposit — ${customer.name}`
+            : `Customer credit payment — ${customer.name}`
       );
       if (!bank.ok) {
-        await supabase.from("payments").delete().eq("id", payment?.id);
+        await rollbackPayments();
         return bank;
-      }
-    }
-
-    if (toDeposit > 0) {
-      const { error: depErr } = await supabase
-        .from("customers")
-        .update({ deposit_balance: newDepositBalance })
-        .eq("id", input.customerId);
-      if (depErr) {
-        await supabase.from("payments").delete().eq("id", payment?.id);
-        return { ok: false, message: depErr.message };
-      }
-    }
-
-    if (toCredit > 0) {
-      const credit = await applyAmountToCustomerCredit(supabase, ctx, {
-        customerId: input.customerId,
-        customerName: customer.name,
-        amount: toCredit,
-        currentOutstanding: outstanding,
-        entryDate: paymentDate,
-        paymentTs,
-        outletId: input.outletId,
-        ledgerReferenceType: "deposit_to_credit",
-        ledgerDescription: "Deposit applied to credit balance",
-        paymentMethod: input.paymentMethod,
-        paymentReference: referenceNo,
-      });
-      if (!credit.ok) {
-        await supabase.from("payments").delete().eq("id", payment?.id);
-        if (toDeposit > 0) {
-          await supabase
-            .from("customers")
-            .update({ deposit_balance: prevDeposit })
-            .eq("id", input.customerId);
-        }
-        return credit;
       }
     }
 
@@ -258,7 +296,6 @@ export async function recordCustomerDeposit(
     revalidatePath("/customers");
     revalidatePath(`/customers/${input.customerId}`);
     revalidatePath("/finance/credit");
-    revalidatePath("/customers");
     revalidatePath("/finance/banking");
     revalidatePath("/daily-closing");
 
@@ -277,11 +314,19 @@ export async function createCustomer(
   try {
     const input = customerInput.parse(raw);
     const ctx = await requireOrgContext();
+    const outletId = await resolveWorkingOutletId(ctx);
+    if (!outletId) {
+      return {
+        ok: false,
+        message: "Select a working outlet before creating a customer.",
+      };
+    }
     const supabase = await createServerSupabaseClient();
     const { data, error } = await supabase
       .from("customers")
       .insert({
         organization_id: ctx.organizationId,
+        outlet_id: outletId,
         name: input.name.trim(),
         phone: input.phone?.trim() || null,
         email: input.email?.trim() || null,
@@ -292,7 +337,7 @@ export async function createCustomer(
         price_type: input.priceType,
         outstanding_balance: input.openingCredit,
         deposit_balance:
-          input.openingDeposit > 0 && ctx.outletId ? 0 : input.openingDeposit,
+          input.openingDeposit > 0 ? 0 : input.openingDeposit,
         is_active: true,
       })
       .select("id")
@@ -317,10 +362,10 @@ export async function createCustomer(
         });
     }
 
-    if (input.openingDeposit > 0 && ctx.outletId) {
+    if (input.openingDeposit > 0) {
       await recordCustomerDeposit({
         customerId: data.id,
-        outletId: ctx.outletId,
+        outletId,
         amount: input.openingDeposit,
         paymentMethod: "cash",
         notes: "Opening deposit balance",
@@ -471,9 +516,12 @@ export async function deleteCustomer(
 }
 
 export type CustomerDepositSummary = {
+  /** Authoritative prepaid (customers.deposit_balance). */
   balance: number;
   total_received: number;
   total_applied: number;
+  /** True when reconstructed ledger ≠ stored balance (legacy rows). */
+  ledgerMismatch: boolean;
 };
 
 export async function getCustomerDepositLedger(
@@ -506,8 +554,20 @@ export async function getCustomerDepositLedger(
     .gt("deposit_applied", 0)
     .order("sale_date", { ascending: true });
 
+  const { data: toCreditRows } = await paymentsDb(supabase)
+    .from("credit_ledger")
+    .select("id, credit, entry_date, description, reference_type")
+    .eq("organization_id", ctx.organizationId)
+    .eq("customer_id", customerId)
+    .eq("reference_type", "deposit_to_credit")
+    .order("entry_date", { ascending: true });
+
+  const depReceipts = (receipts ?? []).filter((r) =>
+    isCustomerDepositRef(r.reference_no)
+  );
+
   const rows = buildCustomerDepositLedger(
-    (receipts ?? []).map((r) => ({
+    depReceipts.map((r) => ({
       id: r.id,
       amount: Number(r.amount),
       payment_method: String(r.payment_method),
@@ -520,6 +580,17 @@ export async function getCustomerDepositLedger(
       invoice_no: s.invoice_no,
       sale_date: s.sale_date,
       deposit_applied: Number(s.deposit_applied ?? 0),
+    })),
+    (toCreditRows ?? []).map((e: {
+      id: string;
+      credit: number | null;
+      entry_date: string;
+      description: string | null;
+    }) => ({
+      id: String(e.id),
+      amount: Number(e.credit ?? 0),
+      entry_date: String(e.entry_date),
+      description: e.description ? String(e.description) : null,
     }))
   );
 
@@ -531,14 +602,111 @@ export async function getCustomerDepositLedger(
     .eq("organization_id", ctx.organizationId)
     .maybeSingle();
 
+  const stored = roundMoney(Number(customer?.deposit_balance ?? 0));
+
   return {
     rows,
     summary: {
-      balance: roundMoney(Number(customer?.deposit_balance ?? ledgerSummary.balance)),
+      balance: stored,
       total_received: ledgerSummary.total_received,
       total_applied: ledgerSummary.total_applied,
+      ledgerMismatch: stored !== ledgerSummary.balance,
     },
   };
+}
+
+/**
+ * Align customers.deposit_balance with DEP receipts − invoice applications −
+ * prior-credit applications (fixes legacy overstated statements).
+ */
+export async function repairCustomerDepositBalance(
+  customerId: string
+): Promise<
+  | { ok: true; previous: number; next: number }
+  | { ok: false; message: string }
+> {
+  try {
+    const ctx = await requireManagerContext();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: customer } = await supabase
+      .from("customers")
+      .select("id, deposit_balance")
+      .eq("id", customerId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!customer) return { ok: false, message: "Customer not found." };
+
+    const { data: receipts } = await supabase
+      .from("payments")
+      .select("amount, reference_no")
+      .eq("organization_id", ctx.organizationId)
+      .eq("customer_id", customerId)
+      .is("sale_id", null);
+
+    const receiptsTotal = roundMoney(
+      (receipts ?? [])
+        .filter((r) => isCustomerDepositRef(r.reference_no))
+        .reduce((s, r) => s + Number(r.amount), 0)
+    );
+
+    const { data: appliedSales } = await supabase
+      .from("sales")
+      .select("deposit_applied")
+      .eq("organization_id", ctx.organizationId)
+      .eq("customer_id", customerId)
+      .eq("status", "completed")
+      .gt("deposit_applied", 0);
+
+    const appliedToInvoices = roundMoney(
+      (appliedSales ?? []).reduce(
+        (s, row) => s + Number(row.deposit_applied ?? 0),
+        0
+      )
+    );
+
+    const { data: toCreditRows } = await paymentsDb(supabase)
+      .from("credit_ledger")
+      .select("credit")
+      .eq("organization_id", ctx.organizationId)
+      .eq("customer_id", customerId)
+      .eq("reference_type", "deposit_to_credit");
+
+    const appliedToPriorCredit = roundMoney(
+      (toCreditRows ?? []).reduce(
+        (s: number, row: { credit: number | null }) =>
+          s + Number(row.credit ?? 0),
+        0
+      )
+    );
+
+    const next = computeDepositBalanceFromParts({
+      receiptsTotal,
+      appliedToInvoices,
+      appliedToPriorCredit,
+    });
+    const previous = roundMoney(Number(customer.deposit_balance ?? 0));
+
+    if (next !== previous) {
+      const { error } = await supabase
+        .from("customers")
+        .update({ deposit_balance: next })
+        .eq("id", customerId);
+      if (error) return { ok: false, message: error.message };
+    }
+
+    await applyCustomerDepositToCredit(customerId);
+
+    revalidatePath("/customers");
+    revalidatePath(`/customers/${customerId}`);
+    revalidatePath("/pos");
+    return { ok: true, previous, next };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Repair failed",
+    };
+  }
 }
 
 export type CustomerDetail = CustomerListRow & {
@@ -596,7 +764,7 @@ export async function getCustomerById(
     credit_limit: Number(c.credit_limit),
     credit_days: c.credit_days,
     outstanding_balance: Number(c.outstanding_balance),
-    deposit_balance: depositSummary.balance,
+    deposit_balance: Number(c.deposit_balance ?? 0),
     price_type: c.price_type,
     is_active: c.is_active,
     recentSales: (sales ?? []).map((s) => ({

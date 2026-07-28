@@ -115,7 +115,7 @@ export function OutletsSettingsClient() {
     },
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success(edit ? "Outlet updated" : "Outlet created");
+        toast.success(edit ? "Outlet updated" : "Outlet created — starts empty (no stock or customers)");
         setOpen(false);
         resetForm();
         queryClient.invalidateQueries({ queryKey: ["settings-outlets"] });
@@ -138,9 +138,12 @@ export function OutletsSettingsClient() {
       </CardHeader>
       <CardContent>
         <p className="mb-4 text-sm text-muted-foreground">
-          Branch codes appear on invoices and POs (e.g. MAIN-2026-00001). Use
-          unique 2–8 character codes per outlet. The main default outlet cannot
-          be deleted; other branches can be removed from this panel.
+          Each new outlet starts empty: no stock and no customers for that
+          branch. Stock the branch via transfer from Main (receive to add qty)
+          or Excel stock-take import on Stock &amp; prices. Product catalog
+          names/codes are shared; quantities and customers stay per outlet.
+          Every branch reconciles its own day and sends the closing report to
+          the owner. Branch codes appear on invoices (e.g. MAIN-2026-00001).
         </p>
         {isError ? (
           <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm">

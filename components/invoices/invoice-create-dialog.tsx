@@ -104,7 +104,7 @@ export function InvoiceCreateDialog({
   const [lines, setLines] = useState<DraftLine[]>([]);
 
   const { data: customers = [] } = useQuery({
-    queryKey: ["pos-customers"],
+    queryKey: ["pos-customers", outletId],
     queryFn: fetchPosCustomers,
     enabled: open,
   });
