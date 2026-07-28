@@ -554,13 +554,80 @@ export async function getCustomerDepositLedger(
     .gt("deposit_applied", 0)
     .order("sale_date", { ascending: true });
 
-  const { data: toCreditRows } = await paymentsDb(supabase)
+  const { data: ledgerAdj } = await paymentsDb(supabase)
     .from("credit_ledger")
-    .select("id, credit, entry_date, description, reference_type")
+    .select(
+      "id, credit, debit, entry_date, description, reference_type, reference_id"
+    )
     .eq("organization_id", ctx.organizationId)
     .eq("customer_id", customerId)
-    .eq("reference_type", "deposit_to_credit")
+    .in("reference_type", [
+      "deposit_to_credit",
+      "cash_to_credit",
+      "deposit_applied",
+      "deposit_restore_void",
+    ])
     .order("entry_date", { ascending: true });
+
+  const cancelledSaleIds = new Set<string>();
+  const saleRefs = (ledgerAdj ?? [])
+    .map((e: { reference_id: string | null }) => e.reference_id)
+    .filter((id: string | null): id is string => !!id);
+  if (saleRefs.length > 0) {
+    const { data: cancelled } = await supabase
+      .from("sales")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("status", "cancelled")
+      .in("id", saleRefs);
+    for (const s of cancelled ?? []) cancelledSaleIds.add(s.id);
+  }
+
+  const adjustments = (ledgerAdj ?? [])
+    .filter((e: {
+      description: string | null;
+      reference_id: string | null;
+      reference_type: string;
+      credit: number | null;
+      debit: number | null;
+    }) => {
+      const desc = String(e.description ?? "");
+      if (desc.startsWith("REVERSED")) return false;
+      if (
+        e.reference_id &&
+        cancelledSaleIds.has(e.reference_id) &&
+        e.reference_type !== "deposit_restore_void"
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .map((e: {
+      id: string;
+      credit: number | null;
+      debit: number | null;
+      entry_date: string;
+      description: string | null;
+      reference_type: string;
+    }) => {
+      if (e.reference_type === "deposit_restore_void") {
+        return {
+          id: String(e.id),
+          amount: Number(e.debit ?? 0),
+          entry_date: String(e.entry_date),
+          description: e.description ? String(e.description) : null,
+          kind: "received" as const,
+        };
+      }
+      return {
+        id: String(e.id),
+        amount: Number(e.credit ?? 0),
+        entry_date: String(e.entry_date),
+        description: e.description ? String(e.description) : null,
+        kind: "applied" as const,
+      };
+    })
+    .filter((e: { amount: number }) => e.amount > 0);
 
   const depReceipts = (receipts ?? []).filter((r) =>
     isCustomerDepositRef(r.reference_no)
@@ -581,17 +648,7 @@ export async function getCustomerDepositLedger(
       sale_date: s.sale_date,
       deposit_applied: Number(s.deposit_applied ?? 0),
     })),
-    (toCreditRows ?? []).map((e: {
-      id: string;
-      credit: number | null;
-      entry_date: string;
-      description: string | null;
-    }) => ({
-      id: String(e.id),
-      amount: Number(e.credit ?? 0),
-      entry_date: String(e.entry_date),
-      description: e.description ? String(e.description) : null,
-    }))
+    adjustments
   );
 
   const ledgerSummary = summarizeDepositLedger([...rows].reverse());
@@ -618,6 +675,7 @@ export async function getCustomerDepositLedger(
 /**
  * Align customers.deposit_balance with DEP receipts − invoice applications −
  * prior-credit applications (fixes legacy overstated statements).
+ * Also recovers prepaid stuck on voided sales (payments still linked to cancelled invoices).
  */
 export async function repairCustomerDepositBalance(
   customerId: string
@@ -631,11 +689,116 @@ export async function repairCustomerDepositBalance(
 
     const { data: customer } = await supabase
       .from("customers")
-      .select("id, deposit_balance")
+      .select("id, deposit_balance, outstanding_balance, name")
       .eq("id", customerId)
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
     if (!customer) return { ok: false, message: "Customer not found." };
+
+    const previous = roundMoney(Number(customer.deposit_balance ?? 0));
+    let restoredFromVoids = 0;
+
+    const { data: cancelledSales } = await supabase
+      .from("sales")
+      .select("id, invoice_no, deposit_applied")
+      .eq("organization_id", ctx.organizationId)
+      .eq("customer_id", customerId)
+      .eq("status", "cancelled");
+
+    for (const sale of cancelledSales ?? []) {
+      const { data: salePayments } = await supabase
+        .from("payments")
+        .select("id, amount, payment_method")
+        .eq("sale_id", sale.id)
+        .eq("status", "completed");
+
+      for (const p of salePayments ?? []) {
+        const method = String(p.payment_method);
+        const amt = roundMoney(Number(p.amount));
+        if (method === "credit_account" || amt <= 0) {
+          await supabase.from("payments").delete().eq("id", p.id);
+          continue;
+        }
+        const depRef = formatCustomerDepositReference(
+          `void-${sale.invoice_no}`
+        );
+        await paymentsDb(supabase)
+          .from("payments")
+          .update({
+            sale_id: null,
+            reference_no: depRef,
+            customer_id: customerId,
+          } as never)
+          .eq("id", p.id);
+        restoredFromVoids = roundMoney(restoredFromVoids + amt);
+      }
+
+      const leftoverDep = roundMoney(Number(sale.deposit_applied ?? 0));
+      if (leftoverDep > 0) {
+        restoredFromVoids = roundMoney(restoredFromVoids + leftoverDep);
+        await supabase
+          .from("sales")
+          .update({ deposit_applied: 0 })
+          .eq("id", sale.id);
+      }
+
+      await paymentsDb(supabase)
+        .from("credit_ledger")
+        .update({
+          description: `REVERSED — void ${sale.invoice_no}`,
+        } as never)
+        .eq("reference_id", sale.id)
+        .in("reference_type", [
+          "deposit_applied",
+          "deposit_to_credit",
+          "cash_to_credit",
+        ]);
+    }
+
+    /** Legacy deposit_to_credit rows without sale id — mark reversed up to restored amount. */
+    if (restoredFromVoids > 0) {
+      const { data: orphans } = await paymentsDb(supabase)
+        .from("credit_ledger")
+        .select("id, credit, description")
+        .eq("organization_id", ctx.organizationId)
+        .eq("customer_id", customerId)
+        .in("reference_type", ["deposit_to_credit", "deposit_applied"])
+        .is("reference_id", null)
+        .order("entry_date", { ascending: true });
+
+      let left = restoredFromVoids;
+      for (const row of orphans ?? []) {
+        if (left <= 0) break;
+        const desc = String(
+          (row as { description: string | null }).description ?? ""
+        );
+        if (desc.startsWith("REVERSED")) continue;
+        const credit = roundMoney(
+          Number((row as { credit: number | null }).credit ?? 0)
+        );
+        if (credit <= 0) continue;
+        await paymentsDb(supabase)
+          .from("credit_ledger")
+          .update({
+            description: `REVERSED — void restore`,
+          } as never)
+          .eq("id", (row as { id: string }).id);
+        left = roundMoney(left - credit);
+      }
+
+      await paymentsDb(supabase).from("credit_ledger").insert({
+        organization_id: ctx.organizationId,
+        customer_id: customerId,
+        entry_type: "adjustment",
+        reference_type: "deposit_restore_void",
+        debit: restoredFromVoids,
+        credit: 0,
+        balance: roundMoney(Number(customer.outstanding_balance ?? 0)),
+        description: "Repair — restore deposit from voided sales",
+        entry_date: new Date().toISOString().slice(0, 10),
+        created_by: ctx.userId,
+      } as never);
+    }
 
     const { data: receipts } = await supabase
       .from("payments")
@@ -667,39 +830,81 @@ export async function repairCustomerDepositBalance(
 
     const { data: toCreditRows } = await paymentsDb(supabase)
       .from("credit_ledger")
-      .select("credit")
+      .select("credit, description, reference_type")
       .eq("organization_id", ctx.organizationId)
       .eq("customer_id", customerId)
-      .eq("reference_type", "deposit_to_credit");
+      .in("reference_type", [
+        "deposit_to_credit",
+        "cash_to_credit",
+        "deposit_applied",
+      ]);
 
     const appliedToPriorCredit = roundMoney(
       (toCreditRows ?? []).reduce(
-        (s: number, row: { credit: number | null }) =>
-          s + Number(row.credit ?? 0),
+        (
+          s: number,
+          row: { credit: number | null; description: string | null }
+        ) => {
+          if (String(row.description ?? "").startsWith("REVERSED")) return s;
+          return s + Number(row.credit ?? 0);
+        },
         0
       )
     );
 
+    const { data: restores } = await paymentsDb(supabase)
+      .from("credit_ledger")
+      .select("debit")
+      .eq("organization_id", ctx.organizationId)
+      .eq("customer_id", customerId)
+      .eq("reference_type", "deposit_restore_void");
+
+    const restoreTotal = roundMoney(
+      (restores ?? []).reduce(
+        (s: number, row: { debit: number | null }) =>
+          s + Number(row.debit ?? 0),
+        0
+      )
+    );
+
+    /**
+     * receiptsTotal already includes void-converted DEP payments.
+     * restoreTotal is a statement marker — do not double-count into balance
+     * when those same DEP rows exist. Prefer DEP − applications.
+     */
     const next = computeDepositBalanceFromParts({
       receiptsTotal,
       appliedToInvoices,
       appliedToPriorCredit,
     });
-    const previous = roundMoney(Number(customer.deposit_balance ?? 0));
 
-    if (next !== previous) {
-      const { error } = await supabase
-        .from("customers")
-        .update({ deposit_balance: next })
-        .eq("id", customerId);
-      if (error) return { ok: false, message: error.message };
-    }
+    const { data: openSales } = await supabase
+      .from("sales")
+      .select("balance_due")
+      .eq("customer_id", customerId)
+      .eq("organization_id", ctx.organizationId)
+      .eq("status", "completed")
+      .gt("balance_due", 0);
+
+    const newOutstanding = roundMoney(
+      (openSales ?? []).reduce((s, row) => s + Number(row.balance_due), 0)
+    );
+
+    const { error } = await supabase
+      .from("customers")
+      .update({
+        deposit_balance: next,
+        outstanding_balance: newOutstanding,
+      })
+      .eq("id", customerId);
+    if (error) return { ok: false, message: error.message };
 
     await applyCustomerDepositToCredit(customerId);
 
     revalidatePath("/customers");
     revalidatePath(`/customers/${customerId}`);
     revalidatePath("/pos");
+    void restoreTotal;
     return { ok: true, previous, next };
   } catch (e) {
     return {

@@ -56,7 +56,7 @@ export function SaleVoidActions({
       onClick={() => {
         if (
           !window.confirm(
-            `Void sale ${invoiceNo}? This reverses the journal entry and restores stock.`
+            `Void sale ${invoiceNo}? This reverses stock, returns any deposit or cash applied on that invoice to the customer prepaid balance, and updates credit.`
           )
         ) {
           return;

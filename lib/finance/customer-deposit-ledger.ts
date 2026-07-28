@@ -33,14 +33,6 @@ type DepositAppliedSale = {
   deposit_applied: number;
 };
 
-/** Legacy: deposit cash paid AR without sales.deposit_applied. */
-type DepositToCreditEntry = {
-  id: string;
-  amount: number;
-  entry_date: string;
-  description: string | null;
-};
-
 export function paymentDateOnly(value: string | null | undefined): string {
   if (!value) return "";
   const s = String(value);
@@ -49,10 +41,20 @@ export function paymentDateOnly(value: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? s.slice(0, 10) : d.toISOString().slice(0, 10);
 }
 
+/** Legacy / void restore lines for the deposit statement. */
+type DepositAdjustEntry = {
+  id: string;
+  amount: number;
+  entry_date: string;
+  description: string | null;
+  /** received = restore to prepaid; applied = used against credit */
+  kind: "received" | "applied";
+};
+
 export function buildCustomerDepositLedger(
   receipts: DepositReceipt[],
   appliedSales: DepositAppliedSale[],
-  depositToCredit: DepositToCreditEntry[] = []
+  adjustments: DepositAdjustEntry[] = []
 ): CustomerDepositLedgerRow[] {
   type Raw = {
     id: string;
@@ -104,21 +106,35 @@ export function buildCustomerDepositLedger(
     });
   }
 
-  for (const e of depositToCredit) {
+  for (const e of adjustments) {
     const amount = roundMoney(Number(e.amount));
     if (amount <= 0) continue;
     const date = paymentDateOnly(String(e.entry_date));
-    raw.push({
-      id: `dep-ar-${e.id}`,
-      date,
-      sortAt: `${e.entry_date}T00:00:00.000Z`,
-      type: "applied",
-      label: "Applied to prior credit",
-      reference: e.description?.trim() || "Credit paydown",
-      payment_method: "deposit",
-      amount_in: 0,
-      amount_out: amount,
-    });
+    if (e.kind === "received") {
+      raw.push({
+        id: `dep-adj-in-${e.id}`,
+        date,
+        sortAt: `${e.entry_date}T12:00:00.000Z`,
+        type: "received",
+        label: "Restored on void",
+        reference: e.description?.trim() || "Void restore",
+        payment_method: "deposit",
+        amount_in: amount,
+        amount_out: 0,
+      });
+    } else {
+      raw.push({
+        id: `dep-adj-out-${e.id}`,
+        date,
+        sortAt: `${e.entry_date}T00:00:00.000Z`,
+        type: "applied",
+        label: "Applied to prior credit",
+        reference: e.description?.trim() || "Credit paydown",
+        payment_method: "deposit",
+        amount_in: 0,
+        amount_out: amount,
+      });
+    }
   }
 
   raw.sort(

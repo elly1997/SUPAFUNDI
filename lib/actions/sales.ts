@@ -36,6 +36,7 @@ import {
   formatInvoiceNo,
   outletInvoicePrefix,
 } from "@/lib/utils/invoice-number";
+import { formatCustomerDepositReference } from "@/lib/constants/party-payments";
 import type { PosCustomer } from "@/lib/api/customers-fetch";
 import {
   businessDateFromTimestamptz,
@@ -127,6 +128,12 @@ type StockRollback = {
   stockId: string;
   quantity: number;
 };
+
+function paymentsDb(supabase: Supabase) {
+  return supabase as unknown as {
+    from: (table: string) => ReturnType<Supabase["from"]>;
+  };
+}
 
 async function generateInvoiceNo(
   supabase: Supabase,
@@ -1162,55 +1169,128 @@ export async function voidSale(
     }
 
     const balanceDue = Number(sale.balance_due);
-    if (balanceDue > 0 && sale.customer_id) {
-      const { data: customer } = await supabase
-        .from("customers")
-        .select("outstanding_balance")
-        .eq("id", sale.customer_id)
-        .single();
-      const restored = roundMoney(
-        Math.max(0, Number(customer?.outstanding_balance ?? 0) - balanceDue)
+    const depositApplied = roundMoney(Number(sale.deposit_applied ?? 0));
+
+    /** Payments already applied to this invoice (cash AR or deposit slices). */
+    const { data: salePayments } = await supabase
+      .from("payments")
+      .select("id, amount, payment_method, reference_no")
+      .eq("sale_id", saleId)
+      .eq("status", "completed");
+
+    let cashConvertedToDeposit = 0;
+    for (const p of salePayments ?? []) {
+      const method = String(p.payment_method);
+      const amt = roundMoney(Number(p.amount));
+      if (method === "credit_account" || amt <= 0) {
+        await supabase.from("payments").delete().eq("id", p.id);
+        continue;
+      }
+      /** Real cash that paid this voided invoice becomes prepaid again. */
+      const depRef = formatCustomerDepositReference(
+        `void-${sale.invoice_no}`
       );
-      await supabase
-        .from("customers")
-        .update({ outstanding_balance: restored })
-        .eq("id", sale.customer_id);
-      await supabase.from("credit_ledger").insert({
-        organization_id: ctx.organizationId,
-        customer_id: sale.customer_id,
-        entry_type: "credit_note",
-        reference_id: saleId,
-        reference_type: "sale_void",
-        debit: 0,
-        credit: balanceDue,
-        balance: restored,
-        description: `Void ${sale.invoice_no}`,
-        created_by: ctx.userId,
-      });
+      const { error: payUpdErr } = await paymentsDb(supabase)
+        .from("payments")
+        .update({
+          sale_id: null,
+          reference_no: depRef,
+          customer_id: sale.customer_id,
+        } as never)
+        .eq("id", p.id);
+      if (payUpdErr) {
+        return { ok: false, message: payUpdErr.message };
+      }
+      cashConvertedToDeposit = roundMoney(cashConvertedToDeposit + amt);
     }
 
-    const depositApplied = Number(sale.deposit_applied ?? 0);
-    if (depositApplied > 0 && sale.customer_id) {
+    if (sale.customer_id) {
       const { data: customer } = await supabase
         .from("customers")
-        .select("deposit_balance")
+        .select("outstanding_balance, deposit_balance")
         .eq("id", sale.customer_id)
         .single();
+
+      const restoreDeposit = roundMoney(
+        depositApplied + cashConvertedToDeposit
+      );
+      const newDeposit = roundMoney(
+        Number(customer?.deposit_balance ?? 0) + restoreDeposit
+      );
+
+      /**
+       * Outstanding: drop remaining unpaid on this sale. Amounts already paid
+       * via deposit/cash are returned to deposit above — not back to AR.
+       */
+      const newOutstanding = roundMoney(
+        Math.max(0, Number(customer?.outstanding_balance ?? 0) - balanceDue)
+      );
+
       await supabase
         .from("customers")
         .update({
-          deposit_balance: roundMoney(
-            Number(customer?.deposit_balance ?? 0) + depositApplied
-          ),
+          outstanding_balance: newOutstanding,
+          deposit_balance: newDeposit,
         })
         .eq("id", sale.customer_id);
+
+      if (balanceDue > 0) {
+        await supabase.from("credit_ledger").insert({
+          organization_id: ctx.organizationId,
+          customer_id: sale.customer_id,
+          entry_type: "credit_note",
+          reference_id: saleId,
+          reference_type: "sale_void",
+          debit: 0,
+          credit: balanceDue,
+          balance: newOutstanding,
+          description: `Void ${sale.invoice_no}`,
+          created_by: ctx.userId,
+        });
+      }
+
+      if (restoreDeposit > 0) {
+        await paymentsDb(supabase).from("credit_ledger").insert({
+          organization_id: ctx.organizationId,
+          customer_id: sale.customer_id,
+          entry_type: "adjustment",
+          reference_id: saleId,
+          reference_type: "deposit_restore_void",
+          debit: restoreDeposit,
+          credit: 0,
+          balance: newOutstanding,
+          description: `Void ${sale.invoice_no} — restore deposit`,
+          entry_date: businessDateFromTimestamptz(String(sale.sale_date)),
+          created_by: ctx.userId,
+        } as never);
+      }
+
+      /** Hide prior deposit/credit applications tied to this sale from statements. */
+      await paymentsDb(supabase)
+        .from("credit_ledger")
+        .update({
+          description: `REVERSED — void ${sale.invoice_no}`,
+        } as never)
+        .eq("reference_id", saleId)
+        .in("reference_type", [
+          "deposit_applied",
+          "deposit_to_credit",
+          "cash_to_credit",
+        ]);
     }
 
-    await supabase
+    await paymentsDb(supabase)
       .from("sales")
-      .update({ status: "cancelled" })
+      .update({
+        status: "cancelled",
+        deposit_applied: 0,
+        balance_due: 0,
+      } as never)
       .eq("id", saleId);
 
+    if (sale.customer_id) {
+      revalidatePath(`/customers/${sale.customer_id}`);
+    }
     revalidatePath("/sales");
     revalidatePath(`/sales/${saleId}`);
     revalidatePath("/pos");
@@ -1218,6 +1298,7 @@ export async function voidSale(
     revalidatePath("/finance/credit");
     revalidatePath("/customers");
     revalidatePath("/reports");
+    revalidatePath("/daily-closing");
     return { ok: true };
   } catch (e) {
     return {

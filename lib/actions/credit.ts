@@ -86,6 +86,9 @@ export async function applyAmountToCustomerCredit(
   const paymentTs =
     params.paymentTs ?? `${params.entryDate}T12:00:00.000Z`;
 
+  let newOutstanding = roundMoney(params.currentOutstanding);
+  let lastLedgerId = "";
+
   for (const slice of slices) {
     const { data: sale } = await supabase
       .from("sales")
@@ -125,31 +128,33 @@ export async function applyAmountToCustomerCredit(
         customer_id: params.customerId,
       });
     }
-  }
 
-  const newOutstanding = roundMoney(params.currentOutstanding - applied);
+    newOutstanding = roundMoney(newOutstanding - slice.amount);
 
-  const { data: ledger, error: ledgerErr } = await paymentsDb(supabase)
-    .from("credit_ledger")
-    .insert({
-      organization_id: ctx.organizationId,
-      customer_id: params.customerId,
-      entry_type: "payment",
-      reference_type: params.ledgerReferenceType,
-      debit: 0,
-      credit: applied,
-      balance: newOutstanding,
-      description: params.ledgerDescription,
-      entry_date: params.entryDate,
-      created_by: ctx.userId,
-    })
-    .select("id")
-    .single();
-  if (ledgerErr || !ledger) {
-    return {
-      ok: false,
-      message: ledgerErr?.message ?? "Ledger insert failed",
-    };
+    const { data: ledger, error: ledgerErr } = await paymentsDb(supabase)
+      .from("credit_ledger")
+      .insert({
+        organization_id: ctx.organizationId,
+        customer_id: params.customerId,
+        entry_type: "payment",
+        reference_id: slice.saleId,
+        reference_type: params.ledgerReferenceType,
+        debit: 0,
+        credit: slice.amount,
+        balance: newOutstanding,
+        description: params.ledgerDescription,
+        entry_date: params.entryDate,
+        created_by: ctx.userId,
+      })
+      .select("id")
+      .single();
+    if (ledgerErr || !ledger) {
+      return {
+        ok: false,
+        message: ledgerErr?.message ?? "Ledger insert failed",
+      };
+    }
+    lastLedgerId = String(ledger.id);
   }
 
   const { error: custErr } = await supabase
@@ -157,11 +162,15 @@ export async function applyAmountToCustomerCredit(
     .update({ outstanding_balance: newOutstanding })
     .eq("id", params.customerId);
   if (custErr) {
-    await supabase.from("credit_ledger").delete().eq("id", ledger.id);
     return { ok: false, message: custErr.message };
   }
 
-  return { ok: true, applied, newOutstanding, ledgerId: ledger.id };
+  return {
+    ok: true,
+    applied,
+    newOutstanding,
+    ledgerId: lastLedgerId,
+  };
 }
 
 export type CustomerBalanceRow = {
@@ -511,6 +520,11 @@ export async function applyCustomerDepositToCredit(
     const openInvoices = await listCustomerOpenInvoices(customerId);
     const slices = buildFifoCreditSlices(openInvoices, applyAmount);
 
+    let newOutstanding = outstanding;
+    let newDeposit = deposit;
+    let totalApplied = 0;
+    const ledgerIds: string[] = [];
+
     for (const slice of slices) {
       const { data: sale } = await supabase
         .from("sales")
@@ -535,32 +549,39 @@ export async function applyCustomerDepositToCredit(
         })
         .eq("id", slice.saleId);
       if (saleErr) return { ok: false, message: saleErr.message };
+
+      newOutstanding = roundMoney(newOutstanding - slice.amount);
+      newDeposit = roundMoney(newDeposit - slice.amount);
+      totalApplied = roundMoney(totalApplied + slice.amount);
+
+      const { data: ledger, error: ledgerErr } = await paymentsDb(supabase)
+        .from("credit_ledger")
+        .insert({
+          organization_id: ctx.organizationId,
+          customer_id: customerId,
+          entry_type: "payment",
+          reference_id: slice.saleId,
+          reference_type: "deposit_applied",
+          debit: 0,
+          credit: slice.amount,
+          balance: newOutstanding,
+          description: `Deposit applied to ${sale.invoice_no}`,
+          entry_date: entryDate,
+          created_by: ctx.userId,
+        })
+        .select("id")
+        .single();
+      if (ledgerErr || !ledger) {
+        return {
+          ok: false,
+          message: ledgerErr?.message ?? "Ledger insert failed",
+        };
+      }
+      ledgerIds.push(String(ledger.id));
     }
 
-    const newOutstanding = roundMoney(outstanding - applyAmount);
-    const newDeposit = roundMoney(deposit - applyAmount);
-
-    const { data: ledger, error: ledgerErr } = await paymentsDb(supabase)
-      .from("credit_ledger")
-      .insert({
-        organization_id: ctx.organizationId,
-        customer_id: customerId,
-        entry_type: "payment",
-        reference_type: "deposit_applied",
-        debit: 0,
-        credit: applyAmount,
-        balance: newOutstanding,
-        description: "Deposit applied to credit balance",
-        entry_date: entryDate,
-        created_by: ctx.userId,
-      })
-      .select("id")
-      .single();
-    if (ledgerErr || !ledger) {
-      return {
-        ok: false,
-        message: ledgerErr?.message ?? "Ledger insert failed",
-      };
+    if (totalApplied <= 0) {
+      return { ok: true, applied: 0 };
     }
 
     const { error: custErr } = await supabase
@@ -571,17 +592,16 @@ export async function applyCustomerDepositToCredit(
       })
       .eq("id", customerId);
     if (custErr) {
-      await supabase.from("credit_ledger").delete().eq("id", ledger.id);
       return { ok: false, message: custErr.message };
     }
 
     const journal = await postJournalEntry({
       description: `Deposit applied to credit — ${customer.name}`,
       sourceType: "payment",
-      sourceId: ledger.id,
+      sourceId: ledgerIds[0],
       outletId: options?.outletId ?? ctx.outletId ?? undefined,
       entryDate,
-      lines: buildDepositAppliedToCreditJournalLines(applyAmount),
+      lines: buildDepositAppliedToCreditJournalLines(totalApplied),
     });
     if (!journal.ok) {
       await supabase
@@ -591,15 +611,17 @@ export async function applyCustomerDepositToCredit(
           deposit_balance: deposit,
         })
         .eq("id", customerId);
-      await supabase.from("credit_ledger").delete().eq("id", ledger.id);
+      for (const id of ledgerIds) {
+        await supabase.from("credit_ledger").delete().eq("id", id);
+      }
       return { ok: false, message: journal.message };
     }
 
     revalidatePath("/customers");
     revalidatePath(`/customers/${customerId}`);
     revalidatePath("/finance/credit");
-    revalidatePath("/customers");
-    return { ok: true, applied: applyAmount };
+    revalidatePath("/pos");
+    return { ok: true, applied: totalApplied };
   } catch (e) {
     return {
       ok: false,
