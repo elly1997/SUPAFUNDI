@@ -441,7 +441,7 @@ export function ReportsAnalyticsClient() {
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Net cash</p>
+                  <p className="text-xs text-muted-foreground">Sales − expenses</p>
                   <p className="font-money text-2xl font-bold text-inflow">
                     {formatTzs(operational?.netCash ?? 0)}
                   </p>
