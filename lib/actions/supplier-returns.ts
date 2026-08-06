@@ -14,6 +14,93 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
 import { isoDateToTimestamptz, resolveBusinessDate } from "@/lib/utils/iso-date";
 
+type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
+
+function apDb(supabase: Supabase) {
+  return supabase as unknown as {
+    from: (table: string) => ReturnType<Supabase["from"]>;
+  };
+}
+
+/**
+ * Reduce open supplier bills by return value (FIFO). Leftover becomes a
+ * negative credit-memo bill so payablesBySupplier includes it.
+ */
+async function applySupplierReturnCreditToBills(params: {
+  supabase: Supabase;
+  organizationId: string;
+  userId: string;
+  supplierId: string;
+  amount: number;
+  returnDate: string;
+  returnId: string;
+  referenceNo: string | null;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const {
+    supabase,
+    organizationId,
+    userId,
+    supplierId,
+    amount,
+    returnDate,
+    returnId,
+    referenceNo,
+  } = params;
+  let remaining = roundMoney(amount);
+
+  const { data: bills, error } = await apDb(supabase)
+    .from("supplier_bills")
+    .select("id, total_amount, amount_paid, status, bill_date")
+    .eq("organization_id", organizationId)
+    .eq("supplier_id", supplierId)
+    .in("status", ["open", "partial"])
+    .order("bill_date", { ascending: true });
+  if (error) return { ok: false, message: error.message };
+
+  for (const bill of bills ?? []) {
+    if (remaining <= 0) break;
+    const due = roundMoney(
+      Math.max(0, Number(bill.total_amount) - Number(bill.amount_paid))
+    );
+    if (due <= 0) continue;
+    const slice = roundMoney(Math.min(remaining, due));
+    const newPaid = roundMoney(Number(bill.amount_paid) + slice);
+    const newStatus =
+      newPaid >= Number(bill.total_amount) ? "paid" : "partial";
+    const { error: updErr } = await apDb(supabase)
+      .from("supplier_bills")
+      .update({ amount_paid: newPaid, status: newStatus })
+      .eq("id", bill.id);
+    if (updErr) return { ok: false, message: updErr.message };
+    remaining = roundMoney(remaining - slice);
+  }
+
+  if (remaining > 0) {
+    const billNo = `SCM-${returnId.slice(0, 8).toUpperCase()}`;
+    const { error: memoErr } = await apDb(supabase)
+      .from("supplier_bills")
+      .insert({
+        organization_id: organizationId,
+        supplier_id: supplierId,
+        bill_no: billNo,
+        bill_date: returnDate,
+        due_date: returnDate,
+        subtotal: -remaining,
+        tax_amount: 0,
+        total_amount: -remaining,
+        amount_paid: 0,
+        status: "open",
+        notes: referenceNo
+          ? `Supplier return credit ${referenceNo}`
+          : `Supplier return credit ${returnId.slice(0, 8)}`,
+        created_by: userId,
+      });
+    if (memoErr) return { ok: false, message: memoErr.message };
+  }
+
+  return { ok: true };
+}
+
 const lineInput = z.object({
   productId: z.string().uuid(),
   quantity: z.number().positive(),
@@ -150,9 +237,28 @@ export async function createSupplierReturn(
       }
     }
 
+    /** On-account returns reduce AP sub-ledger (open bills FIFO, then credit memo). */
+    if (input.paymentMethod === "on_account" && input.supplierId) {
+      const ap = await applySupplierReturnCreditToBills({
+        supabase,
+        organizationId: ctx.organizationId,
+        userId: ctx.userId,
+        supplierId: input.supplierId,
+        amount: totalAmount,
+        returnDate,
+        returnId: ret.id,
+        referenceNo: input.referenceNo?.trim() || null,
+      });
+      if (!ap.ok) {
+        await supabase.from("supplier_returns").delete().eq("id", ret.id);
+        return ap;
+      }
+    }
+
     revalidatePath("/inventory/stock");
     revalidatePath("/inventory/returns");
     revalidatePath("/suppliers");
+    revalidatePath("/finance/payables");
     revalidatePath("/finance/banking");
     revalidatePath("/daily-closing");
     return { ok: true, returnId: ret.id };

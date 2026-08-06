@@ -416,6 +416,9 @@ export async function dispatchStockTransfer(
   const supabase = await createServerSupabaseClient();
   const detail = await getStockTransferById(transferId);
   if (!detail) return { ok: false, message: "Transfer not found." };
+  if (detail.status === "dispatched" || detail.status === "received") {
+    return { ok: true };
+  }
   if (detail.status !== "approved") {
     return { ok: false, message: "Transfer must be approved before dispatch." };
   }
@@ -426,6 +429,9 @@ export async function dispatchStockTransfer(
   try {
     for (const item of detail.items) {
       if (!item.product_id) continue;
+      /** Idempotent: skip lines already deducted on a prior partial attempt. */
+      if (Number(item.dispatched_qty ?? 0) > 0) continue;
+
       const qty = item.requested_qty;
       const { data: stock } = await supabase
         .from("stock")
@@ -441,11 +447,20 @@ export async function dispatchStockTransfer(
       }
       const newQty = roundMoney(Number(stock.quantity) - qty);
       const unitCost = Number(stock.cost_price);
-      const { error: updErr } = await supabase
+      const { data: updated, error: updErr } = await supabase
         .from("stock")
         .update({ quantity: newQty })
-        .eq("id", stock.id);
+        .eq("id", stock.id)
+        .gte("quantity", qty)
+        .select("id")
+        .maybeSingle();
       if (updErr) throw new Error(updErr.message);
+      if (!updated) {
+        return {
+          ok: false,
+          message: `Stock changed for ${item.product_name}. Retry dispatch.`,
+        };
+      }
 
       await supabase.from("stock_movements").insert({
         organization_id: ctx.organizationId,

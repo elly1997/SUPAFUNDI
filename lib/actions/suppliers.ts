@@ -658,6 +658,14 @@ export async function paySupplier(
       };
     }
 
+    if (!ctx.outletId) {
+      return {
+        ok: false,
+        message:
+          "Select a working outlet before paying a supplier (needed for cash drawer).",
+      };
+    }
+
     const plan = await planBillAllocations(
       supabase,
       ctx.organizationId,
@@ -689,7 +697,7 @@ export async function paySupplier(
         .from("supplier_payments")
         .insert({
           organization_id: ctx.organizationId,
-          outlet_id: ctx.outletId ?? null,
+          outlet_id: ctx.outletId,
           supplier_id: input.supplierId,
           bill_id: slice.billId,
           payment_method: input.paymentMethod,

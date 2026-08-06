@@ -38,7 +38,7 @@ export async function listOpenPayables(): Promise<PayableBillRow[]> {
     .eq("organization_id", ctx.organizationId)
     .in("status", ["open", "partial", "draft"])
     .order("bill_date", { ascending: false })
-    .limit(200);
+    .limit(2000);
   if (error) throw new Error(error.message);
 
   type BillRow = {
@@ -100,12 +100,11 @@ export async function createSupplierBillFromGrn(params: {
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
 
-    const grnTag = params.grnId.slice(0, 8);
     const { data: existing } = await apDb(supabase)
       .from("supplier_bills")
       .select("id")
       .eq("organization_id", ctx.organizationId)
-      .ilike("notes", `%${grnTag}%`)
+      .eq("grn_id", params.grnId)
       .maybeSingle();
     if (existing) return { ok: true, billId: existing.id };
 
@@ -119,6 +118,7 @@ export async function createSupplierBillFromGrn(params: {
         organization_id: ctx.organizationId,
         supplier_id: params.supplierId,
         po_id: params.poId ?? null,
+        grn_id: params.grnId,
         bill_no: billNo,
         bill_date: params.billDate,
         due_date: due.toISOString().slice(0, 10),
@@ -135,6 +135,16 @@ export async function createSupplierBillFromGrn(params: {
       .select("id")
       .single();
     if (billErr || !bill) {
+      /** Race: unique(grn_id) — re-read winner. */
+      if (billErr?.message?.toLowerCase().includes("unique")) {
+        const { data: raced } = await apDb(supabase)
+          .from("supplier_bills")
+          .select("id")
+          .eq("organization_id", ctx.organizationId)
+          .eq("grn_id", params.grnId)
+          .maybeSingle();
+        if (raced) return { ok: true, billId: raced.id };
+      }
       return { ok: false, message: billErr?.message ?? "Bill create failed" };
     }
 

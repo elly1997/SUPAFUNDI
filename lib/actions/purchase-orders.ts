@@ -145,7 +145,7 @@ export async function listPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
     )
     .eq("organization_id", ctx.organizationId)
     .order("created_at", { ascending: false })
-    .limit(100);
+    .limit(500);
   if (error) throw new Error(error.message);
 
   const rows = data ?? [];

@@ -18,6 +18,7 @@ import { businessDayBounds, isoDateToTimestamptz } from "@/lib/utils/iso-date";
 import {
   isCustomerArPaymentRef,
   isCustomerDepositRef,
+  isLegacyVoidDepositRef,
 } from "@/lib/constants/party-payments";
 
 export type DayCashSummary = {
@@ -250,22 +251,33 @@ export async function computeDayCashSummary(
 
   let cashCustomerPayments = 0;
   let cashCustomerDeposits = 0;
-  const { data: customerCash } = await supabase
-    .from("payments")
-    .select("amount, reference_no, payment_method, sale_id")
-    .eq("organization_id", ctx.organizationId)
-    .eq("outlet_id", outletId)
-    .eq("payment_method", "cash")
-    .eq("status", "completed")
-    .gte("payment_date", from)
-    .lte("payment_date", to)
-    .not("customer_id", "is", null);
+  const customerCash = await fetchAllPaginated<{
+    amount: number;
+    reference_no: string | null;
+    payment_method: string;
+    sale_id: string | null;
+  }>(async (fromIdx, toIdx) =>
+    supabase
+      .from("payments")
+      .select("amount, reference_no, payment_method, sale_id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", outletId)
+      .eq("payment_method", "cash")
+      .eq("status", "completed")
+      .gte("payment_date", from)
+      .lte("payment_date", to)
+      .not("customer_id", "is", null)
+      .order("id", { ascending: true })
+      .range(fromIdx, toIdx)
+  );
 
-  for (const p of customerCash ?? []) {
+  for (const p of customerCash) {
     const amt = Number(p.amount);
     if (isCustomerDepositRef(p.reference_no)) {
       // Deposit allocation rows share the parent DEP- reference — skip slices.
       if (p.sale_id != null) continue;
+      // Legacy void→DEP rewrite: cash left the drawer as a refund, not prepaid.
+      if (isLegacyVoidDepositRef(p.reference_no)) continue;
       cashCustomerDeposits += amt;
     } else {
       cashCustomerPayments += amt;
@@ -472,7 +484,7 @@ export async function listUnreconciledDays(
       .eq("outlet_id", o.id)
       .eq("status", "completed")
       .order("sale_date", { ascending: false })
-      .limit(200);
+      .limit(2000);
 
     const { data: expenses } = await supabase
       .from("expenses")
@@ -480,7 +492,7 @@ export async function listUnreconciledDays(
       .eq("organization_id", ctx.organizationId)
       .eq("outlet_id", o.id)
       .order("expense_date", { ascending: false })
-      .limit(200);
+      .limit(2000);
 
     const dates = new Set<string>();
     for (const s of sales ?? []) {

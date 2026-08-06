@@ -336,8 +336,7 @@ export async function createCustomer(
         credit_days: input.creditDays,
         price_type: input.priceType,
         outstanding_balance: input.openingCredit,
-        deposit_balance:
-          input.openingDeposit > 0 ? 0 : input.openingDeposit,
+        deposit_balance: input.openingDeposit,
         is_active: true,
       })
       .select("id")
@@ -358,18 +357,36 @@ export async function createCustomer(
           credit: 0,
           balance: input.openingCredit,
           description: "Opening credit balance",
+          entry_date: new Date().toISOString().slice(0, 10),
           created_by: ctx.userId,
         });
     }
 
+    /**
+     * Opening deposit is independent prepaid — do NOT auto-apply against
+     * opening credit (that double-counted ledger / AR reductions).
+     */
     if (input.openingDeposit > 0) {
-      await recordCustomerDeposit({
-        customerId: data.id,
-        outletId,
-        amount: input.openingDeposit,
-        paymentMethod: "cash",
-        notes: "Opening deposit balance",
-      });
+      const depRef = formatCustomerDepositReference(
+        input.name.trim(),
+        "Opening deposit balance"
+      );
+      const { error: payErr } = await paymentsDb(supabase)
+        .from("payments")
+        .insert({
+          organization_id: ctx.organizationId,
+          outlet_id: outletId,
+          payment_method: "cash",
+          amount: input.openingDeposit,
+          reference_no: depRef,
+          status: "completed",
+          payment_date: `${new Date().toISOString().slice(0, 10)}T12:00:00.000Z`,
+          received_by: ctx.userId,
+          customer_id: data.id,
+        });
+      if (payErr) {
+        return { ok: false, message: payErr.message };
+      }
     }
 
     revalidatePath("/customers");

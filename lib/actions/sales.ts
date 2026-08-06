@@ -36,8 +36,13 @@ import {
   formatInvoiceNo,
   outletInvoicePrefix,
 } from "@/lib/utils/invoice-number";
-import { formatCustomerDepositReference } from "@/lib/constants/party-payments";
 import type { PosCustomer } from "@/lib/api/customers-fetch";
+import {
+  canBypassCashSession,
+  isUserRole,
+  type UserRole,
+} from "@/lib/auth/roles";
+import { reverseBankTransaction } from "@/lib/actions/banking";
 import {
   businessDateFromTimestamptz,
   isoDateToTimestamptz,
@@ -243,6 +248,33 @@ export async function completeSale(
     }
     const dayCheck = await checkBusinessDayMutable(input.outletId, businessDate);
     if (!dayCheck.ok) return dayCheck;
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", ctx.userId)
+      .maybeSingle();
+    const role: UserRole | null = isUserRole(String(profile?.role ?? ""))
+      ? (profile!.role as UserRole)
+      : null;
+    if (!canBypassCashSession(role)) {
+      const { data: openSession } = await supabase
+        .from("cash_sessions")
+        .select("id, business_date")
+        .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", input.outletId)
+        .eq("status", "open")
+        .order("opened_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!openSession || openSession.business_date !== businessDate) {
+        return {
+          ok: false,
+          message:
+            "Open a cash session for this outlet and business day before selling.",
+        };
+      }
+    }
 
     const productIds = input.lines.map((l) => l.productId);
     const { data: stockRows, error: stockErr } = await supabase
@@ -501,16 +533,32 @@ export async function completeSale(
         .select("deposit_balance")
         .eq("id", input.customerId)
         .single();
-      const newDep = roundMoney(
-        Number(depRow?.deposit_balance ?? 0) - depositApplied
-      );
-      const { error: depErr } = await supabase
+      const availableDep = roundMoney(Number(depRow?.deposit_balance ?? 0));
+      if (availableDep < depositApplied) {
+        await rollbackSale(supabase, sale.id, stockRollbacks);
+        return {
+          ok: false,
+          message: `Deposit balance changed (available ${availableDep}). Retry checkout.`,
+        };
+      }
+      const newDep = roundMoney(availableDep - depositApplied);
+      const { data: depUpdated, error: depErr } = await supabase
         .from("customers")
         .update({ deposit_balance: newDep })
-        .eq("id", input.customerId);
+        .eq("id", input.customerId)
+        .gte("deposit_balance", depositApplied)
+        .select("id")
+        .maybeSingle();
       if (depErr) {
         await rollbackSale(supabase, sale.id, stockRollbacks);
         return { ok: false, message: depErr.message };
+      }
+      if (!depUpdated) {
+        await rollbackSale(supabase, sale.id, stockRollbacks);
+        return {
+          ok: false,
+          message: "Deposit was applied by another sale. Retry checkout.",
+        };
       }
     }
 
@@ -520,15 +568,26 @@ export async function completeSale(
         sellQtyToBaseQty(line.quantity, saleLineAsUnit(line))
       );
       const newQty = roundStockQty(Number(stock.quantity) - baseQty);
-      const { error: updErr } = await supabase
+      const { data: updatedStock, error: updErr } = await supabase
         .from("stock")
         .update({ quantity: newQty })
-        .eq("id", stock.id);
+        .eq("id", stock.id)
+        .gte("quantity", baseQty)
+        .select("id")
+        .maybeSingle();
       if (updErr) {
         await rollbackSale(supabase, sale.id, stockRollbacks);
         return { ok: false, message: updErr.message };
       }
+      if (!updatedStock) {
+        await rollbackSale(supabase, sale.id, stockRollbacks);
+        return {
+          ok: false,
+          message: `Insufficient stock for "${line.productName}" (updated by another sale).`,
+        };
+      }
       stockRollbacks.push({ stockId: stock.id, quantity: baseQty });
+      stock.quantity = newQty;
 
       const { error: movErr } = await supabase.from("stock_movements").insert({
         organization_id: ctx.organizationId,
@@ -1171,37 +1230,47 @@ export async function voidSale(
     const balanceDue = Number(sale.balance_due);
     const depositApplied = roundMoney(Number(sale.deposit_applied ?? 0));
 
-    /** Payments already applied to this invoice (cash AR or deposit slices). */
+    /** Mark tender as reversed (cash refund leaves drawer; not converted to prepaid). */
     const { data: salePayments } = await supabase
       .from("payments")
       .select("id, amount, payment_method, reference_no")
       .eq("sale_id", saleId)
       .eq("status", "completed");
 
-    let cashConvertedToDeposit = 0;
     for (const p of salePayments ?? []) {
       const method = String(p.payment_method);
-      const amt = roundMoney(Number(p.amount));
-      if (method === "credit_account" || amt <= 0) {
+      if (method === "credit_account") {
         await supabase.from("payments").delete().eq("id", p.id);
         continue;
       }
-      /** Real cash that paid this voided invoice becomes prepaid again. */
-      const depRef = formatCustomerDepositReference(
-        `void-${sale.invoice_no}`
-      );
       const { error: payUpdErr } = await paymentsDb(supabase)
         .from("payments")
-        .update({
-          sale_id: null,
-          reference_no: depRef,
-          customer_id: sale.customer_id,
-        } as never)
+        .update({ status: "reversed" } as never)
         .eq("id", p.id);
       if (payUpdErr) {
         return { ok: false, message: payUpdErr.message };
       }
-      cashConvertedToDeposit = roundMoney(cashConvertedToDeposit + amt);
+    }
+
+    /** Reverse M-Pesa / bank / card collections linked to this invoice. */
+    const bankClient = supabase as unknown as {
+      from: (t: string) => ReturnType<typeof supabase.from>;
+    };
+    const { data: bankHits } = await bankClient
+      .from("bank_transactions")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("reference_no", sale.invoice_no)
+      .is("reversed_at", null)
+      .is("reversal_of", null);
+    for (const txn of bankHits ?? []) {
+      const rev = await reverseBankTransaction(txn.id);
+      if (!rev.ok) {
+        return {
+          ok: false,
+          message: `Sale payments reversed, but bank reverse failed: ${rev.message}`,
+        };
+      }
     }
 
     if (sale.customer_id) {
@@ -1211,16 +1280,15 @@ export async function voidSale(
         .eq("id", sale.customer_id)
         .single();
 
-      const restoreDeposit = roundMoney(
-        depositApplied + cashConvertedToDeposit
-      );
+      /** Only prepaid that was applied to this invoice returns to deposit. */
+      const restoreDeposit = depositApplied;
       const newDeposit = roundMoney(
         Number(customer?.deposit_balance ?? 0) + restoreDeposit
       );
 
       /**
-       * Outstanding: drop remaining unpaid on this sale. Amounts already paid
-       * via deposit/cash are returned to deposit above — not back to AR.
+       * Outstanding: drop remaining unpaid on this sale. Cash tender was
+       * refunded (reversed) — not returned to deposit.
        */
       const newOutstanding = roundMoney(
         Math.max(0, Number(customer?.outstanding_balance ?? 0) - balanceDue)
@@ -1259,7 +1327,7 @@ export async function voidSale(
           debit: restoreDeposit,
           credit: 0,
           balance: newOutstanding,
-          description: `Void ${sale.invoice_no} — restore deposit`,
+          description: `Void ${sale.invoice_no} — restore applied deposit`,
           entry_date: businessDateFromTimestamptz(String(sale.sale_date)),
           created_by: ctx.userId,
         } as never);
@@ -1327,7 +1395,7 @@ export async function listCustomersForPos(): Promise<PosCustomer[]> {
     .eq("organization_id", ctx.organizationId)
     .eq("is_active", true)
     .order("name")
-    .limit(200);
+    .limit(2000);
 
   if (outletId) {
     query = query.eq("outlet_id", outletId);

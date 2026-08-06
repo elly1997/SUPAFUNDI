@@ -6,7 +6,7 @@ import { computeSalesSeasonalAnalysis } from "@/lib/actions/seasonal-analytics";
 import type { SeasonalAnalysis } from "@/lib/analytics/seasonal-insights";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { fetchByInChunks } from "@/lib/supabase/query-chunks";
+import { fetchAllPaginated, fetchByInChunks } from "@/lib/supabase/query-chunks";
 import { roundMoney } from "@/lib/utils/calculations";
 import { businessDateFromTimestamptz } from "@/lib/utils/iso-date";
 
@@ -556,31 +556,44 @@ export async function getProfitLossStatement(
   const supabase = await createServerSupabaseClient();
   const { from, to } = reportPeriodBounds(fromDate, toDate);
 
-  let salesQuery = supabase
-    .from("sales")
-    .select("id, subtotal, discount_amount, sale_date")
-    .eq("organization_id", ctx.organizationId)
-    .eq("status", "completed")
-    .gte("sale_date", from)
-    .lte("sale_date", to);
-  if (outletId) salesQuery = salesQuery.eq("outlet_id", outletId);
+  if (reconciledDaysOnly && !outletId) {
+    throw new Error(
+      "Reconciled-days filter requires an outlet so dates are not mixed across branches."
+    );
+  }
 
-  const { data: salesRaw, error: salesErr } = await salesQuery;
-  if (salesErr) throw new Error(salesErr.message);
+  const sales = await fetchAllPaginated<{
+    id: string;
+    subtotal: number;
+    discount_amount: number;
+    sale_date: string;
+  }>(async (fromIdx, toIdx) => {
+    let q = supabase
+      .from("sales")
+      .select("id, subtotal, discount_amount, sale_date")
+      .eq("organization_id", ctx.organizationId)
+      .eq("status", "completed")
+      .gte("sale_date", from)
+      .lte("sale_date", to)
+      .order("sale_date", { ascending: true })
+      .range(fromIdx, toIdx);
+    if (outletId) q = q.eq("outlet_id", outletId);
+    return q;
+  });
 
-  let sales = salesRaw ?? [];
+  let filteredSales = sales;
   if (reconciledDaysOnly) {
     const reconciled = new Set(
       await getReconciledDatesInRange(fromDate, toDate, outletId)
     );
-    sales = sales.filter((s) =>
+    filteredSales = sales.filter((s) =>
       reconciled.has(businessDateFromTimestamptz(String(s.sale_date)))
     );
   }
 
   let grossSales = 0;
   let discounts = 0;
-  for (const s of sales) {
+  for (const s of filteredSales) {
     const sub = Number(s.subtotal);
     const disc = Number(s.discount_amount);
     grossSales += sub + disc;
@@ -590,28 +603,36 @@ export async function getProfitLossStatement(
   discounts = roundMoney(discounts);
   const netSales = roundMoney(grossSales - discounts);
 
-  let expensesQuery = supabase
-    .from("expenses")
-    .select("amount, expense_date")
-    .eq("organization_id", ctx.organizationId)
-    .gte("expense_date", fromDate)
-    .lte("expense_date", toDate);
-  if (outletId) expensesQuery = expensesQuery.eq("outlet_id", outletId);
+  const expenseRows = await fetchAllPaginated<{
+    amount: number;
+    expense_date: string;
+  }>(async (fromIdx, toIdx) => {
+    let q = supabase
+      .from("expenses")
+      .select("amount, expense_date")
+      .eq("organization_id", ctx.organizationId)
+      .gte("expense_date", fromDate)
+      .lte("expense_date", toDate)
+      .order("expense_date", { ascending: true })
+      .range(fromIdx, toIdx);
+    if (outletId) q = q.eq("outlet_id", outletId);
+    return q;
+  });
 
-  const { data: expensesRaw, error: expErr } = await expensesQuery;
-  if (expErr) throw new Error(expErr.message);
-  let expenseRows = expensesRaw ?? [];
+  let filteredExpenses = expenseRows;
   if (reconciledDaysOnly) {
     const reconciled = new Set(
       await getReconciledDatesInRange(fromDate, toDate, outletId)
     );
-    expenseRows = expenseRows.filter((e) => reconciled.has(e.expense_date));
+    filteredExpenses = expenseRows.filter((e) =>
+      reconciled.has(e.expense_date)
+    );
   }
   const operatingExpenses = roundMoney(
-    expenseRows.reduce((s, e) => s + Number(e.amount), 0)
+    filteredExpenses.reduce((s, e) => s + Number(e.amount), 0)
   );
 
-  const saleIds = sales.map((s) => s.id);
+  const saleIds = filteredSales.map((s) => s.id);
   const costOfGoodsSold = await sumCogsFromSaleIds(
     supabase,
     ctx.organizationId,
@@ -642,64 +663,90 @@ export async function getOperationalReportsByRange(
   const supabase = await createServerSupabaseClient();
   const { from, to } = reportPeriodBounds(fromDate, toDate);
 
-  let salesQuery = supabase
-    .from("sales")
-    .select("id, total_amount, sale_date, outlet_id")
-    .eq("organization_id", ctx.organizationId)
-    .eq("status", "completed")
-    .gte("sale_date", from)
-    .lte("sale_date", to);
-  if (outletId) salesQuery = salesQuery.eq("outlet_id", outletId);
+  if (reconciledDaysOnly && !outletId) {
+    throw new Error(
+      "Reconciled-days filter requires an outlet so dates are not mixed across branches."
+    );
+  }
 
-  let expensesQuery = supabase
-    .from("expenses")
-    .select("id, amount, expense_date, outlet_id")
-    .eq("organization_id", ctx.organizationId)
-    .gte("expense_date", fromDate)
-    .lte("expense_date", toDate);
-  if (outletId) expensesQuery = expensesQuery.eq("outlet_id", outletId);
-
-  const [salesRes, expensesRes, creditRes, stockRes] = await Promise.all([
-    salesQuery,
-    expensesQuery,
-    supabase
-      .from("customers")
-      .select("outstanding_balance")
+  const sales = await fetchAllPaginated<{
+    id: string;
+    total_amount: number;
+    sale_date: string;
+    outlet_id: string | null;
+  }>(async (fromIdx, toIdx) => {
+    let q = supabase
+      .from("sales")
+      .select("id, total_amount, sale_date, outlet_id")
       .eq("organization_id", ctx.organizationId)
-      .eq("is_active", true),
-    outletId
-      ? supabase
-          .from("stock")
-          .select("quantity, products!inner(is_active)")
-          .eq("outlet_id", outletId)
-          .lte("quantity", 5)
-      : Promise.resolve({ data: [], error: null }),
-  ]);
+      .eq("status", "completed")
+      .gte("sale_date", from)
+      .lte("sale_date", to)
+      .order("sale_date", { ascending: true })
+      .range(fromIdx, toIdx);
+    if (outletId) q = q.eq("outlet_id", outletId);
+    return q;
+  });
 
-  if (salesRes.error) throw new Error(salesRes.error.message);
-  if (expensesRes.error) throw new Error(expensesRes.error.message);
-  if (creditRes.error) throw new Error(creditRes.error.message);
+  const expenses = await fetchAllPaginated<{
+    id: string;
+    amount: number;
+    expense_date: string;
+    outlet_id: string | null;
+  }>(async (fromIdx, toIdx) => {
+    let q = supabase
+      .from("expenses")
+      .select("id, amount, expense_date, outlet_id")
+      .eq("organization_id", ctx.organizationId)
+      .gte("expense_date", fromDate)
+      .lte("expense_date", toDate)
+      .order("expense_date", { ascending: true })
+      .range(fromIdx, toIdx);
+    if (outletId) q = q.eq("outlet_id", outletId);
+    return q;
+  });
 
-  let sales = salesRes.data ?? [];
-  let expenses = expensesRes.data ?? [];
+  const creditRows = await fetchAllPaginated<{ outstanding_balance: number }>(
+    async (fromIdx, toIdx) =>
+      supabase
+        .from("customers")
+        .select("outstanding_balance")
+        .eq("organization_id", ctx.organizationId)
+        .eq("is_active", true)
+        .order("id", { ascending: true })
+        .range(fromIdx, toIdx)
+  );
+
+  const stockRes = outletId
+    ? await supabase
+        .from("stock")
+        .select("quantity, products!inner(is_active)")
+        .eq("outlet_id", outletId)
+        .lte("quantity", 5)
+    : { data: null as null };
+
+  let filteredSales = sales;
+  let filteredExpenses = expenses;
   if (reconciledDaysOnly) {
     const reconciled = new Set(
       await getReconciledDatesInRange(fromDate, toDate, outletId)
     );
-    sales = sales.filter((s) =>
+    filteredSales = sales.filter((s) =>
       reconciled.has(businessDateFromTimestamptz(String(s.sale_date)))
     );
-    expenses = expenses.filter((e) => reconciled.has(e.expense_date));
+    filteredExpenses = expenses.filter((e) =>
+      reconciled.has(e.expense_date)
+    );
   }
 
   const result = await buildOperationalResult(
     fromDate,
     toDate,
-    sales,
-    expenses,
-    creditRes.data ?? [],
-    stockRes.data,
-    sales.map((s) => s.id),
+    filteredSales,
+    filteredExpenses,
+    creditRows,
+    stockRes.data as { quantity: number; products: unknown }[] | null,
+    filteredSales.map((s) => s.id),
     supabase,
     ctx.organizationId
   );

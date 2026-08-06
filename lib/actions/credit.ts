@@ -584,15 +584,27 @@ export async function applyCustomerDepositToCredit(
       return { ok: true, applied: 0 };
     }
 
-    const { error: custErr } = await supabase
+    const { data: custUpdated, error: custErr } = await supabase
       .from("customers")
       .update({
         outstanding_balance: newOutstanding,
-        deposit_balance: newDeposit,
+        deposit_balance: Math.max(0, newDeposit),
       })
-      .eq("id", customerId);
+      .eq("id", customerId)
+      .gte("deposit_balance", totalApplied)
+      .select("id")
+      .maybeSingle();
     if (custErr) {
       return { ok: false, message: custErr.message };
+    }
+    if (!custUpdated) {
+      for (const id of ledgerIds) {
+        await paymentsDb(supabase).from("credit_ledger").delete().eq("id", id);
+      }
+      return {
+        ok: false,
+        message: "Deposit changed concurrently. Retry apply.",
+      };
     }
 
     const journal = await postJournalEntry({
@@ -655,12 +667,25 @@ export async function recordCustomerPayment(
 
     const { data: customer } = await supabase
       .from("customers")
-      .select("id, name, outstanding_balance")
+      .select("id, name, outstanding_balance, outlet_id")
       .eq("id", input.customerId)
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
     if (!customer) {
       return { ok: false, message: "Customer not found." };
+    }
+    if (!ctx.outletId) {
+      return {
+        ok: false,
+        message: "Select a working outlet before recording a customer payment.",
+      };
+    }
+    if (customer.outlet_id && customer.outlet_id !== ctx.outletId) {
+      return {
+        ok: false,
+        message:
+          "This customer belongs to another outlet. Switch outlet or move the customer first.",
+      };
     }
 
     const openInvoices = await listCustomerOpenInvoices(input.customerId);
