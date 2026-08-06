@@ -285,9 +285,9 @@ export function ReportsAnalyticsClient() {
             className="glass-card"
           />
           <KpiCard
-            title="Net cash"
+            title="Sales − expenses"
             value={formatTzs(operational.netCash)}
-            subtitle="Sales minus expenses"
+            subtitle="Not drawer expected cash — sales total minus expenses"
             variant={operational.netCash >= 0 ? "inflow" : "outflow"}
             className="glass-card"
           />
@@ -535,7 +535,8 @@ export function ReportsAnalyticsClient() {
               Reconciled days only
             </span>
             <span className="text-[10px] leading-snug text-muted-foreground">
-              When checked, only days marked reconciled in Daily closing appear.
+              Requires an outlet. When checked, only days marked reconciled in
+              Daily closing appear.
             </span>
           </label>
         </div>

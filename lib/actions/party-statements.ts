@@ -30,7 +30,7 @@ export type PartyStatementLine = {
 
 export async function getSupplierStatement(
   supplierId: string,
-  limit = 120
+  limit = 2000
 ): Promise<PartyStatementLine[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
@@ -108,7 +108,7 @@ export async function getSupplierStatement(
 
 export async function getCustomerStatement(
   customerId: string,
-  limit = 120
+  limit = 2000
 ): Promise<PartyStatementLine[]> {
   const { syncCustomerDeposits } = await import("@/lib/actions/credit");
   await syncCustomerDeposits(customerId);

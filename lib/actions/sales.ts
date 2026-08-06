@@ -9,7 +9,7 @@ import {
 } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { applyCustomerDepositToCredit } from "@/lib/actions/credit";
-import { creditAccountFromPosSale } from "@/lib/actions/banking";
+import { creditAccountFromPosSale, reverseBankTransaction } from "@/lib/actions/banking";
 import {
   buildSalePaymentBreakdown,
   summarizeSalePaymentLabels,
@@ -36,8 +36,12 @@ import {
   formatInvoiceNo,
   outletInvoicePrefix,
 } from "@/lib/utils/invoice-number";
-import { formatCustomerDepositReference } from "@/lib/constants/party-payments";
 import type { PosCustomer } from "@/lib/api/customers-fetch";
+import {
+  canBypassCashSession,
+  isUserRole,
+  type UserRole,
+} from "@/lib/auth/roles";
 import {
   businessDateFromTimestamptz,
   isoDateToTimestamptz,
@@ -243,6 +247,33 @@ export async function completeSale(
     }
     const dayCheck = await checkBusinessDayMutable(input.outletId, businessDate);
     if (!dayCheck.ok) return dayCheck;
+
+    const { data: roleProfile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", ctx.userId)
+      .maybeSingle();
+    const role: UserRole | null = isUserRole(String(roleProfile?.role ?? ""))
+      ? (roleProfile!.role as UserRole)
+      : null;
+    if (!canBypassCashSession(role)) {
+      const { data: openSession } = await supabase
+        .from("cash_sessions")
+        .select("id")
+        .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", input.outletId)
+        .eq("business_date", businessDate)
+        .eq("status", "open")
+        .limit(1)
+        .maybeSingle();
+      if (!openSession) {
+        return {
+          ok: false,
+          message:
+            "Open a cash drawer session for this business date before completing sales.",
+        };
+      }
+    }
 
     const productIds = input.lines.map((l) => l.productId);
     const { data: stockRows, error: stockErr } = await supabase
@@ -500,17 +531,28 @@ export async function completeSale(
         .from("customers")
         .select("deposit_balance")
         .eq("id", input.customerId)
-        .single();
+        .maybeSingle();
       const newDep = roundMoney(
         Number(depRow?.deposit_balance ?? 0) - depositApplied
       );
-      const { error: depErr } = await supabase
+      const { data: depUpdated, error: depErr } = await supabase
         .from("customers")
         .update({ deposit_balance: newDep })
-        .eq("id", input.customerId);
+        .eq("id", input.customerId)
+        .gte("deposit_balance", depositApplied)
+        .select("id")
+        .maybeSingle();
       if (depErr) {
         await rollbackSale(supabase, sale.id, stockRollbacks);
         return { ok: false, message: depErr.message };
+      }
+      if (!depUpdated) {
+        await rollbackSale(supabase, sale.id, stockRollbacks);
+        return {
+          ok: false,
+          message:
+            "Deposit balance changed concurrently. Refresh and try again.",
+        };
       }
     }
 
@@ -520,13 +562,23 @@ export async function completeSale(
         sellQtyToBaseQty(line.quantity, saleLineAsUnit(line))
       );
       const newQty = roundStockQty(Number(stock.quantity) - baseQty);
-      const { error: updErr } = await supabase
+      const { data: stockUpdated, error: updErr } = await supabase
         .from("stock")
         .update({ quantity: newQty })
-        .eq("id", stock.id);
+        .eq("id", stock.id)
+        .gte("quantity", baseQty)
+        .select("id")
+        .maybeSingle();
       if (updErr) {
         await rollbackSale(supabase, sale.id, stockRollbacks);
         return { ok: false, message: updErr.message };
+      }
+      if (!stockUpdated) {
+        await rollbackSale(supabase, sale.id, stockRollbacks);
+        return {
+          ok: false,
+          message: `Insufficient stock for "${line.productName}" (concurrent update).`,
+        };
       }
       stockRollbacks.push({ stockId: stock.id, quantity: baseQty });
 
@@ -1178,30 +1230,33 @@ export async function voidSale(
       .eq("sale_id", saleId)
       .eq("status", "completed");
 
-    let cashConvertedToDeposit = 0;
     for (const p of salePayments ?? []) {
       const method = String(p.payment_method);
-      const amt = roundMoney(Number(p.amount));
-      if (method === "credit_account" || amt <= 0) {
+      if (method === "credit_account") {
         await supabase.from("payments").delete().eq("id", p.id);
         continue;
       }
-      /** Real cash that paid this voided invoice becomes prepaid again. */
-      const depRef = formatCustomerDepositReference(
-        `void-${sale.invoice_no}`
-      );
       const { error: payUpdErr } = await paymentsDb(supabase)
         .from("payments")
-        .update({
-          sale_id: null,
-          reference_no: depRef,
-          customer_id: sale.customer_id,
-        } as never)
+        .update({ status: "reversed" } as never)
         .eq("id", p.id);
       if (payUpdErr) {
         return { ok: false, message: payUpdErr.message };
       }
-      cashConvertedToDeposit = roundMoney(cashConvertedToDeposit + amt);
+    }
+
+    const { data: bankTxns } = await paymentsDb(supabase)
+      .from("bank_transactions")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("reference_no", sale.invoice_no)
+      .is("reversed_at", null)
+      .is("reversal_of", null);
+    for (const txn of bankTxns ?? []) {
+      const reversed = await reverseBankTransaction(String(txn.id));
+      if (!reversed.ok) {
+        return { ok: false, message: reversed.message };
+      }
     }
 
     if (sale.customer_id) {
@@ -1211,16 +1266,14 @@ export async function voidSale(
         .eq("id", sale.customer_id)
         .single();
 
-      const restoreDeposit = roundMoney(
-        depositApplied + cashConvertedToDeposit
-      );
+      const restoreDeposit = depositApplied;
       const newDeposit = roundMoney(
         Number(customer?.deposit_balance ?? 0) + restoreDeposit
       );
 
       /**
-       * Outstanding: drop remaining unpaid on this sale. Amounts already paid
-       * via deposit/cash are returned to deposit above — not back to AR.
+       * Outstanding: drop remaining unpaid on this sale. Deposit applied is
+       * restored above — cash payments are refunds (status reversed), not prepaid.
        */
       const newOutstanding = roundMoney(
         Math.max(0, Number(customer?.outstanding_balance ?? 0) - balanceDue)
@@ -1327,7 +1380,7 @@ export async function listCustomersForPos(): Promise<PosCustomer[]> {
     .eq("organization_id", ctx.organizationId)
     .eq("is_active", true)
     .order("name")
-    .limit(200);
+    .limit(2000);
 
   if (outletId) {
     query = query.eq("outlet_id", outletId);

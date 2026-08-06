@@ -391,6 +391,7 @@ export async function createSupplierRecord(
     const bill = await createManualSupplierBill({
       supplierId: data.id,
       billDate,
+      dueDate: billDate,
       totalAmount: input.openingBalance,
       notes: "Opening balance",
     });
@@ -641,6 +642,13 @@ export async function paySupplier(
   try {
     const input = paySupplierInput.parse(raw);
     const ctx = await requireOrgContext();
+    if (!ctx.outletId) {
+      return {
+        ok: false,
+        message:
+          "Select a working outlet before recording a supplier payment.",
+      };
+    }
     const supabase = await createServerSupabaseClient();
     const paymentDate =
       input.paymentDate ?? new Date().toISOString().slice(0, 10);
@@ -689,7 +697,7 @@ export async function paySupplier(
         .from("supplier_payments")
         .insert({
           organization_id: ctx.organizationId,
-          outlet_id: ctx.outletId ?? null,
+          outlet_id: ctx.outletId,
           supplier_id: input.supplierId,
           bill_id: slice.billId,
           payment_method: input.paymentMethod,

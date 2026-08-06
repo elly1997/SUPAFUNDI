@@ -14,6 +14,14 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
 import { isoDateToTimestamptz, resolveBusinessDate } from "@/lib/utils/iso-date";
 
+type SupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
+
+function apDb(supabase: SupabaseClient) {
+  return supabase as unknown as {
+    from: (table: string) => ReturnType<SupabaseClient["from"]>;
+  };
+}
+
 const lineInput = z.object({
   productId: z.string().uuid(),
   quantity: z.number().positive(),
@@ -130,6 +138,58 @@ export async function createSupplierReturn(
     if (!journal.ok) {
       await supabase.from("supplier_returns").delete().eq("id", ret.id);
       return { ok: false, message: journal.message };
+    }
+
+    if (
+      input.paymentMethod === "on_account" &&
+      input.supplierId
+    ) {
+      let remaining = totalAmount;
+      const { data: openBills } = await apDb(supabase)
+        .from("supplier_bills")
+        .select("id, total_amount, amount_paid, status")
+        .eq("organization_id", ctx.organizationId)
+        .eq("supplier_id", input.supplierId)
+        .in("status", ["open", "partial", "draft"])
+        .order("bill_date", { ascending: true });
+
+      for (const bill of openBills ?? []) {
+        if (remaining <= 0) break;
+        const balance = roundMoney(
+          Number(bill.total_amount) - Number(bill.amount_paid)
+        );
+        if (balance <= 0) continue;
+        const slice = roundMoney(Math.min(remaining, balance));
+        const newPaid = roundMoney(Number(bill.amount_paid) + slice);
+        const newStatus =
+          newPaid >= Number(bill.total_amount)
+            ? "paid"
+            : newPaid > 0
+              ? "partial"
+              : bill.status;
+        await apDb(supabase)
+          .from("supplier_bills")
+          .update({ amount_paid: newPaid, status: newStatus })
+          .eq("id", bill.id);
+        remaining = roundMoney(remaining - slice);
+      }
+
+      if (remaining > 0) {
+        await apDb(supabase).from("supplier_bills").insert({
+          organization_id: ctx.organizationId,
+          supplier_id: input.supplierId,
+          bill_no: `SCM-${ret.id.slice(0, 8)}`,
+          bill_date: returnDate,
+          due_date: returnDate,
+          subtotal: roundMoney(-remaining),
+          tax_amount: 0,
+          total_amount: roundMoney(-remaining),
+          amount_paid: 0,
+          status: "open",
+          notes: `Credit memo from supplier return ${ret.id.slice(0, 8)}`,
+          created_by: ctx.userId,
+        });
+      }
     }
 
     if (

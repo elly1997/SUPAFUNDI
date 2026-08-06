@@ -31,3 +31,17 @@ export function isCustomerArPaymentRef(ref: string | null | undefined): boolean 
 export function isCustomerDepositRef(ref: string | null | undefined): boolean {
   return String(ref ?? "").startsWith(CUSTOMER_DEPOSIT_PREFIX);
 }
+
+/**
+ * Legacy void path rewrote sale cash into DEP-void-* "prepaid".
+ * Current void = cash refund — those refs must not count as drawer deposits.
+ */
+export function isLegacyVoidDepositRef(
+  ref: string | null | undefined
+): boolean {
+  const s = String(ref ?? "");
+  return (
+    s.startsWith(`${CUSTOMER_DEPOSIT_PREFIX}void-`) ||
+    s.startsWith(`${CUSTOMER_DEPOSIT_PREFIX}void`)
+  );
+}

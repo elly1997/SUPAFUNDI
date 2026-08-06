@@ -433,13 +433,23 @@ export async function voidGrn(
       | "on_account";
 
     if (paymentMethod === "on_account" && grn.supplier_id) {
-      const grnTag = grnId.slice(0, 8);
-      const { data: bill } = await apDb(supabase)
+      const { data: billByGrn } = await apDb(supabase)
         .from("supplier_bills")
         .select("id, amount_paid, status")
         .eq("organization_id", ctx.organizationId)
-        .ilike("notes", `%${grnTag}%`)
+        .eq("grn_id", grnId)
         .maybeSingle();
+      let bill = billByGrn;
+      if (!bill) {
+        const grnTag = grnId.slice(0, 8);
+        const { data: billByNotes } = await apDb(supabase)
+          .from("supplier_bills")
+          .select("id, amount_paid, status")
+          .eq("organization_id", ctx.organizationId)
+          .ilike("notes", `%${grnTag}%`)
+          .maybeSingle();
+        bill = billByNotes;
+      }
       if (bill) {
         if (Number(bill.amount_paid) > 0) {
           return {
