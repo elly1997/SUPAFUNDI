@@ -27,6 +27,7 @@ import { requireOrgContext } from "@/lib/server/org-context";
 import { resolveWorkingOutletId } from "@/lib/customers/working-outlet";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
+import { todayIso } from "@/lib/utils/iso-date";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
@@ -336,8 +337,7 @@ export async function createCustomer(
         credit_days: input.creditDays,
         price_type: input.priceType,
         outstanding_balance: input.openingCredit,
-        deposit_balance:
-          input.openingDeposit > 0 ? 0 : input.openingDeposit,
+        deposit_balance: input.openingDeposit,
         is_active: true,
       })
       .select("id")
@@ -358,17 +358,26 @@ export async function createCustomer(
           credit: 0,
           balance: input.openingCredit,
           description: "Opening credit balance",
+          entry_date: todayIso(),
           created_by: ctx.userId,
         });
     }
 
     if (input.openingDeposit > 0) {
-      await recordCustomerDeposit({
-        customerId: data.id,
-        outletId,
+      const depRef = formatCustomerDepositReference(
+        input.name.trim(),
+        "Opening deposit balance"
+      );
+      await paymentsDb(supabase).from("payments").insert({
+        organization_id: ctx.organizationId,
+        outlet_id: outletId,
+        payment_method: "cash",
         amount: input.openingDeposit,
-        paymentMethod: "cash",
-        notes: "Opening deposit balance",
+        reference_no: depRef,
+        status: "completed",
+        payment_date: `${todayIso()}T12:00:00.000Z`,
+        received_by: ctx.userId,
+        customer_id: data.id,
       });
     }
 
@@ -391,8 +400,30 @@ export async function updateCustomer(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const input = customerUpdateInput.parse(raw);
-    const { organizationId } = await requireManagerContext();
+    const ctx = await requireManagerContext();
+    const orgCtx = await requireOrgContext();
+    const workingOutletId = await resolveWorkingOutletId(orgCtx);
     const supabase = await createServerSupabaseClient();
+
+    const { data: existing } = await supabase
+      .from("customers")
+      .select("id, outlet_id")
+      .eq("id", id)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!existing) return { ok: false, message: "Customer not found." };
+    if (
+      workingOutletId &&
+      existing.outlet_id &&
+      existing.outlet_id !== workingOutletId
+    ) {
+      return {
+        ok: false,
+        message:
+          "This customer belongs to another outlet. Switch branch to edit them.",
+      };
+    }
+
     const { data, error } = await supabase
       .from("customers")
       .update({
@@ -414,7 +445,7 @@ export async function updateCustomer(
           : {}),
       })
       .eq("id", id)
-      .eq("organization_id", organizationId)
+      .eq("organization_id", ctx.organizationId)
       .select("id")
       .maybeSingle();
     if (error) return { ok: false, message: error.message };
@@ -936,6 +967,7 @@ export async function getCustomerById(
 ): Promise<CustomerDetail | null> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const outletId = await resolveWorkingOutletId(ctx);
 
   const { rows: depositLedger, summary: depositSummary } =
     await getCustomerDepositLedger(id);
@@ -943,12 +975,15 @@ export async function getCustomerById(
   const { data: c, error } = await supabase
     .from("customers")
     .select(
-      "id, name, phone, email, address, customer_type, credit_limit, credit_days, outstanding_balance, deposit_balance, price_type, is_active"
+      "id, name, phone, email, address, customer_type, credit_limit, credit_days, outstanding_balance, deposit_balance, price_type, is_active, outlet_id"
     )
     .eq("id", id)
     .eq("organization_id", ctx.organizationId)
     .maybeSingle();
   if (error || !c) return null;
+  if (outletId && c.outlet_id && c.outlet_id !== outletId) {
+    return null;
+  }
 
   const { data: sales } = await supabase
     .from("sales")
@@ -957,7 +992,7 @@ export async function getCustomerById(
     )
     .eq("customer_id", id)
     .order("sale_date", { ascending: false })
-    .limit(10);
+    .limit(50);
 
   return {
     id: c.id,

@@ -502,6 +502,26 @@ export function buildPayrollPaymentJournalLines(input: {
   return lines;
 }
 
+/** Opening supplier payable — Dr equity · Cr AP (balance sheet only). */
+export function buildSupplierOpeningBalanceJournalLines(
+  amount: number
+): JournalLineInput[] {
+  return [
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.equity,
+      debit: amount,
+      credit: 0,
+      memo: "Opening supplier balance (equity)",
+    },
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.ap,
+      debit: 0,
+      credit: amount,
+      memo: "Opening accounts payable",
+    },
+  ];
+}
+
 /** Validate debits = credits before persisting. */
 export function assertBalanced(lines: JournalLineInput[]): void {
   const debit = lines.reduce((s, l) => s + l.debit, 0);

@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { buildSupplierOpeningBalanceJournalLines } from "@/lib/accounting/posting-rules";
+import { postJournalEntry } from "@/lib/actions/accounting";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
@@ -38,7 +40,7 @@ export async function listOpenPayables(): Promise<PayableBillRow[]> {
     .eq("organization_id", ctx.organizationId)
     .in("status", ["open", "partial", "draft"])
     .order("bill_date", { ascending: false })
-    .limit(200);
+    .limit(2000);
   if (error) throw new Error(error.message);
 
   type BillRow = {
@@ -100,12 +102,11 @@ export async function createSupplierBillFromGrn(params: {
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
 
-    const grnTag = params.grnId.slice(0, 8);
     const { data: existing } = await apDb(supabase)
       .from("supplier_bills")
       .select("id")
       .eq("organization_id", ctx.organizationId)
-      .ilike("notes", `%${grnTag}%`)
+      .eq("grn_id", params.grnId)
       .maybeSingle();
     if (existing) return { ok: true, billId: existing.id };
 
@@ -119,6 +120,7 @@ export async function createSupplierBillFromGrn(params: {
         organization_id: ctx.organizationId,
         supplier_id: params.supplierId,
         po_id: params.poId ?? null,
+        grn_id: params.grnId,
         bill_no: billNo,
         bill_date: params.billDate,
         due_date: due.toISOString().slice(0, 10),
@@ -208,6 +210,20 @@ export async function createManualSupplierBill(
     if (error || !data) {
       return { ok: false, message: error?.message ?? "Create failed" };
     }
+
+    const journal = await postJournalEntry({
+      description: `Opening supplier balance — ${billNo}`,
+      sourceType: "supplier_bill",
+      sourceId: data.id,
+      outletId: ctx.outletId ?? undefined,
+      entryDate: input.billDate,
+      lines: buildSupplierOpeningBalanceJournalLines(total),
+    });
+    if (!journal.ok) {
+      await apDb(supabase).from("supplier_bills").delete().eq("id", data.id);
+      return { ok: false, message: journal.message };
+    }
+
     revalidatePath("/finance/payables");
     revalidatePath("/suppliers");
     revalidatePath("/suppliers");
