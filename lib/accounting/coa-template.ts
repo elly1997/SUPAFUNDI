@@ -49,6 +49,7 @@ export const SYSTEM_ACCOUNT_CODES = {
   customerDeposits: "2050",
   salariesPayable: "2060",
   vatOutput: "2100",
+  equity: "3000",
   cashOverShort: "6050",
   salesRevenue: "4000",
   salesDiscount: "4100",

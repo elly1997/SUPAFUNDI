@@ -408,8 +408,30 @@ export async function updateCustomer(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const input = customerUpdateInput.parse(raw);
-    const { organizationId } = await requireManagerContext();
+    await requireManagerContext();
+    const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
+    const workingOutletId = await resolveWorkingOutletId(ctx);
+
+    const { data: existing } = await supabase
+      .from("customers")
+      .select("id, outlet_id")
+      .eq("id", id)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!existing) return { ok: false, message: "Customer not found." };
+    if (
+      existing.outlet_id &&
+      workingOutletId &&
+      existing.outlet_id !== workingOutletId
+    ) {
+      return {
+        ok: false,
+        message:
+          "This customer belongs to another outlet. Switch to that outlet before editing.",
+      };
+    }
+
     const { data, error } = await supabase
       .from("customers")
       .update({
@@ -431,7 +453,7 @@ export async function updateCustomer(
           : {}),
       })
       .eq("id", id)
-      .eq("organization_id", organizationId)
+      .eq("organization_id", ctx.organizationId)
       .select("id")
       .maybeSingle();
     if (error) return { ok: false, message: error.message };
@@ -960,12 +982,21 @@ export async function getCustomerById(
   const { data: c, error } = await supabase
     .from("customers")
     .select(
-      "id, name, phone, email, address, customer_type, credit_limit, credit_days, outstanding_balance, deposit_balance, price_type, is_active"
+      "id, name, phone, email, address, customer_type, credit_limit, credit_days, outstanding_balance, deposit_balance, price_type, is_active, outlet_id"
     )
     .eq("id", id)
     .eq("organization_id", ctx.organizationId)
     .maybeSingle();
   if (error || !c) return null;
+
+  const workingOutletId = await resolveWorkingOutletId(ctx);
+  if (
+    c.outlet_id &&
+    workingOutletId &&
+    c.outlet_id !== workingOutletId
+  ) {
+    return null;
+  }
 
   const { data: sales } = await supabase
     .from("sales")
@@ -974,7 +1005,7 @@ export async function getCustomerById(
     )
     .eq("customer_id", id)
     .order("sale_date", { ascending: false })
-    .limit(10);
+    .limit(50);
 
   return {
     id: c.id,

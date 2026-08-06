@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { buildSupplierOpeningBalanceJournalLines } from "@/lib/accounting/posting-rules";
+import { postJournalEntry } from "@/lib/actions/accounting";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
@@ -218,6 +220,19 @@ export async function createManualSupplierBill(
     if (error || !data) {
       return { ok: false, message: error?.message ?? "Create failed" };
     }
+
+    const journal = await postJournalEntry({
+      description: input.notes?.trim() || `Manual supplier bill ${billNo}`,
+      sourceType: "supplier_bill",
+      sourceId: data.id,
+      entryDate: input.billDate,
+      lines: buildSupplierOpeningBalanceJournalLines(total),
+    });
+    if (!journal.ok) {
+      await apDb(supabase).from("supplier_bills").delete().eq("id", data.id);
+      return { ok: false, message: journal.message };
+    }
+
     revalidatePath("/finance/payables");
     revalidatePath("/suppliers");
     revalidatePath("/suppliers");

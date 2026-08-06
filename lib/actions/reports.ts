@@ -8,7 +8,11 @@ import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { fetchAllPaginated, fetchByInChunks } from "@/lib/supabase/query-chunks";
 import { roundMoney } from "@/lib/utils/calculations";
-import { businessDateFromTimestamptz } from "@/lib/utils/iso-date";
+import {
+  addDaysIso,
+  businessDateFromTimestamptz,
+  todayIso,
+} from "@/lib/utils/iso-date";
 
 function reportPeriodBounds(fromDate: string, toDate: string) {
   return {
@@ -123,7 +127,7 @@ type JournalLineRow = {
 };
 
 function reportTodayIso() {
-  return new Date().toISOString().slice(0, 10);
+  return todayIso();
 }
 
 function finalizeTrialBalanceRows(
@@ -453,14 +457,8 @@ export type OperationalReports = {
   seasonal: SeasonalAnalysis;
 };
 
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function daysAgoIso(days: number) {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
+  return addDaysIso(todayIso(), -days);
 }
 
 /** Hardware-relevant operational metrics (fast aggregates). */

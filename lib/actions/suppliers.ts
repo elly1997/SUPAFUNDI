@@ -391,6 +391,7 @@ export async function createSupplierRecord(
     const bill = await createManualSupplierBill({
       supplierId: data.id,
       billDate,
+      dueDate: billDate,
       totalAmount: input.openingBalance,
       notes: "Opening balance",
     });

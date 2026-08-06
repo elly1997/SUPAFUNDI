@@ -382,6 +382,26 @@ export function buildExpenseJournalLines(input: ExpensePostingInput): JournalLin
   ];
 }
 
+/** Opening supplier balance — Cr AP · Dr equity (historical liability). */
+export function buildSupplierOpeningBalanceJournalLines(
+  amount: number
+): JournalLineInput[] {
+  return [
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.equity,
+      debit: amount,
+      credit: 0,
+      memo: "Opening balance equity",
+    },
+    {
+      accountCode: SYSTEM_ACCOUNT_CODES.ap,
+      debit: 0,
+      credit: amount,
+      memo: "Opening supplier AP",
+    },
+  ];
+}
+
 /** Pay supplier bill — Dr AP · Cr cash/M-Pesa/bank. */
 export function buildSupplierPaymentJournalLines(
   amount: number,
