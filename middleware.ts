@@ -83,7 +83,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/setup", request.url));
   }
 
-  if (hasOrganization && isPublic) {
+  // Invited staff must be able to set their own password without
+  // being bounced into an already-open owner session/dashboard.
+  if (hasOrganization && isPublic && pathname !== "/set-password") {
     return NextResponse.redirect(new URL("/", request.url));
   }
 

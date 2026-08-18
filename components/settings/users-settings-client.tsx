@@ -174,6 +174,10 @@ export function UsersSettingsClient() {
       });
     },
     onSuccess: (r) => {
+      if (!r || typeof r !== "object" || !("ok" in r)) {
+        toast.error("Could not assign outlet. Try again.");
+        return;
+      }
       if (r.ok) {
         setAssignResult(r);
         queryClient.invalidateQueries({ queryKey: ["settings-users"] });
@@ -630,6 +634,12 @@ export function UsersSettingsClient() {
                   <SelectItem value="__none__" disabled>
                     Choose an outlet
                   </SelectItem>
+                  {assignOutletId &&
+                  !outlets.some((o) => o.id === assignOutletId) ? (
+                    <SelectItem value={assignOutletId}>
+                      {assignUser?.outlet_name ?? "Current outlet"}
+                    </SelectItem>
+                  ) : null}
                   {outlets.map((o) => (
                     <SelectItem key={o.id} value={o.id}>
                       {o.name}

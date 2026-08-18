@@ -287,6 +287,21 @@ export async function assignUserToOutlet(
 
     const now = new Date().toISOString();
 
+    const { error: pwdErr } = await admin.auth.admin.updateUserById(
+      input.userId,
+      { password: input.password, email_confirm: true }
+    );
+    if (pwdErr) return { ok: false, message: pwdErr.message };
+
+    if (input.setAsHomeOutlet) {
+      const { error: profileErr } = await admin
+        .from("profiles")
+        .update({ outlet_id: input.outletId })
+        .eq("id", input.userId)
+        .eq("organization_id", organizationId);
+      if (profileErr) return { ok: false, message: profileErr.message };
+    }
+
     const { error: grantErr } = await admin.from("user_outlet_access").upsert(
       {
         user_id: input.userId,
@@ -299,24 +314,8 @@ export async function assignUserToOutlet(
     );
     if (grantErr) return { ok: false, message: grantErr.message };
 
-    if (input.setAsHomeOutlet) {
-      const { error: profileErr } = await admin
-        .from("profiles")
-        .update({ outlet_id: input.outletId })
-        .eq("id", input.userId)
-        .eq("organization_id", organizationId);
-      if (profileErr) return { ok: false, message: profileErr.message };
-    }
-
-    const { error: pwdErr } = await admin.auth.admin.updateUserById(
-      input.userId,
-      { password: input.password }
-    );
-    if (pwdErr) return { ok: false, message: pwdErr.message };
-
     revalidatePath("/settings/users");
     revalidatePath("/settings/general");
-    revalidatePath("/", "layout");
 
     return {
       ok: true,

@@ -43,7 +43,7 @@ export async function getAppOrigin(): Promise<string> {
 }
 
 export function inviteRedirectPath(): string {
-  return "/auth/callback";
+  return "/auth/callback?next=/set-password";
 }
 
 export async function getInviteRedirectUrl(): Promise<string> {

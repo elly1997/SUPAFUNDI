@@ -52,7 +52,10 @@ export function LoginForm() {
         "This invite link is invalid or expired. Ask the owner to resend the invite."
       );
     }
-  }, [inviteError]);
+    if (searchParams.get("password_set") === "1") {
+      toast.success("Password saved. Sign in with your email and new password.");
+    }
+  }, [inviteError, searchParams]);
 
   const handleSignInSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

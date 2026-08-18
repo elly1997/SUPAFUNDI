@@ -41,6 +41,7 @@ Open [http://localhost:3000](http://localhost:3000). Use `npm run dev:clean` if 
      - `https://hardwarepos.netlify.app/**`
      - `https://hardwarepos.netlify.app/auth/callback`
      - `https://hardwarepos.netlify.app/auth/confirm`
+     - `https://hardwarepos.netlify.app/set-password`
      - `https://hardwarepos.netlify.app/login`
    - Staff invite emails use this Site URL. A wrong Netlify hostname shows **Site not found**. After changing it, resend the invite.
 

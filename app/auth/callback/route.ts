@@ -5,12 +5,17 @@ import type { EmailOtpType } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { getPublicSupabaseEnv } from "@/lib/env/public";
 
-function safeNextPath(value: string | null): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/";
-  return value;
+function safeNextPath(value: string | null, type: string | null): string {
+  if (value && value.startsWith("/") && !value.startsWith("//")) {
+    return value;
+  }
+  if (type === "invite" || type === "recovery" || type === "email") {
+    return "/set-password";
+  }
+  return "/set-password";
 }
 
-function redirectToApp(request: Request, path: string) {
+function redirectUrl(request: Request, path: string) {
   const url = new URL(request.url);
   const forwardedHost = request.headers.get("x-forwarded-host");
   const origin =
@@ -19,26 +24,32 @@ function redirectToApp(request: Request, path: string) {
       : forwardedHost
         ? `https://${forwardedHost}`
         : url.origin;
-  return NextResponse.redirect(new URL(path, origin));
+  return new URL(path, origin);
 }
 
 /**
  * Completes invite / magic-link / PKCE redirects from Supabase email.
- * Query: ?code=…  or  ?token_hash=…&type=invite
+ * Always lands invited staff on /set-password for their own account.
  */
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const code = searchParams.get("code");
-  const tokenHash = searchParams.get("token_hash");
-  const type = searchParams.get("type") as EmailOtpType | null;
-  const next = safeNextPath(searchParams.get("next"));
+  const requestUrl = new URL(request.url);
+  const code = requestUrl.searchParams.get("code");
+  const tokenHash = requestUrl.searchParams.get("token_hash");
+  const type = requestUrl.searchParams.get("type") as EmailOtpType | null;
+  const next = safeNextPath(requestUrl.searchParams.get("next"), type);
 
   const env = getPublicSupabaseEnv();
   if (!env.ok) {
-    return redirectToApp(request, "/login?error=invite");
+    return NextResponse.redirect(redirectUrl(request, "/login?error=invite"));
   }
 
   const cookieStore = await cookies();
+  const pendingCookies: {
+    name: string;
+    value: string;
+    options?: Parameters<typeof cookieStore.set>[2];
+  }[] = [];
+
   const supabase = createServerClient<Database>(
     env.data.supabaseUrl,
     env.data.supabaseAnonKey,
@@ -50,11 +61,15 @@ export async function GET(request: Request) {
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) => {
             cookieStore.set(name, value, options);
+            pendingCookies.push({ name, value, options });
           });
         },
       },
     }
   );
+
+  // Drop any existing (owner) session so the invitee is not opened as the owner.
+  await supabase.auth.signOut({ scope: "local" });
 
   let errorMessage: string | null = null;
   if (code) {
@@ -70,12 +85,12 @@ export async function GET(request: Request) {
     errorMessage = "Missing invite token";
   }
 
-  if (errorMessage) {
-    return redirectToApp(
-      request,
-      `/login?error=invite&reason=${encodeURIComponent(errorMessage)}`
-    );
+  const path = errorMessage
+    ? `/login?error=invite&reason=${encodeURIComponent(errorMessage)}`
+    : next;
+  const response = NextResponse.redirect(redirectUrl(request, path));
+  for (const { name, value, options } of pendingCookies) {
+    response.cookies.set(name, value, options);
   }
-
-  return redirectToApp(request, next);
+  return response;
 }
