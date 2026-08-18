@@ -128,7 +128,11 @@ export function InventoryImportDialog({
     }
     setImportRows(parsed.rows);
     setPreview(null);
-    toast.success(`Parsed ${parsed.rows.length} row(s). Review and import.`);
+    toast.success(
+      parsed.skippedPlaceholders
+        ? `Parsed ${parsed.rows.length} row(s). Skipped ${parsed.skippedPlaceholders} leftover row(s) with no name.`
+        : `Parsed ${parsed.rows.length} row(s). Review and import.`
+    );
   }, []);
 
   const previewMutation = useMutation({

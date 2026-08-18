@@ -270,9 +270,29 @@ function mergeDuplicateCodes(rows: InventoryImportRow[]): InventoryImportRow[] {
 
 
 
+function isBlankCell(v: unknown): boolean {
+
+  return String(v ?? "").trim() === "";
+
+}
+
+
+
+/** Leftover SKU / template lines: a code but no name and no qty/cost/price. */
+
+function isPlaceholderImportRow(obj: Record<string, unknown>): boolean {
+
+  if (!isBlankCell(obj.name)) return false;
+
+  return ["quantity", "cost", "retailPrice"].every((k) => isBlankCell(obj[k]));
+
+}
+
+
+
 export type ParseInventoryResult =
 
-  | { ok: true; rows: InventoryImportRow[] }
+  | { ok: true; rows: InventoryImportRow[]; skippedPlaceholders: number }
 
   | { ok: false; error: string };
 
@@ -336,6 +356,8 @@ export function parseInventoryWorkbook(buffer: ArrayBuffer): ParseInventoryResul
 
   const parsed: InventoryImportRow[] = [];
 
+  let skippedPlaceholders = 0;
+
   for (let i = 1; i < aoa.length; i++) {
 
     const cells = aoa[i] as unknown[];
@@ -343,6 +365,14 @@ export function parseInventoryWorkbook(buffer: ArrayBuffer): ParseInventoryResul
     if (!cells || !cells.some((c) => String(c).trim() !== "")) continue;
 
     const obj = rowObject(keys, cells);
+
+    if (isPlaceholderImportRow(obj)) {
+
+      skippedPlaceholders += 1;
+
+      continue;
+
+    }
 
     const r = inventoryImportRowSchema.safeParse(obj);
 
@@ -378,7 +408,7 @@ export function parseInventoryWorkbook(buffer: ArrayBuffer): ParseInventoryResul
 
   }));
 
-  return { ok: true, rows: withCodes };
+  return { ok: true, rows: withCodes, skippedPlaceholders };
 
 }
 
