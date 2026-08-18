@@ -2,6 +2,7 @@ import "server-only";
 
 import { listProductPriceCatalog } from "@/lib/actions/inventory";
 import type { InventoryImportRow } from "@/lib/excel/parse-inventory";
+import { stockStatus, type StockStatus } from "@/lib/inventory/stock-status";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { fetchByInChunks } from "@/lib/supabase/query-chunks";
@@ -21,7 +22,8 @@ export type CatalogBackupJson = {
 };
 
 export async function buildCatalogBackup(
-  outletId: string
+  outletId: string,
+  filters?: { status?: StockStatus | "all" | null }
 ): Promise<CatalogBackupJson> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
@@ -55,7 +57,7 @@ export async function buildCatalogBackup(
     stockRows.map((s) => [s.product_id as string, Number(s.quantity)])
   );
 
-  const products: CatalogBackupProduct[] = catalog.map((p) => ({
+  let products: CatalogBackupProduct[] = catalog.map((p) => ({
     productId: p.id,
     code: p.code?.trim() ?? "",
     name: p.name,
@@ -67,6 +69,27 @@ export async function buildCatalogBackup(
     unit: p.unit,
     notes: "",
   }));
+
+  const status =
+    filters?.status && filters.status !== "all" ? filters.status : null;
+  if (status) {
+    const reorderRows = ids.length
+      ? await fetchByInChunks(ids, async (chunk) => {
+          const { data, error } = await supabase
+            .from("products")
+            .select("id, reorder_point")
+            .in("id", chunk);
+          return { data, error };
+        })
+      : [];
+    const reorderMap = new Map(
+      reorderRows.map((r) => [String(r.id), Number(r.reorder_point ?? 0)])
+    );
+    products = products.filter(
+      (p) =>
+        stockStatus(p.quantity, reorderMap.get(p.productId) ?? 0) === status
+    );
+  }
 
   return {
     version: 1,

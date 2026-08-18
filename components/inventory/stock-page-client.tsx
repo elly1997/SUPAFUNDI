@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Fragment, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
 import { IncomingTransfersPanel } from "@/components/inventory/incoming-transfers-panel";
@@ -124,6 +124,7 @@ export function StockPageClient() {
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [page, setPage] = useState(1);
+  const stockListRef = useRef<HTMLDivElement>(null);
 
   const { data: outlets = [] } = useQuery({
     queryKey: ["org-outlets"],
@@ -340,6 +341,27 @@ export function StockPageClient() {
   const attentionCount =
     (kpiSummary?.lowStockCount ?? 0) + (kpiSummary?.outOfStockCount ?? 0);
 
+  const applyStatusFilter = (next: StockStatus) => {
+    setStatusFilter((prev) => (prev === next ? "all" : next));
+    requestAnimationFrame(() => {
+      stockListRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
+  const exportLabel =
+    statusFilter === "out_of_stock"
+      ? "Export out of stock"
+      : statusFilter === "low"
+        ? "Export low stock"
+        : "Export Excel";
+
+  const exportSuccessLabel =
+    statusFilter === "out_of_stock"
+      ? "Out of stock list downloaded"
+      : statusFilter === "low"
+        ? "Low stock list downloaded"
+        : "Price list downloaded";
+
   const kpiLoading = (summaryLoading || isLoading) && !kpiSummary;
   const kpiUpdating = summaryFetching || isFetching;
 
@@ -407,8 +429,10 @@ export function StockPageClient() {
               if (!outletId) return;
               setExporting(true);
               try {
-                await downloadCatalogXlsx(outletId, activeOutletName);
-                toast.success("Price list downloaded");
+                await downloadCatalogXlsx(outletId, activeOutletName, {
+                  status: statusFilter,
+                });
+                toast.success(exportSuccessLabel);
               } catch (e) {
                 toast.error(e instanceof Error ? e.message : "Export failed");
               } finally {
@@ -421,7 +445,7 @@ export function StockPageClient() {
             ) : (
               <Download className="mr-2 size-4" />
             )}
-            Export Excel
+            {exportLabel}
           </Button>
           <Button
             type="button"
@@ -502,6 +526,8 @@ export function StockPageClient() {
           }
           subtitle="On hand but at/below reorder level"
           variant="warning"
+          selected={statusFilter === "low"}
+          onClick={() => applyStatusFilter("low")}
         />
         <KpiCard
           title="Out of stock"
@@ -510,6 +536,8 @@ export function StockPageClient() {
           }
           subtitle="Zero quantity on hand"
           variant="outflow"
+          selected={statusFilter === "out_of_stock"}
+          onClick={() => applyStatusFilter("out_of_stock")}
         />
       </div>
 
@@ -522,24 +550,44 @@ export function StockPageClient() {
               <AlertTriangle className="h-4 w-4 shrink-0" />
               {attentionCount} product(s) need attention
             </span>
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={!outletId || suggestMut.isPending}
-              onClick={() => suggestMut.mutate()}
-            >
-              {suggestMut.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <ClipboardList className="mr-2 h-4 w-4" />
-              )}
-              Suggest purchase order
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              {(kpiSummary?.lowStockCount ?? 0) > 0 ? (
+                <Button
+                  size="sm"
+                  variant={statusFilter === "low" ? "default" : "outline"}
+                  onClick={() => applyStatusFilter("low")}
+                >
+                  View low stock ({kpiSummary?.lowStockCount})
+                </Button>
+              ) : null}
+              {(kpiSummary?.outOfStockCount ?? 0) > 0 ? (
+                <Button
+                  size="sm"
+                  variant={statusFilter === "out_of_stock" ? "default" : "outline"}
+                  onClick={() => applyStatusFilter("out_of_stock")}
+                >
+                  View out of stock ({kpiSummary?.outOfStockCount})
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={!outletId || suggestMut.isPending}
+                onClick={() => suggestMut.mutate()}
+              >
+                {suggestMut.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <ClipboardList className="mr-2 h-4 w-4" />
+                )}
+                Suggest purchase order
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div ref={stockListRef} className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <Input
           className="max-w-md flex-1"
           placeholder="Search product, SKU, or category…"
@@ -565,12 +613,28 @@ export function StockPageClient() {
             <SelectItem value="out_of_stock">Out of stock</SelectItem>
           </SelectContent>
         </Select>
+        {statusFilter !== "all" ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setStatusFilter("all")}
+          >
+            Clear filter
+          </Button>
+        ) : null}
       </div>
 
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="flex items-center gap-2">
             Stock &amp; prices
+            {statusFilter !== "all" ? (
+              <span className="text-sm font-normal text-muted-foreground">
+                · {statusLabel[statusFilter]}
+                {!kpiLoading && total > 0 ? ` (${total})` : ""}
+              </span>
+            ) : null}
             {isFetching && !isLoading ? (
               <Loader2 className="size-4 animate-spin text-muted-foreground" />
             ) : null}

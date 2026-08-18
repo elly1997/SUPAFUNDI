@@ -11,6 +11,8 @@ type KpiCardProps = {
   icon?: LucideIcon;
   variant?: KpiVariant;
   className?: string;
+  onClick?: () => void;
+  selected?: boolean;
 };
 
 const variantStyles: Record<KpiVariant, string> = {
@@ -34,9 +36,35 @@ export function KpiCard({
   icon: Icon,
   variant = "default",
   className,
+  onClick,
+  selected = false,
 }: KpiCardProps) {
+  const interactive = typeof onClick === "function";
+
   return (
-    <Card className={cn("dash-stat-card shadow-card", className)}>
+    <Card
+      className={cn(
+        "dash-stat-card shadow-card",
+        interactive &&
+          "min-h-11 cursor-pointer text-left transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+        selected && "border-primary/60 ring-2 ring-primary/40",
+        className
+      )}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-pressed={interactive ? selected : undefined}
+      onClick={onClick}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
+    >
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">
           {title}
@@ -63,6 +91,11 @@ export function KpiCard({
         </p>
         {subtitle ? (
           <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+        ) : null}
+        {interactive ? (
+          <p className="mt-1 text-[11px] font-medium text-primary">
+            {selected ? "Showing in list below · tap to clear" : "Tap to show in list"}
+          </p>
         ) : null}
       </CardContent>
     </Card>

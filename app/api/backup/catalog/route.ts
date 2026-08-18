@@ -13,6 +13,13 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const outletId = searchParams.get("outletId");
     const format = searchParams.get("format") ?? "json";
+    const statusParam = searchParams.get("status");
+    const status =
+      statusParam === "low" ||
+      statusParam === "out_of_stock" ||
+      statusParam === "ok"
+        ? statusParam
+        : undefined;
 
     if (!outletId) {
       return NextResponse.json(
@@ -21,9 +28,10 @@ export async function GET(request: Request) {
       );
     }
 
-    const backup = await buildCatalogBackup(outletId);
+    const backup = await buildCatalogBackup(outletId, { status });
     const stamp = new Date().toISOString().slice(0, 10);
     const safeName = backup.outletName.replace(/[^\w\-]+/g, "_").slice(0, 40);
+    const statusSuffix = status ? `-${status.replaceAll("_", "-")}` : "";
 
     if (format === "xlsx") {
       const buffer = catalogBackupToWorkbookBuffer(
@@ -34,7 +42,7 @@ export async function GET(request: Request) {
         headers: {
           "Content-Type":
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          "Content-Disposition": `attachment; filename="catalog-${safeName}-${stamp}.xlsx"`,
+          "Content-Disposition": `attachment; filename="catalog-${safeName}${statusSuffix}-${stamp}.xlsx"`,
         },
       });
     }

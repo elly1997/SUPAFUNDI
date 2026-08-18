@@ -23,9 +23,13 @@ export async function downloadCatalogJson(
 
 export async function downloadCatalogXlsx(
   outletId: string,
-  outletName: string
+  outletName: string,
+  options?: { status?: "out_of_stock" | "low" | "ok" | "all" }
 ): Promise<void> {
   const params = new URLSearchParams({ outletId, format: "xlsx" });
+  if (options?.status && options.status !== "all") {
+    params.set("status", options.status);
+  }
   const res = await fetch(`/api/backup/catalog?${params}`, {
     credentials: "include",
   });
@@ -33,10 +37,16 @@ export async function downloadCatalogXlsx(
   const blob = await res.blob();
   const stamp = new Date().toISOString().slice(0, 10);
   const safeName = outletName.replace(/[^\w\-]+/g, "_").slice(0, 40);
+  const statusSuffix =
+    options?.status && options.status !== "all"
+      ? `-${options.status.replaceAll("_", "-")}`
+      : "";
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="([^"]+)"/);
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `catalog-${safeName}-${stamp}.xlsx`;
+  a.download = match?.[1] ?? `catalog-${safeName}${statusSuffix}-${stamp}.xlsx`;
   a.click();
   URL.revokeObjectURL(url);
 }
