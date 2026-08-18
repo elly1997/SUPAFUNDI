@@ -42,6 +42,10 @@ export function TransferDetailClient({ transferId }: Props) {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["stock-transfer", transferId] });
     queryClient.invalidateQueries({ queryKey: ["stock-transfers"] });
+    queryClient.invalidateQueries({ queryKey: ["incoming-transfers"] });
+    queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
+    queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
+    queryClient.invalidateQueries({ queryKey: ["pos-products"] });
   };
 
   const approveMut = useMutation({
@@ -186,8 +190,10 @@ export function TransferDetailClient({ transferId }: Props) {
       <Card className="border-muted">
         <CardContent className="py-4 text-sm text-muted-foreground">
           <strong>Workflow:</strong> Request → Owner/manager approves → Dispatch
-          (stock leaves source) → Receive at destination. No GL entry —
-          inventory moves between outlets at cost.
+          (qty leaves the source branch) → Receive at destination (qty lands on
+          that branch&apos;s catalog: match SKU/barcode/name, or copy the item).
+          Transfers do not create a sale or invoice; stock moves at cost.
+
         </CardContent>
       </Card>
     </div>

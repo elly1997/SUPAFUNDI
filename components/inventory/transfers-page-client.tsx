@@ -68,8 +68,8 @@ export function TransfersPageClient() {
   const queryClient = useQueryClient();
 
   const { data: transfers = [], isLoading } = useQuery({
-    queryKey: ["stock-transfers"],
-    queryFn: listStockTransfers,
+    queryKey: ["stock-transfers", defaultOutlet],
+    queryFn: () => listStockTransfers(defaultOutlet),
   });
   const { data: outlets = [] } = useQuery({
     queryKey: ["org-outlets"],
@@ -130,6 +130,11 @@ export function TransfersPageClient() {
         </Button>
       </CardHeader>
       <CardContent>
+        <p className="mb-4 text-sm text-muted-foreground">
+          Send stock from this branch to another. The destination keeps its own
+          catalog: matching SKU, barcode, or name is reused; otherwise the item
+          is copied there on receipt.
+        </p>
         {canApprove && pendingCount > 0 ? (
           <p className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
             {pendingCount} transfer{pendingCount === 1 ? "" : "s"} awaiting your

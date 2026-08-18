@@ -35,6 +35,8 @@ export function IncomingTransfersPanel({ outletId, compact = false }: Props) {
         queryClient.invalidateQueries({ queryKey: ["stock-transfers"] });
         queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
         queryClient.invalidateQueries({ queryKey: ["stock-transfer", transferId] });
+        queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
+        queryClient.invalidateQueries({ queryKey: ["pos-products"] });
       } else toast.error(r.message);
     },
   });
@@ -68,8 +70,9 @@ export function IncomingTransfersPanel({ outletId, compact = false }: Props) {
           Incoming stock transfers — confirm receipt
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          These items were sent from another outlet. Confirm receipt to add them
-          to stock at this outlet (same as receive goods approval).
+          Confirm receipt to add these items to this outlet&apos;s catalog and
+          stock. Matching SKU, barcode, or name is reused; new items are copied
+          here.
         </p>
       </CardHeader>
       <CardContent className="space-y-2">

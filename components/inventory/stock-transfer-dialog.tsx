@@ -119,6 +119,10 @@ export function StockTransferDialog({
               <p className="mt-1 text-xs text-muted-foreground">
                 From: {row.outlet_name}
               </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                On receipt, the other branch adds this to its own catalog
+                (matched by SKU, barcode, or name, or copied if new).
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Transfer to outlet</Label>

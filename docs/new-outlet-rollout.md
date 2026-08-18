@@ -5,6 +5,7 @@ This rollout keeps the main outlet history intact while allowing a new outlet to
 ## What the migration does
 
 - Adds `outlet_id` ownership to `products`, `employees`, `employee_bonuses`, `payroll_runs`, `suppliers`, `supplier_bills`, and `bank_accounts`.
+- Requires every sale/invoice to have an `outlet_id`. Receipt numbers are unique **per outlet**, not across the whole business.
 - Backfills legacy rows to the earliest active outlet in each organization.
 - Replaces org-wide product code/barcode uniqueness with outlet-scoped uniqueness.
 - Replaces org-wide payroll month uniqueness with outlet-scoped uniqueness.
@@ -38,3 +39,5 @@ This rollout keeps the main outlet history intact while allowing a new outlet to
 - Create an employee in the second outlet and confirm payroll month refresh only includes that employee.
 - Create a supplier bill in the second outlet and confirm it is hidden from the main outlet.
 - Create a collection account in the second outlet and confirm banking lists only that outlet's account.
+- Create a sale or invoice in outlet A and confirm it does not appear under outlet B.
+- Transfer stock from A to B: dispatch reduces A; receive adds to B's catalog (existing SKU/name or a copied item) and B can sell it.

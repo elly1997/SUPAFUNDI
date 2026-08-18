@@ -171,6 +171,7 @@ async function generateInvoiceNo(
       .from("sales")
       .select("id")
       .eq("organization_id", organizationId)
+      .eq("outlet_id", outletId)
       .eq("invoice_no", invoiceNo)
       .maybeSingle();
     if (!existing) {
@@ -277,6 +278,19 @@ export async function completeSale(
     }
 
     const productIds = input.lines.map((l) => l.productId);
+    const { data: catalogRows } = await supabase
+      .from("products")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", input.outletId)
+      .in("id", productIds);
+    if ((catalogRows ?? []).length !== new Set(productIds).size) {
+      return {
+        ok: false,
+        message:
+          "One or more products belong to another outlet. Switch branch and sell from this catalog.",
+      };
+    }
     const { data: stockRows, error: stockErr } = await supabase
       .from("stock")
       .select("id, product_id, quantity, cost_price")
@@ -866,6 +880,9 @@ export async function listSalesPage(input?: {
   const invoiceSearch = input?.invoiceSearch?.trim() ?? "";
   const scopedOutletId =
     input?.outletId ?? (await resolveWorkingOutletId(ctx));
+  if (!scopedOutletId) {
+    return { sales: [], total: 0, page, pageSize, hasMore: false };
+  }
 
   let query = supabase
     .from("sales")
@@ -873,8 +890,8 @@ export async function listSalesPage(input?: {
       "id, invoice_no, sale_type, sale_date, total_amount, amount_paid, balance_due, deposit_applied, status, customer_id",
       { count: "exact" }
     )
-    .eq("organization_id", ctx.organizationId);
-  if (scopedOutletId) query = query.eq("outlet_id", scopedOutletId);
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", scopedOutletId);
   if (input?.fromDate) query = query.gte("sale_date", `${input.fromDate}T00:00:00.000Z`);
   if (input?.toDate) query = query.lte("sale_date", `${input.toDate}T23:59:59.999Z`);
   if (invoiceSearch) {
@@ -924,15 +941,16 @@ export async function listRecentSales(
 ): Promise<SaleListRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const scopedOutletId =
+    filters?.outletId ?? (await resolveWorkingOutletId(ctx));
+  if (!scopedOutletId) return [];
   let query = supabase
     .from("sales")
     .select(
       "id, invoice_no, sale_type, sale_date, total_amount, amount_paid, balance_due, deposit_applied, status, customer_id"
     )
-    .eq("organization_id", ctx.organizationId);
-  if (filters?.outletId) {
-    query = query.eq("outlet_id", filters.outletId);
-  }
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", scopedOutletId);
   if (filters?.fromDate) {
     query = query.gte("sale_date", `${filters.fromDate}T00:00:00.000Z`);
   }
@@ -973,10 +991,13 @@ export async function lookupSaleByInvoice(
   if (!trimmed) return null;
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const scopedOutletId = await resolveWorkingOutletId(ctx);
+  if (!scopedOutletId) return null;
   const { data, error } = await supabase
     .from("sales")
     .select("id, invoice_no, status")
     .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", scopedOutletId)
     .eq("invoice_no", trimmed)
     .maybeSingle();
   if (error || !data) return null;

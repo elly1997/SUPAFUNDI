@@ -52,6 +52,7 @@ export function InvoicesPageClient() {
         customerRequired,
         status: statusFilter,
         limit: 100,
+        outletId,
       }),
     enabled: !!outletId,
   });

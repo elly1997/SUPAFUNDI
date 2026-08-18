@@ -7,6 +7,8 @@ import {
   isUserRole,
   type UserRole,
 } from "@/lib/auth/roles";
+import { resolveWorkingOutletId } from "@/lib/customers/working-outlet";
+import { ensureDestinationProduct } from "@/lib/inventory/ensure-outlet-product";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
@@ -49,6 +51,7 @@ export type TransferDetail = {
   items: {
     id: string;
     product_id: string | null;
+    to_product_id: string | null;
     product_name: string;
     product_code: string | null;
     requested_qty: number;
@@ -84,10 +87,13 @@ async function nextTransferReference(
   return formatTransferReference("ORG", year, (count ?? 0) + 1);
 }
 
-export async function listStockTransfers(): Promise<TransferListRow[]> {
+export async function listStockTransfers(
+  outletId?: string | null
+): Promise<TransferListRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
+  const scopedOutletId = await resolveWorkingOutletId(ctx, outletId);
+  let query = supabase
     .from("stock_transfers")
     .select(
       "id, reference_no, status, from_outlet_id, to_outlet_id, created_at"
@@ -95,6 +101,12 @@ export async function listStockTransfers(): Promise<TransferListRow[]> {
     .eq("organization_id", ctx.organizationId)
     .order("created_at", { ascending: false })
     .limit(100);
+  if (scopedOutletId) {
+    query = query.or(
+      `from_outlet_id.eq.${scopedOutletId},to_outlet_id.eq.${scopedOutletId}`
+    );
+  }
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
 
   const rows = data ?? [];
@@ -155,14 +167,14 @@ export async function getStockTransferById(
   const { data: items } = await supabase
     .from("stock_transfer_items")
     .select(
-      "id, product_id, requested_qty, dispatched_qty, received_qty, unit_cost"
+      "id, product_id, to_product_id, requested_qty, dispatched_qty, received_qty, unit_cost"
     )
     .eq("transfer_id", id);
 
   const productIds = Array.from(
     new Set(
       (items ?? [])
-        .map((i) => i.product_id)
+        .flatMap((i) => [i.product_id, i.to_product_id])
         .filter((pid): pid is string => !!pid)
     )
   );
@@ -196,12 +208,18 @@ export async function getStockTransferById(
     dispatched_at: tr.dispatched_at,
     received_at: tr.received_at,
     items: (items ?? []).map((i) => {
+      const dest =
+        i.to_product_id && i.to_product_id !== i.product_id
+          ? productMap.get(i.to_product_id)
+          : null;
       const p = i.product_id ? productMap.get(i.product_id) : null;
+      const shown = dest ?? p;
       return {
         id: i.id,
         product_id: i.product_id,
-        product_name: p?.name ?? "—",
-        product_code: p?.code ?? null,
+        to_product_id: i.to_product_id ?? null,
+        product_name: shown?.name ?? "—",
+        product_code: shown?.code ?? null,
         requested_qty: Number(i.requested_qty),
         dispatched_qty: i.dispatched_qty != null ? Number(i.dispatched_qty) : null,
         received_qty: i.received_qty != null ? Number(i.received_qty) : null,
@@ -230,6 +248,23 @@ export async function createStockTransfer(
         .eq("organization_id", ctx.organizationId)
         .maybeSingle();
       if (!o) return { ok: false, message: "Invalid outlet." };
+    }
+
+    const sourceProductIds = Array.from(
+      new Set(input.lines.map((l) => l.productId))
+    );
+    const { data: sourceProducts } = await supabase
+      .from("products")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", input.fromOutletId)
+      .in("id", sourceProductIds);
+    if ((sourceProducts ?? []).length !== sourceProductIds.length) {
+      return {
+        ok: false,
+        message:
+          "Transfer lines must use products from the source outlet catalog.",
+      };
     }
 
     const referenceNo = await nextTransferReference(
@@ -540,14 +575,23 @@ export async function receiveStockTransfer(
   try {
     for (const item of detail.items) {
       if (!item.product_id) continue;
+      if (Number(item.received_qty ?? 0) > 0) continue;
+
       const qty = item.dispatched_qty ?? item.requested_qty;
       const unitCost = item.unit_cost ?? 0;
+      const destProductId =
+        item.to_product_id ??
+        (await ensureDestinationProduct(supabase, {
+          organizationId: ctx.organizationId,
+          sourceProductId: item.product_id,
+          toOutletId: detail.to_outlet_id,
+        }));
 
       const { data: stock } = await supabase
         .from("stock")
         .select("id, quantity, cost_price")
         .eq("outlet_id", detail.to_outlet_id)
-        .eq("product_id", item.product_id)
+        .eq("product_id", destProductId)
         .maybeSingle();
 
       const oldQty = Number(stock?.quantity ?? 0);
@@ -567,7 +611,7 @@ export async function receiveStockTransfer(
         await supabase.from("stock").insert({
           organization_id: ctx.organizationId,
           outlet_id: detail.to_outlet_id,
-          product_id: item.product_id,
+          product_id: destProductId,
           quantity: qty,
           cost_price: unitCost,
         });
@@ -576,7 +620,7 @@ export async function receiveStockTransfer(
       await supabase.from("stock_movements").insert({
         organization_id: ctx.organizationId,
         outlet_id: detail.to_outlet_id,
-        product_id: item.product_id,
+        product_id: destProductId,
         movement_type: "transfer_in",
         quantity: qty,
         unit_cost: unitCost,
@@ -587,7 +631,7 @@ export async function receiveStockTransfer(
 
       await supabase
         .from("stock_transfer_items")
-        .update({ received_qty: qty })
+        .update({ received_qty: qty, to_product_id: destProductId })
         .eq("id", item.id);
     }
 
@@ -603,6 +647,8 @@ export async function receiveStockTransfer(
     revalidatePath("/inventory/transfers");
     revalidatePath("/inventory/stock");
     revalidatePath("/inventory/receive");
+    revalidatePath("/inventory/products");
+    revalidatePath("/pos");
     return { ok: true };
   } catch (e) {
     return {

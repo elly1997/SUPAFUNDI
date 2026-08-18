@@ -86,10 +86,23 @@ async function generateDocumentNo(
     .from("sales")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId)
+    .eq("outlet_id", outletId)
     .eq("sale_type", saleType)
     .gte("sale_date", yearStart);
 
-  return formatInvoiceNo(prefix, year, (count ?? 0) + 1);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const seq = (count ?? 0) + 1 + attempt;
+    const invoiceNo = formatInvoiceNo(prefix, year, seq);
+    const { data: existing } = await supabase
+      .from("sales")
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("outlet_id", outletId)
+      .eq("invoice_no", invoiceNo)
+      .maybeSingle();
+    if (!existing) return invoiceNo;
+  }
+  return formatInvoiceNo(prefix, year, Date.now() % 100000);
 }
 
 export async function listSaleDocuments(options?: {
@@ -98,22 +111,21 @@ export async function listSaleDocuments(options?: {
   balanceDueMin?: number;
   customerRequired?: boolean;
   limit?: number;
+  outletId?: string | null;
 }): Promise<SaleDocumentRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
-  const scopedOutletId = await resolveWorkingOutletId(ctx);
+  const scopedOutletId = await resolveWorkingOutletId(ctx, options?.outletId);
+  if (!scopedOutletId) return [];
   let query = supabase
     .from("sales")
     .select(
       "id, invoice_no, sale_type, status, sale_date, total_amount, amount_paid, balance_due, customer_id"
     )
     .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", scopedOutletId)
     .order("sale_date", { ascending: false })
     .limit(options?.limit ?? 100);
-
-  if (scopedOutletId) {
-    query = query.eq("outlet_id", scopedOutletId);
-  }
 
   if (options?.saleTypes?.length) {
     query = query.in("sale_type", options.saleTypes);
@@ -192,6 +204,58 @@ export async function createDraftSaleDocument(
     const input = createDraftInput.parse(raw);
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
+    const { data: outlet } = await supabase
+      .from("outlets")
+      .select("id")
+      .eq("id", input.outletId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!outlet) {
+      return { ok: false, message: "Invalid outlet for your organization." };
+    }
+
+    const catalogProductIds = Array.from(
+      new Set(
+        input.lines
+          .map((l) => l.productId)
+          .filter((id): id is string => !!id)
+      )
+    );
+    if (catalogProductIds.length > 0) {
+      const { data: catalogRows } = await supabase
+        .from("products")
+        .select("id")
+        .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", input.outletId)
+        .in("id", catalogProductIds);
+      if ((catalogRows ?? []).length !== catalogProductIds.length) {
+        return {
+          ok: false,
+          message:
+            "One or more products belong to another outlet. Switch branch and pick from this catalog.",
+        };
+      }
+    }
+
+    if (input.customerId) {
+      const { data: customer } = await supabase
+        .from("customers")
+        .select("id, outlet_id")
+        .eq("id", input.customerId)
+        .eq("organization_id", ctx.organizationId)
+        .maybeSingle();
+      if (!customer) {
+        return { ok: false, message: "Customer not found." };
+      }
+      if (customer.outlet_id && customer.outlet_id !== input.outletId) {
+        return {
+          ok: false,
+          message:
+            "This customer belongs to another outlet. Switch branch or create them here.",
+        };
+      }
+    }
+
     const vatConfig = await getOrgVatConfig();
     const taxRate = effectiveTaxRate(vatConfig, input.taxRate);
 
