@@ -6,6 +6,7 @@ import type { SaleDocumentType } from "@/lib/constants/sale-documents";
 import { invoicePrefixForType } from "@/lib/constants/sale-documents";
 import { completeSale, type CompleteSaleInput } from "@/lib/actions/sales";
 import { requireOrgContext } from "@/lib/server/org-context";
+import { resolveWorkingOutletId } from "@/lib/customers/working-outlet";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
   computeLineTotal,
@@ -100,6 +101,7 @@ export async function listSaleDocuments(options?: {
 }): Promise<SaleDocumentRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const scopedOutletId = await resolveWorkingOutletId(ctx);
   let query = supabase
     .from("sales")
     .select(
@@ -108,6 +110,10 @@ export async function listSaleDocuments(options?: {
     .eq("organization_id", ctx.organizationId)
     .order("sale_date", { ascending: false })
     .limit(options?.limit ?? 100);
+
+  if (scopedOutletId) {
+    query = query.eq("outlet_id", scopedOutletId);
+  }
 
   if (options?.saleTypes?.length) {
     query = query.in("sale_type", options.saleTypes);

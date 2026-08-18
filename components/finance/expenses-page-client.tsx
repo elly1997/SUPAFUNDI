@@ -60,8 +60,9 @@ export function ExpensesPageClient() {
     category === "salary_advance" || category === "salary advance";
 
   const { data: expenses = [], isLoading } = useQuery({
-    queryKey: ["expenses"],
-    queryFn: () => fetchExpenses(50),
+    queryKey: ["expenses", outletId],
+    queryFn: () => fetchExpenses(50, { outletId }),
+    enabled: !!outletId,
   });
 
   const recordMut = useMutation({

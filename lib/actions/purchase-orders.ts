@@ -10,6 +10,7 @@ import { validateCollectionAccount } from "@/lib/finance/collection-accounts";
 import { paySupplier } from "@/lib/actions/suppliers";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
+import { resolveWorkingOutletId } from "@/lib/customers/working-outlet";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 type SupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -138,12 +139,17 @@ async function nextPoReference(
 export async function listPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
+  const scopedOutletId = await resolveWorkingOutletId(ctx);
+  let query = supabase
     .from("purchase_orders")
     .select(
       "id, reference_no, status, order_date, expected_date, total_amount, outlet_id, supplier_id, source, payment_status, payment_method, paid_at"
     )
-    .eq("organization_id", ctx.organizationId)
+    .eq("organization_id", ctx.organizationId);
+  if (scopedOutletId) {
+    query = query.eq("outlet_id", scopedOutletId);
+  }
+  const { data, error } = await query
     .order("created_at", { ascending: false })
     .limit(500);
   if (error) throw new Error(error.message);

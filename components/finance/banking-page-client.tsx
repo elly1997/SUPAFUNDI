@@ -87,6 +87,7 @@ export function BankingPageClient() {
   );
 
   const role = useAuthStore((s) => s.session?.role ?? null);
+  const outletId = useAuthStore((s) => s.activeOutletId);
   const canAdjustBalance = canManageSettings(role);
   const canReverse = canManageSettings(role);
 
@@ -97,8 +98,9 @@ export function BankingPageClient() {
     error: acctErr,
     refetch: refetchAccounts,
   } = useQuery({
-    queryKey: ["payment-accounts"],
+    queryKey: ["payment-accounts", outletId],
     queryFn: fetchPaymentAccounts,
+    enabled: !!outletId,
   });
 
   const activeAccounts = accounts.filter((a) => a.is_active);
@@ -109,9 +111,9 @@ export function BankingPageClient() {
     isError: txError,
     error: txErr,
   } = useQuery({
-    queryKey: ["bank-transactions", filterId],
-    queryFn: () => fetchBankTransactions(filterId),
-    enabled: !acctError,
+    queryKey: ["bank-transactions", outletId, filterId],
+    queryFn: () => fetchBankTransactions(filterId, outletId),
+    enabled: !acctError && !!outletId,
   });
 
   const selected =

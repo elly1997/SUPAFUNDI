@@ -27,8 +27,8 @@ import {
 } from "@/components/ui/dialog";
 import { performSignOut } from "@/lib/auth/sign-out-client";
 import { canSwitchOutlets } from "@/lib/auth/roles";
-import { updateActiveOutlet } from "@/lib/actions/auth";
 import { cn } from "@/lib/utils";
+import { useSwitchOutlet } from "@/hooks/use-switch-outlet";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
 import { useGuardedBusinessDate } from "@/hooks/use-guarded-business-date";
@@ -47,11 +47,12 @@ type AppBrandHeaderProps = {
 export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const [pending, startTransition] = useTransition();
+  const [signOutPending, startSignOut] = useTransition();
+  const { switchOutlet, pending: outletPending } = useSwitchOutlet();
+  const pending = signOutPending || outletPending;
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const session = useAuthStore((s) => s.session);
   const activeOutletId = useAuthStore((s) => s.activeOutletId);
-  const setActiveOutletId = useAuthStore((s) => s.setActiveOutletId);
   const { businessDate, onBusinessDateChange, reconciledDates } =
     useGuardedBusinessDate();
 
@@ -71,19 +72,11 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
 
   const onOutletChange = (outletId: string) => {
     if (!canSwitch) return;
-    setActiveOutletId(outletId);
-    startTransition(async () => {
-      const res = await updateActiveOutlet(outletId);
-      if (res.ok) {
-        router.refresh();
-      } else {
-        toast.error(res.message);
-      }
-    });
+    switchOutlet(outletId);
   };
 
   const onSignOut = () => {
-    startTransition(async () => {
+    startSignOut(async () => {
       try {
         await performSignOut();
         router.replace("/login");

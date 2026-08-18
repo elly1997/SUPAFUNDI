@@ -7,8 +7,8 @@ import { KeyRound, LogOut, Menu, Search, User } from "lucide-react";
 import { toast } from "sonner";
 import { performSignOut } from "@/lib/auth/sign-out-client";
 import { canSwitchOutlets } from "@/lib/auth/roles";
-import { updateActiveOutlet } from "@/lib/actions/auth";
 import { redeemOutletAccessOtp } from "@/lib/actions/outlet-access";
+import { useSwitchOutlet } from "@/hooks/use-switch-outlet";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui/button";
@@ -39,14 +39,15 @@ type AppHeaderProps = {
 export function AppHeader({ outlets }: AppHeaderProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const [pending, startTransition] = useTransition();
+  const [signOutPending, startSignOut] = useTransition();
+  const { switchOutlet, pending: outletPending } = useSwitchOutlet();
+  const pending = signOutPending || outletPending;
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [codeOpen, setCodeOpen] = useState(false);
   const [code, setCode] = useState("");
   const [redeeming, setRedeeming] = useState(false);
   const session = useAuthStore((s) => s.session);
   const activeOutletId = useAuthStore((s) => s.activeOutletId);
-  const setActiveOutletId = useAuthStore((s) => s.setActiveOutletId);
 
   if (!session) {
     return null;
@@ -64,15 +65,7 @@ export function AppHeader({ outlets }: AppHeaderProps) {
 
   const onOutletChange = (outletId: string) => {
     if (!canSwitch) return;
-    setActiveOutletId(outletId);
-    startTransition(async () => {
-      const res = await updateActiveOutlet(outletId);
-      if (res.ok) {
-        router.refresh();
-      } else {
-        toast.error(res.message);
-      }
-    });
+    switchOutlet(outletId);
   };
 
   const onRedeemCode = async () => {
@@ -98,7 +91,7 @@ export function AppHeader({ outlets }: AppHeaderProps) {
   };
 
   const onSignOut = () => {
-    startTransition(async () => {
+    startSignOut(async () => {
       try {
         await performSignOut();
         router.replace("/login");

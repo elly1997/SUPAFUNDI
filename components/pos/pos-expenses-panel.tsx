@@ -36,8 +36,9 @@ export function PosExpensesPanel() {
   const queryClient = useQueryClient();
 
   const { data: expenses = [], isLoading } = useQuery({
-    queryKey: ["pos-expenses"],
-    queryFn: () => fetchExpenses(15),
+    queryKey: ["pos-expenses", outletId],
+    queryFn: () => fetchExpenses(15, { outletId }),
+    enabled: !!outletId,
   });
 
   const todayExpenses = expenses.filter((e) => e.expense_date === businessDate);

@@ -467,6 +467,7 @@ export async function getOperationalReports(
   outletId?: string | null
 ): Promise<OperationalReports> {
   const ctx = await requireOrgContext();
+  const branchOutletId = outletId || ctx.outletId;
   const supabase = await createServerSupabaseClient();
   const from = daysAgoIso(days - 1);
   const to = todayIso();
@@ -479,7 +480,7 @@ export async function getOperationalReports(
     .eq("status", "completed")
     .gte("sale_date", fromBound)
     .lte("sale_date", toBound);
-  if (outletId) salesQuery = salesQuery.eq("outlet_id", outletId);
+  if (branchOutletId) salesQuery = salesQuery.eq("outlet_id", branchOutletId);
 
   let expensesQuery = supabase
     .from("expenses")
@@ -487,21 +488,24 @@ export async function getOperationalReports(
     .eq("organization_id", ctx.organizationId)
     .gte("expense_date", from)
     .lte("expense_date", to);
-  if (outletId) expensesQuery = expensesQuery.eq("outlet_id", outletId);
+  if (branchOutletId) expensesQuery = expensesQuery.eq("outlet_id", branchOutletId);
 
+  const creditQuery = supabase
+    .from("customers")
+    .select("outstanding_balance")
+    .eq("organization_id", ctx.organizationId)
+    .eq("is_active", true);
   const [salesRes, expensesRes, creditRes, stockRes] = await Promise.all([
     salesQuery,
     expensesQuery,
-    supabase
-      .from("customers")
-      .select("outstanding_balance")
-      .eq("organization_id", ctx.organizationId)
-      .eq("is_active", true),
-    outletId
+    branchOutletId
+      ? creditQuery.eq("outlet_id", branchOutletId)
+      : creditQuery,
+    branchOutletId
       ? supabase
           .from("stock")
           .select("quantity, products!inner(is_active)")
-          .eq("outlet_id", outletId)
+          .eq("outlet_id", branchOutletId)
           .lte("quantity", 5)
       : Promise.resolve({ data: [], error: null }),
   ]);
@@ -526,7 +530,7 @@ export async function getOperationalReports(
     result,
     from,
     to,
-    outletId,
+    branchOutletId,
     false,
     supabase,
     ctx.organizationId
@@ -551,10 +555,22 @@ export async function getProfitLossStatement(
   reconciledDaysOnly = false
 ): Promise<ProfitLossStatement> {
   const ctx = await requireOrgContext();
+  const branchOutletId = outletId || ctx.outletId;
+  if (!branchOutletId) {
+    return {
+      grossSales: 0,
+      discounts: 0,
+      netSales: 0,
+      costOfGoodsSold: 0,
+      grossProfit: 0,
+      operatingExpenses: 0,
+      netProfit: 0,
+    };
+  }
   const supabase = await createServerSupabaseClient();
   const { from, to } = reportPeriodBounds(fromDate, toDate);
 
-  if (reconciledDaysOnly && !outletId) {
+  if (reconciledDaysOnly && !branchOutletId) {
     throw new Error(
       "Reconciled-days filter requires an outlet so dates are not mixed across branches."
     );
@@ -566,23 +582,23 @@ export async function getProfitLossStatement(
     discount_amount: number;
     sale_date: string;
   }>(async (fromIdx, toIdx) => {
-    let q = supabase
+    const q = supabase
       .from("sales")
       .select("id, subtotal, discount_amount, sale_date")
       .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", branchOutletId)
       .eq("status", "completed")
       .gte("sale_date", from)
       .lte("sale_date", to)
       .order("sale_date", { ascending: true })
       .range(fromIdx, toIdx);
-    if (outletId) q = q.eq("outlet_id", outletId);
     return q;
   });
 
   let filteredSales = sales;
   if (reconciledDaysOnly) {
     const reconciled = new Set(
-      await getReconciledDatesInRange(fromDate, toDate, outletId)
+      await getReconciledDatesInRange(fromDate, toDate, branchOutletId)
     );
     filteredSales = sales.filter((s) =>
       reconciled.has(businessDateFromTimestamptz(String(s.sale_date)))
@@ -605,22 +621,22 @@ export async function getProfitLossStatement(
     amount: number;
     expense_date: string;
   }>(async (fromIdx, toIdx) => {
-    let q = supabase
+    const q = supabase
       .from("expenses")
       .select("amount, expense_date")
       .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", branchOutletId)
       .gte("expense_date", fromDate)
       .lte("expense_date", toDate)
       .order("expense_date", { ascending: true })
       .range(fromIdx, toIdx);
-    if (outletId) q = q.eq("outlet_id", outletId);
     return q;
   });
 
   let filteredExpenses = expenseRows;
   if (reconciledDaysOnly) {
     const reconciled = new Set(
-      await getReconciledDatesInRange(fromDate, toDate, outletId)
+      await getReconciledDatesInRange(fromDate, toDate, branchOutletId)
     );
     filteredExpenses = expenseRows.filter((e) =>
       reconciled.has(e.expense_date)
@@ -635,7 +651,7 @@ export async function getProfitLossStatement(
     supabase,
     ctx.organizationId,
     saleIds,
-    outletId
+    branchOutletId
   );
   const grossProfit = roundMoney(netSales - costOfGoodsSold);
   const netProfit = roundMoney(grossProfit - operatingExpenses);
@@ -658,14 +674,12 @@ export async function getOperationalReportsByRange(
   reconciledDaysOnly = false
 ): Promise<OperationalReports> {
   const ctx = await requireOrgContext();
+  const branchOutletId = outletId || ctx.outletId;
+  if (!branchOutletId) {
+    throw new Error("Select an active outlet first.");
+  }
   const supabase = await createServerSupabaseClient();
   const { from, to } = reportPeriodBounds(fromDate, toDate);
-
-  if (reconciledDaysOnly && !outletId) {
-    throw new Error(
-      "Reconciled-days filter requires an outlet so dates are not mixed across branches."
-    );
-  }
 
   const sales = await fetchAllPaginated<{
     id: string;
@@ -673,16 +687,16 @@ export async function getOperationalReportsByRange(
     sale_date: string;
     outlet_id: string | null;
   }>(async (fromIdx, toIdx) => {
-    let q = supabase
+    const q = supabase
       .from("sales")
       .select("id, total_amount, sale_date, outlet_id")
       .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", branchOutletId)
       .eq("status", "completed")
       .gte("sale_date", from)
       .lte("sale_date", to)
       .order("sale_date", { ascending: true })
       .range(fromIdx, toIdx);
-    if (outletId) q = q.eq("outlet_id", outletId);
     return q;
   });
 
@@ -692,15 +706,15 @@ export async function getOperationalReportsByRange(
     expense_date: string;
     outlet_id: string | null;
   }>(async (fromIdx, toIdx) => {
-    let q = supabase
+    const q = supabase
       .from("expenses")
       .select("id, amount, expense_date, outlet_id")
       .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", branchOutletId)
       .gte("expense_date", fromDate)
       .lte("expense_date", toDate)
       .order("expense_date", { ascending: true })
       .range(fromIdx, toIdx);
-    if (outletId) q = q.eq("outlet_id", outletId);
     return q;
   });
 
@@ -710,24 +724,23 @@ export async function getOperationalReportsByRange(
         .from("customers")
         .select("outstanding_balance")
         .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", branchOutletId)
         .eq("is_active", true)
         .order("id", { ascending: true })
         .range(fromIdx, toIdx)
   );
 
-  const stockRes = outletId
-    ? await supabase
-        .from("stock")
-        .select("quantity, products!inner(is_active)")
-        .eq("outlet_id", outletId)
-        .lte("quantity", 5)
-    : { data: null as null };
+  const stockRes = await supabase
+    .from("stock")
+    .select("quantity, products!inner(is_active)")
+    .eq("outlet_id", branchOutletId)
+    .lte("quantity", 5);
 
   let filteredSales = sales;
   let filteredExpenses = expenses;
   if (reconciledDaysOnly) {
     const reconciled = new Set(
-      await getReconciledDatesInRange(fromDate, toDate, outletId)
+      await getReconciledDatesInRange(fromDate, toDate, branchOutletId)
     );
     filteredSales = sales.filter((s) =>
       reconciled.has(businessDateFromTimestamptz(String(s.sale_date)))
@@ -753,7 +766,7 @@ export async function getOperationalReportsByRange(
     result,
     fromDate,
     toDate,
-    outletId,
+    branchOutletId,
     reconciledDaysOnly,
     supabase,
     ctx.organizationId

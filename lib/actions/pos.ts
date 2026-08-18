@@ -121,6 +121,13 @@ export async function listPosCatalogProducts(
 ): Promise<PosCatalogRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const { data: outlet } = await supabase
+    .from("outlets")
+    .select("id")
+    .eq("id", input.outletId)
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+  if (!outlet) return [];
   const search = input.q?.trim() ?? "";
   const categoryId =
     input.categoryId && input.categoryId !== "all" ? input.categoryId : null;

@@ -4,15 +4,25 @@ import type { OrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 /**
- * Working outlet for customer scoping (matches header branch switcher,
- * which updates profiles.outlet_id).
+ * Working outlet for branch-scoped lists. Prefers an explicit request
+ * (POS/header switcher), then the profile assignment, then org default.
  */
 export async function resolveWorkingOutletId(
-  ctx: OrgContext
+  ctx: OrgContext,
+  requested?: string | null
 ): Promise<string | null> {
-  if (ctx.outletId) return ctx.outletId;
-
   const supabase = await createServerSupabaseClient();
+  const candidate = requested?.trim() || ctx.outletId;
+  if (candidate) {
+    const { data } = await supabase
+      .from("outlets")
+      .select("id")
+      .eq("id", candidate)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (data?.id) return data.id;
+  }
+
   const withDefault = await supabase
     .from("outlets")
     .select("id")

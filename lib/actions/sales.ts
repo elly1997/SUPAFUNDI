@@ -864,6 +864,8 @@ export async function listSalesPage(input?: {
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
   const invoiceSearch = input?.invoiceSearch?.trim() ?? "";
+  const scopedOutletId =
+    input?.outletId ?? (await resolveWorkingOutletId(ctx));
 
   let query = supabase
     .from("sales")
@@ -872,7 +874,7 @@ export async function listSalesPage(input?: {
       { count: "exact" }
     )
     .eq("organization_id", ctx.organizationId);
-  if (input?.outletId) query = query.eq("outlet_id", input.outletId);
+  if (scopedOutletId) query = query.eq("outlet_id", scopedOutletId);
   if (input?.fromDate) query = query.gte("sale_date", `${input.fromDate}T00:00:00.000Z`);
   if (input?.toDate) query = query.lte("sale_date", `${input.toDate}T23:59:59.999Z`);
   if (invoiceSearch) {

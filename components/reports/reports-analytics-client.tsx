@@ -204,7 +204,7 @@ export function ReportsAnalyticsClient() {
     queryKey: ["reports-operational", ...rangeKey],
     queryFn: () =>
       getOperationalReportsByRange(fromDate, toDate, outletId, reconciledOnly),
-    enabled: needsOperational,
+    enabled: needsOperational && !!outletId,
     staleTime: 120_000,
   });
 
@@ -216,14 +216,14 @@ export function ReportsAnalyticsClient() {
     queryKey: ["reports-pl", ...rangeKey],
     queryFn: () =>
       getProfitLossStatement(fromDate, toDate, outletId, reconciledOnly),
-    enabled: needsPl,
+    enabled: needsPl && !!outletId,
     staleTime: 120_000,
   });
 
   const { data: unreconciled = [] } = useQuery({
     queryKey: ["reports-unreconciled", outletId],
     queryFn: () => listUnreconciledDays(outletId, 40),
-    enabled: tab === "closing",
+    enabled: tab === "closing" && !!outletId,
     staleTime: 120_000,
   });
 

@@ -84,16 +84,18 @@ export function PurchaseOrdersPageClient() {
   const queryClient = useQueryClient();
 
   const { data: orders = [], isLoading } = useQuery({
-    queryKey: ["purchase-orders"],
+    queryKey: ["purchase-orders", defaultOutlet],
     queryFn: fetchPurchaseOrders,
+    enabled: !!defaultOutlet,
   });
   const { data: outlets = [], isLoading: outletsLoading } = useQuery({
     queryKey: ["org-outlets"],
     queryFn: fetchOrgOutlets,
   });
   const { data: suppliers = [], refetch: refetchSuppliers } = useQuery({
-    queryKey: ["suppliers"],
+    queryKey: ["suppliers", defaultOutlet],
     queryFn: fetchSupplierOptions,
+    enabled: !!defaultOutlet,
   });
   const { data: products = [] } = usePosProducts(outletId || null);
   const [applyingPrice, setApplyingPrice] = useState(false);

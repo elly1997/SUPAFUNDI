@@ -3,6 +3,7 @@
 import { Store } from "lucide-react";
 import { useEffect } from "react";
 import { canSwitchOutlets } from "@/lib/auth/roles";
+import { useSwitchOutlet } from "@/hooks/use-switch-outlet";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/authStore";
 import type { PosOutletOption } from "@/components/pos/pos-header";
@@ -21,6 +22,7 @@ export function PosOutletPicker({
   const activeOutletId = useAuthStore((s) => s.activeOutletId);
   const setActiveOutletId = useAuthStore((s) => s.setActiveOutletId);
   const session = useAuthStore((s) => s.session);
+  const { switchOutlet, pending } = useSwitchOutlet();
   const canSwitch = canSwitchOutlets(session?.role ?? null);
 
   useEffect(() => {
@@ -68,7 +70,8 @@ export function PosOutletPicker({
       {canSwitch ? (
         <select
           value={value}
-          onChange={(e) => setActiveOutletId(e.target.value || null)}
+          disabled={pending}
+          onChange={(e) => switchOutlet(e.target.value)}
           className={cn(
             "min-w-0 flex-1 cursor-pointer appearance-none border-0 bg-transparent font-semibold text-foreground focus:outline-none focus:ring-0",
             compact ? "text-xs" : "text-sm"

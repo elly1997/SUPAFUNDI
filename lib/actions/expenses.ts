@@ -13,6 +13,7 @@ import { withdrawFromCollectionAccount } from "@/lib/actions/banking";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
+import { resolveWorkingOutletId } from "@/lib/customers/working-outlet";
 import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
 import { validateCollectionAccount } from "@/lib/finance/collection-accounts";
 import { resolveBusinessDate } from "@/lib/utils/iso-date";
@@ -108,14 +109,16 @@ export async function listExpenses(
 ): Promise<ExpenseListRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const scopedOutletId =
+    filters?.outletId ?? (await resolveWorkingOutletId(ctx));
   let query = supabase
     .from("expenses")
     .select(
       "id, category, description, amount, expense_date, payment_method, outlet_id, employee_id"
     )
     .eq("organization_id", ctx.organizationId);
-  if (filters?.outletId) {
-    query = query.eq("outlet_id", filters.outletId);
+  if (scopedOutletId) {
+    query = query.eq("outlet_id", scopedOutletId);
   }
   if (filters?.fromDate) {
     query = query.gte("expense_date", filters.fromDate);

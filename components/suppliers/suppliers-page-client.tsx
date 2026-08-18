@@ -87,11 +87,13 @@ export function SuppliersPageClient() {
     id: string;
     name: string;
   } | null>(null);
+  const outletId = useAuthStore((s) => s.activeOutletId);
   const queryClient = useQueryClient();
 
   const { data: suppliers = [], isLoading, isError, error } = useQuery({
-    queryKey: ["suppliers"],
+    queryKey: ["suppliers", outletId],
     queryFn: fetchSuppliers,
+    enabled: !!outletId,
     staleTime: 90_000,
     refetchOnMount: false,
   });

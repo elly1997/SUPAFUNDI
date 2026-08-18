@@ -22,6 +22,7 @@ export function DashboardKpisClient({ fallbackOutletId }: Props) {
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ["dashboard-kpis", outletId, businessDate],
     queryFn: () => fetchDashboardKpis({ outletId, businessDate }),
+    enabled: !!outletId,
     staleTime: 90_000,
     refetchOnWindowFocus: false,
   });

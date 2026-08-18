@@ -27,11 +27,13 @@ import {
 } from "@/lib/actions/invoices";
 import { cn } from "@/lib/utils";
 import { formatDateTimeEAT, formatTzs } from "@/lib/utils/currency";
+import { useAuthStore } from "@/stores/authStore";
 
 export function InvoicesPageClient() {
   const [tab, setTab] = useState<InvoiceTabId>("invoices");
   const [createOpen, setCreateOpen] = useState(false);
   const queryClient = useQueryClient();
+  const outletId = useAuthStore((s) => s.activeOutletId);
 
   const tabConfig = INVOICE_TAB_TYPES.find((t) => t.id === tab)!;
   const balanceDueMin =
@@ -42,7 +44,7 @@ export function InvoicesPageClient() {
     "status" in tabConfig ? [...tabConfig.status] : undefined;
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ["sale-documents", tab],
+    queryKey: ["sale-documents", tab, outletId],
     queryFn: () =>
       listSaleDocuments({
         saleTypes: [...tabConfig.types],
@@ -51,6 +53,7 @@ export function InvoicesPageClient() {
         status: statusFilter,
         limit: 100,
       }),
+    enabled: !!outletId,
   });
 
   const summary = useMemo(() => {

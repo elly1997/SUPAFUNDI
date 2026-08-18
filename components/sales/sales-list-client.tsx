@@ -31,6 +31,7 @@ import { saleTypeLabel } from "@/lib/constants/sale-documents";
 import { cn } from "@/lib/utils";
 import { formatTzs, formatDateTimeEAT } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
+import { useAuthStore } from "@/stores/authStore";
 
 const PAGE_SIZE = 50;
 
@@ -38,6 +39,7 @@ export function SalesListClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const businessDate = useBusinessDateStore((s) => s.businessDate);
+  const outletId = useAuthStore((s) => s.activeOutletId);
   const [fromDate, setFromDate] = useState(
     format(subDays(new Date(businessDate + "T12:00:00"), 7), "yyyy-MM-dd")
   );
@@ -59,7 +61,7 @@ export function SalesListClient() {
   }, [fromDate, toDate, deferredInvoiceSearch]);
 
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ["sales-list", "page", fromDate, toDate, deferredInvoiceSearch, page],
+    queryKey: ["sales-list", "page", outletId, fromDate, toDate, deferredInvoiceSearch, page],
     queryFn: () =>
       fetchSalesPage({
         page,
@@ -67,7 +69,9 @@ export function SalesListClient() {
         fromDate,
         toDate,
         invoiceSearch: deferredInvoiceSearch,
+        outletId,
       }),
+    enabled: !!outletId,
     placeholderData: keepPreviousData,
   });
   const sales = data?.sales ?? [];

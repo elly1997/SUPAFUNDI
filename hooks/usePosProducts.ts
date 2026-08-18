@@ -1,6 +1,6 @@
 "use client";
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { fetchPosCatalog } from "@/lib/api/pos-products-fetch";
 import { getPublicSupabaseEnv } from "@/lib/env/public";
@@ -29,7 +29,7 @@ export type PosProductRow = {
   units: ProductUnitOption[];
 };
 
-const POS_CATALOG_CACHE_PREFIX = "supafundi_pos_catalog_v2";
+const POS_CATALOG_CACHE_PREFIX = "supafundi_pos_catalog_v3";
 const POS_CATALOG_LIMIT = 120;
 
 function catalogCacheKey(outletId: string, search: string, categoryId: string | null) {
@@ -114,11 +114,14 @@ export function usePosProducts(
   const query = useQuery({
     queryKey: ["pos-products", outletId, search, categoryId],
     enabled: envOk && !!outletId,
-    staleTime: 5 * 60_000,
+    staleTime: 30_000,
     gcTime: 30 * 60_000,
-    refetchOnMount: false,
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
-    placeholderData: keepPreviousData,
+    placeholderData: (previousData, previousQuery) => {
+      const prevOutlet = previousQuery?.queryKey[1];
+      return prevOutlet === outletId ? previousData : undefined;
+    },
     initialData: () => readCachedCatalog(outletId, search, categoryId),
     initialDataUpdatedAt: () => 0,
     queryFn: async (): Promise<PosCatalogRow[]> => {

@@ -21,15 +21,18 @@ import {
   invalidateCustomerQueries,
 } from "@/lib/api/customers-fetch";
 import { formatTzs } from "@/lib/utils/currency";
+import { useAuthStore } from "@/stores/authStore";
 
 export function CreditPageClient() {
   const [payCustomerId, setPayCustomerId] = useState<string | null>(null);
   const [stmtCustomerId, setStmtCustomerId] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  const outletId = useAuthStore((s) => s.activeOutletId);
 
   const { data: balances = [], isLoading } = useQuery({
-    queryKey: ["credit-balances"],
+    queryKey: ["credit-balances", outletId],
     queryFn: fetchCustomersWithBalance,
+    enabled: !!outletId,
   });
 
   const payCustomer = balances.find((c) => c.id === payCustomerId);

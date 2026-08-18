@@ -186,6 +186,11 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     refetch: refetchProducts,
   } = usePosProducts(effectiveOutletId, pricingMode, deferredSearch, categoryId);
 
+  useEffect(() => {
+    setCategoryId(null);
+    setSearch("");
+  }, [effectiveOutletId]);
+
   /** Re-price cart lines when retail/wholesale mode changes. */
   useEffect(() => {
     const modeChanged = prevPricingModeRef.current !== pricingMode;
