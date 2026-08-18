@@ -207,6 +207,7 @@ export type Database = {
         Row: {
           id: string;
           organization_id: string;
+          outlet_id: string;
           category_id: string | null;
           supplier_id: string | null;
           code: string | null;
@@ -223,6 +224,7 @@ export type Database = {
         Insert: {
           id?: string;
           organization_id: string;
+          outlet_id: string;
           category_id?: string | null;
           supplier_id?: string | null;
           code?: string | null;
@@ -235,6 +237,7 @@ export type Database = {
           is_active?: boolean;
         };
         Update: {
+          outlet_id?: string;
           category_id?: string | null;
           supplier_id?: string | null;
           code?: string | null;
@@ -631,16 +634,18 @@ export type Database = {
         Row: {
           id: string;
           organization_id: string;
+          outlet_id: string;
           name: string;
           is_active: boolean;
         };
         Insert: {
           id?: string;
           organization_id: string;
+          outlet_id: string;
           name: string;
           is_active?: boolean;
         };
-        Update: { is_active?: boolean; name?: string };
+        Update: { is_active?: boolean; name?: string; outlet_id?: string };
         Relationships: [];
       };
       grns: {
@@ -845,6 +850,7 @@ export type Database = {
           id: string;
           transfer_id: string;
           product_id: string | null;
+          to_product_id: string | null;
           requested_qty: number;
           dispatched_qty: number | null;
           received_qty: number | null;
@@ -854,11 +860,13 @@ export type Database = {
           id?: string;
           transfer_id: string;
           product_id?: string | null;
+          to_product_id?: string | null;
           requested_qty: number;
         };
         Update: {
           dispatched_qty?: number;
           received_qty?: number;
+          to_product_id?: string | null;
           unit_cost?: number | null;
         };
         Relationships: [];
@@ -887,6 +895,7 @@ export type Database = {
         Row: {
           id: string;
           organization_id: string;
+          outlet_id: string;
           profile_id: string | null;
           full_name: string;
           phone: string | null;
@@ -899,6 +908,7 @@ export type Database = {
         Insert: {
           id?: string;
           organization_id: string;
+          outlet_id: string;
           profile_id?: string | null;
           full_name: string;
           phone?: string | null;
@@ -913,6 +923,7 @@ export type Database = {
         Row: {
           id: string;
           organization_id: string;
+          outlet_id: string;
           employee_id: string;
           amount: number;
           bonus_date: string;
@@ -923,6 +934,7 @@ export type Database = {
         Insert: {
           id?: string;
           organization_id: string;
+          outlet_id: string;
           employee_id: string;
           amount: number;
           bonus_date?: string;
@@ -936,6 +948,7 @@ export type Database = {
         Row: {
           id: string;
           organization_id: string;
+          outlet_id: string;
           payroll_month: string;
           status: string;
           closed_at: string | null;
@@ -947,6 +960,7 @@ export type Database = {
         Insert: {
           id?: string;
           organization_id: string;
+          outlet_id: string;
           payroll_month: string;
           status?: string;
           closed_at?: string | null;
