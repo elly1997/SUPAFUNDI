@@ -6,6 +6,7 @@ import { useTransition } from "react";
 import { KeyRound, LogOut, Menu, Search, User } from "lucide-react";
 import { toast } from "sonner";
 import { performSignOut } from "@/lib/auth/sign-out-client";
+import { canSwitchOutlets } from "@/lib/auth/roles";
 import { updateActiveOutlet } from "@/lib/actions/auth";
 import { redeemOutletAccessOtp } from "@/lib/actions/outlet-access";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
@@ -52,6 +53,7 @@ export function AppHeader({ outlets }: AppHeaderProps) {
   }
 
   const displayName = session.fullName || session.email;
+  const canSwitch = canSwitchOutlets(session.role);
   const outletValue =
     resolveActiveOutletId(outlets, {
       stored: activeOutletId,
@@ -61,6 +63,7 @@ export function AppHeader({ outlets }: AppHeaderProps) {
   const isPos = pathname === "/pos" || pathname.startsWith("/pos/");
 
   const onOutletChange = (outletId: string) => {
+    if (!canSwitch) return;
     setActiveOutletId(outletId);
     startTransition(async () => {
       const res = await updateActiveOutlet(outletId);
@@ -83,7 +86,6 @@ export function AppHeader({ outlets }: AppHeaderProps) {
       const res = await redeemOutletAccessOtp(trimmed);
       if (res.ok) {
         toast.success(`Access granted to ${res.outletName}.`);
-        setActiveOutletId(res.outletId);
         setCode("");
         setCodeOpen(false);
         router.refresh();
@@ -175,6 +177,7 @@ export function AppHeader({ outlets }: AppHeaderProps) {
           outletId={outletValue}
           onOutletChange={onOutletChange}
           outletChangeDisabled={pending}
+          canSwitchOutlet={canSwitch}
         />
       ) : null}
 

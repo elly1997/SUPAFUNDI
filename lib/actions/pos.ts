@@ -48,6 +48,14 @@ export type PosCatalogInput = {
   limit?: number;
 };
 
+function catalogDb(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>
+) {
+  return supabase as unknown as {
+    from: (table: string) => any;
+  };
+}
+
 function normalizeLimit(input?: number) {
   const n = Math.floor(Number(input) || 80);
   return Math.min(120, Math.max(20, n));
@@ -94,10 +102,11 @@ export async function listPosCatalogProducts(
   const limit = normalizeLimit(input.limit);
   const velocity = await loadSalesVelocity(supabase, input.outletId);
 
-  let query = supabase
+  let query = catalogDb(supabase)
     .from("products")
     .select("id, name, code, barcode, unit, category_id")
     .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", input.outletId)
     .eq("is_active", true);
   if (categoryId) query = query.eq("category_id", categoryId);
   if (search) {
@@ -110,7 +119,7 @@ export async function listPosCatalogProducts(
     .order("name", { ascending: true })
     .limit(queryLimit);
   if (productErr) throw new Error(productErr.message);
-  const products = productsRaw ?? [];
+  const products = (productsRaw ?? []) as any[];
 
   if (!products.length) return [];
 
@@ -140,21 +149,21 @@ export async function listPosCatalogProducts(
 
   const retailMap = new Map<string, number>();
   const wholesaleMap = new Map<string, number>();
-  for (const p of priceRows) {
+  for (const p of priceRows as any[]) {
     const price = Number(p.price);
     if (p.price_type === "retail") retailMap.set(p.product_id, price);
     if (p.price_type === "wholesale") wholesaleMap.set(p.product_id, price);
   }
 
   const stockMap = new Map(
-    stockRows.map((s) => [
+    (stockRows as any[]).map((s: any) => [
       s.product_id,
       { qty: Number(s.quantity), cost: Number(s.cost_price ?? 0) },
     ])
   );
 
   return products
-    .map((p) => {
+    .map((p: any) => {
       const stock = stockMap.get(p.id);
       const retailPrice = retailMap.get(p.id) ?? 0;
       const wholesalePrice = wholesaleMap.get(p.id) ?? retailPrice;
@@ -183,8 +192,8 @@ export async function listPosCatalogProducts(
               ),
       };
     })
-    .filter((p) => p.stockQty > 0 || p.retailPrice > 0 || p.wholesalePrice > 0)
-    .sort((a, b) => {
+    .filter((p: any) => p.stockQty > 0 || p.retailPrice > 0 || p.wholesalePrice > 0)
+    .sort((a: any, b: any) => {
       const demand = b.recentSoldQty - a.recentSoldQty;
       if (demand !== 0) return demand;
       return a.name.localeCompare(b.name);
@@ -209,13 +218,16 @@ export async function getTopPosProducts(
   if (sorted.length === 0) return [];
 
   const productIds = sorted.map(([id]) => id);
-  const { data: products } = await supabase
+  const { data: products } = await catalogDb(supabase)
     .from("products")
     .select("id, name, code")
     .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", outletId)
     .in("id", productIds);
 
-  const productMap = new Map((products ?? []).map((p) => [p.id, p]));
+  const productMap = new Map(
+    ((products ?? []) as any[]).map((p: any) => [p.id, p] as const)
+  );
 
   return sorted.map(([productId, qty]) => {
     const p = productMap.get(productId);

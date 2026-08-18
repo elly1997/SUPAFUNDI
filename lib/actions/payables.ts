@@ -31,6 +31,7 @@ export type PayableBillRow = {
 
 export async function listOpenPayables(): Promise<PayableBillRow[]> {
   const ctx = await requireOrgContext();
+  if (!ctx.outletId) return [];
   const supabase = await createServerSupabaseClient();
   const { data, error } = await apDb(supabase)
     .from("supplier_bills")
@@ -38,6 +39,7 @@ export async function listOpenPayables(): Promise<PayableBillRow[]> {
       "id, bill_no, bill_date, due_date, supplier_id, total_amount, amount_paid, status, suppliers(name)"
     )
     .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", ctx.outletId)
     .in("status", ["open", "partial", "draft"])
     .order("bill_date", { ascending: false })
     .limit(2000);
@@ -90,6 +92,7 @@ async function nextBillNo(
 export async function createSupplierBillFromGrn(params: {
   grnId: string;
   supplierId: string;
+  outletId?: string | null;
   billDate: string;
   subtotal: number;
   taxAmount: number;
@@ -100,12 +103,17 @@ export async function createSupplierBillFromGrn(params: {
 }): Promise<{ ok: true; billId: string } | { ok: false; message: string }> {
   try {
     const ctx = await requireOrgContext();
+    const billOutletId = params.outletId ?? ctx.outletId;
+    if (!billOutletId) {
+      return { ok: false, message: "Select a working outlet first." };
+    }
     const supabase = await createServerSupabaseClient();
 
     const { data: existing } = await apDb(supabase)
       .from("supplier_bills")
       .select("id")
       .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", billOutletId)
       .eq("grn_id", params.grnId)
       .maybeSingle();
     if (existing) return { ok: true, billId: existing.id };
@@ -118,6 +126,7 @@ export async function createSupplierBillFromGrn(params: {
       .from("supplier_bills")
       .insert({
         organization_id: ctx.organizationId,
+        outlet_id: billOutletId,
         supplier_id: params.supplierId,
         po_id: params.poId ?? null,
         grn_id: params.grnId,
@@ -143,6 +152,7 @@ export async function createSupplierBillFromGrn(params: {
           .from("supplier_bills")
           .select("id")
           .eq("organization_id", ctx.organizationId)
+          .eq("outlet_id", billOutletId)
           .eq("grn_id", params.grnId)
           .maybeSingle();
         if (raced) return { ok: true, billId: raced.id };
@@ -195,6 +205,9 @@ export async function createManualSupplierBill(
   try {
     const input = manualBillInput.parse(raw);
     const ctx = await requireOrgContext();
+    if (!ctx.outletId) {
+      return { ok: false, message: "Select a working outlet before creating bills." };
+    }
     const supabase = await createServerSupabaseClient();
     const billNo = await nextBillNo(supabase, ctx.organizationId);
     const total = roundMoney(input.totalAmount);
@@ -203,6 +216,7 @@ export async function createManualSupplierBill(
       .from("supplier_bills")
       .insert({
         organization_id: ctx.organizationId,
+        outlet_id: ctx.outletId,
         supplier_id: input.supplierId,
         bill_no: billNo,
         bill_date: input.billDate,

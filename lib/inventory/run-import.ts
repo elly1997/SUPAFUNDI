@@ -9,6 +9,12 @@ import { roundMoney } from "@/lib/utils/calculations";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
+function catalogDb(supabase: Supabase) {
+  return supabase as unknown as {
+    from: (table: string) => any;
+  };
+}
+
 const importRowSchema = z.object({
   code: z.string().min(1),
   name: z.string().min(1),
@@ -24,6 +30,30 @@ export type ImportInventoryResult = {
   imported: number;
   updated: number;
   errors: { code: string; message: string }[];
+};
+
+export type InventoryImportMode =
+  | "catalog_and_stock"
+  | "catalog_only"
+  | "stock_only";
+
+export type ImportPreviewRow = {
+  code: string;
+  name: string;
+  category: string;
+  quantity: number;
+  action: "create" | "update" | "conflict" | "missing";
+  message: string;
+};
+
+export type InventoryImportPreview = {
+  rows: ImportPreviewRow[];
+  summary: {
+    create: number;
+    update: number;
+    conflict: number;
+    missing: number;
+  };
 };
 
 async function upsertRetailPrice(
@@ -64,10 +94,163 @@ function resolveCategoryId(
   return cache.get(categoryName.trim().toLowerCase()) ?? null;
 }
 
+async function loadOutletProducts(
+  supabase: Supabase,
+  organizationId: string,
+  outletId: string
+) {
+  const existingProducts = await fetchAllPaginated(async (from, to) => {
+    const { data, error } = await catalogDb(supabase)
+      .from("products")
+      .select("id, code, name")
+      .eq("organization_id", organizationId)
+      .eq("outlet_id", outletId)
+      .range(from, to);
+    return { data, error };
+  });
+
+  const byCode = new Map<string, { id: string; name: string }>();
+  const byName = new Map<string, { id: string; code: string | null }>();
+  for (const p of existingProducts as any[]) {
+    if (p.code) byCode.set(p.code.trim().toUpperCase(), { id: p.id, name: p.name });
+    byName.set(normalizeProductName(p.name), {
+      id: p.id,
+      code: p.code,
+    });
+  }
+
+  return { byCode, byName };
+}
+
+export async function previewInventoryImport(
+  organizationId: string,
+  outletId: string,
+  rows: InventoryImportRow[],
+  mode: InventoryImportMode = "catalog_and_stock"
+): Promise<InventoryImportPreview> {
+  const supabase = await createServerSupabaseClient();
+  const { data: outlet } = await supabase
+    .from("outlets")
+    .select("id")
+    .eq("id", outletId)
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (!outlet) {
+    return {
+      rows: [],
+      summary: { create: 0, update: 0, conflict: 1, missing: 0 },
+    };
+  }
+
+  const { byCode, byName } = await loadOutletProducts(
+    supabase,
+    organizationId,
+    outletId
+  );
+
+  const previewRows: ImportPreviewRow[] = [];
+  for (const raw of rows) {
+    const parsed = importRowSchema.safeParse({
+      code: raw.code,
+      name: raw.name,
+      category: raw.category,
+      quantity: raw.quantity,
+      cost: raw.cost,
+      retailPrice: raw.retailPrice,
+      unit: raw.unit,
+      notes: raw.notes,
+    });
+    if (!parsed.success) {
+      previewRows.push({
+        code: raw.code ?? "?",
+        name: raw.name ?? "",
+        category: raw.category ?? "",
+        quantity: Number(raw.quantity ?? 0),
+        action: "conflict",
+        message: parsed.error.issues.map((i) => i.message).join(", "),
+      });
+      continue;
+    }
+
+    const r = parsed.data;
+    const codeKey = r.code.trim().toUpperCase();
+    const nameKey = normalizeProductName(r.name);
+    const existingByCode = byCode.get(codeKey);
+    const existingByName = byName.get(nameKey);
+
+    if (
+      existingByName &&
+      (!existingByCode || existingByName.id !== existingByCode.id)
+    ) {
+      previewRows.push({
+        code: r.code,
+        name: r.name,
+        category: r.category,
+        quantity: r.quantity,
+        action: "conflict",
+        message: `Name matches another outlet item (${existingByName.code ?? "no code"})`,
+      });
+      continue;
+    }
+
+    if (existingByCode) {
+      previewRows.push({
+        code: r.code,
+        name: r.name,
+        category: r.category,
+        quantity: r.quantity,
+        action: "update",
+        message:
+          mode === "catalog_only"
+            ? "Will update outlet catalog details only"
+            : mode === "stock_only"
+              ? "Will load stock onto existing outlet item"
+              : "Will update outlet item and stock",
+      });
+      continue;
+    }
+
+    if (mode === "stock_only") {
+      previewRows.push({
+        code: r.code,
+        name: r.name,
+        category: r.category,
+        quantity: r.quantity,
+        action: "missing",
+        message: "Missing in this outlet catalog. Create catalog first.",
+      });
+      continue;
+    }
+
+    previewRows.push({
+      code: r.code,
+      name: r.name,
+      category: r.category,
+      quantity: r.quantity,
+      action: "create",
+      message:
+        mode === "catalog_only"
+          ? "Will create outlet catalog item"
+          : "Will create outlet item and opening stock",
+    });
+  }
+
+  return {
+    rows: previewRows,
+    summary: {
+      create: previewRows.filter((r) => r.action === "create").length,
+      update: previewRows.filter((r) => r.action === "update").length,
+      conflict: previewRows.filter((r) => r.action === "conflict").length,
+      missing: previewRows.filter((r) => r.action === "missing").length,
+    },
+  };
+}
+
 export async function runInventoryImport(
   organizationId: string,
   outletId: string,
-  rows: InventoryImportRow[]
+  rows: InventoryImportRow[],
+  mode: InventoryImportMode = "catalog_and_stock"
 ): Promise<ImportInventoryResult> {
   const supabase = await createServerSupabaseClient();
 
@@ -96,24 +279,11 @@ export async function runInventoryImport(
     categoryCache.set(c.name.trim().toLowerCase(), c.id);
   }
 
-  const existingProducts = await fetchAllPaginated(async (from, to) => {
-    const { data, error } = await supabase
-      .from("products")
-      .select("id, code, name")
-      .eq("organization_id", organizationId)
-      .range(from, to);
-    return { data, error };
-  });
-
-  const byCode = new Map<string, { id: string; name: string }>();
-  const byName = new Map<string, { id: string; code: string | null }>();
-  for (const p of existingProducts) {
-    if (p.code) byCode.set(p.code.trim().toUpperCase(), { id: p.id, name: p.name });
-    byName.set(normalizeProductName(p.name), {
-      id: p.id,
-      code: p.code,
-    });
-  }
+  const { byCode, byName } = await loadOutletProducts(
+    supabase,
+    organizationId,
+    outletId
+  );
 
   const errors: { code: string; message: string }[] = [];
   let imported = 0;
@@ -159,10 +329,7 @@ export async function runInventoryImport(
       const existingByCode = byCode.get(codeKey);
       const existingByName = byName.get(nameKey);
 
-      if (
-        existingByName &&
-        (!existingByCode || existingByName.id !== existingByCode.id)
-      ) {
+      if (existingByName && (!existingByCode || existingByName.id !== existingByCode.id)) {
         throw new Error(
           `Product name "${r.name}" already exists (code ${existingByName.code ?? "—"}). Use the same code to update stock only.`
         );
@@ -173,23 +340,31 @@ export async function runInventoryImport(
 
       if (existingByCode?.id) {
         productId = existingByCode.id;
-        const { error: uErr } = await supabase
-          .from("products")
-          .update({
-            name: r.name.trim(),
-            category_id: categoryId,
-            unit: r.unit.trim(),
-            is_active: true,
-            ...(description ? { description } : {}),
-          })
-          .eq("id", productId);
-        if (uErr) throw new Error(uErr.message);
+        if (mode !== "stock_only") {
+          const { error: uErr } = await catalogDb(supabase)
+            .from("products")
+            .update({
+              name: r.name.trim(),
+              category_id: categoryId,
+              unit: r.unit.trim(),
+              is_active: true,
+              ...(description ? { description } : {}),
+            })
+            .eq("id", productId);
+          if (uErr) throw new Error(uErr.message);
+        }
         updated += 1;
       } else {
-        const { data: product, error: pErr } = await supabase
+        if (mode === "stock_only") {
+          throw new Error(
+            `Item code "${r.code}" is not in this outlet yet. Run catalog import first.`
+          );
+        }
+        const { data: product, error: pErr } = await catalogDb(supabase)
           .from("products")
           .insert({
             organization_id: organizationId,
+            outlet_id: outletId,
             category_id: categoryId,
             name: r.name.trim(),
             unit: r.unit.trim(),
@@ -211,6 +386,10 @@ export async function runInventoryImport(
 
       if (r.retailPrice !== undefined) {
         await upsertRetailPrice(supabase, productId, r.retailPrice);
+      }
+
+      if (mode === "catalog_only") {
+        continue;
       }
 
       const { data: existingStock } = await supabase

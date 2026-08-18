@@ -96,6 +96,7 @@ function mapAccountRow(r: {
 
 export async function listPaymentAccounts(): Promise<PaymentAccountRow[]> {
   const ctx = await requireOrgContext();
+  if (!ctx.outletId) return [];
   const supabase = await createServerSupabaseClient();
   const { data, error } = await bankDb(supabase)
     .from("bank_accounts")
@@ -103,6 +104,7 @@ export async function listPaymentAccounts(): Promise<PaymentAccountRow[]> {
       "id, name, account_no, bank_name, currency, current_balance, is_active, account_type, lipa_merchant, pos_payment_method, show_in_pos"
     )
     .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", ctx.outletId)
     .order("name");
   if (error) {
     if (
@@ -115,6 +117,7 @@ export async function listPaymentAccounts(): Promise<PaymentAccountRow[]> {
           "id, name, account_no, bank_name, currency, current_balance, is_active"
         )
         .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", ctx.outletId)
         .order("name");
       if (legErr) throw new Error(legErr.message);
       return (legacy ?? []).map((r: {
@@ -255,6 +258,12 @@ export async function createPaymentAccount(
   try {
     const input = accountInput.parse(raw);
     const ctx = await requireOrgContext();
+    if (!ctx.outletId) {
+      return {
+        ok: false,
+        message: "Select a working outlet before creating collection accounts.",
+      };
+    }
     const supabase = await createServerSupabaseClient();
     const posMethod =
       input.posPaymentMethod ??
@@ -262,6 +271,7 @@ export async function createPaymentAccount(
 
     const insertPayload: Record<string, unknown> = {
       organization_id: ctx.organizationId,
+      outlet_id: ctx.outletId,
       name: input.name.trim(),
       bank_name: input.bankName?.trim() || null,
       account_no: input.accountNo?.trim() || null,
@@ -297,6 +307,7 @@ export async function createPaymentAccount(
     if (input.openingBalance > 0) {
       await bankDb(supabase).from("bank_transactions").insert({
         organization_id: ctx.organizationId,
+        outlet_id: ctx.outletId,
         bank_account_id: data.id,
         transaction_type: "deposit",
         amount: input.openingBalance,
@@ -358,7 +369,7 @@ export async function recordBankTransaction(
 
     const { data: account } = await bankDb(supabase)
       .from("bank_accounts")
-      .select("id, current_balance")
+      .select("id, current_balance, outlet_id")
       .eq("id", input.bankAccountId)
       .eq("organization_id", ctx.organizationId)
       .maybeSingle();
@@ -377,6 +388,7 @@ export async function recordBankTransaction(
       .from("bank_transactions")
       .insert({
         organization_id: ctx.organizationId,
+        outlet_id: account.outlet_id ?? ctx.outletId,
         bank_account_id: input.bankAccountId,
         transaction_type: input.transactionType,
         amount: input.amount,

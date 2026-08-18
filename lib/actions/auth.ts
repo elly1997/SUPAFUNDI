@@ -149,11 +149,14 @@ export async function updateActiveOutlet(
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("organization_id")
+      .select("organization_id, role")
       .eq("id", user.id)
       .maybeSingle();
     if (!profile?.organization_id) {
       return { ok: false, message: "No organization on profile." };
+    }
+    if (profile.role !== "owner") {
+      return { ok: false, message: "Only owners can switch outlets." };
     }
 
     const { data: outlet } = await supabase

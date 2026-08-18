@@ -1,10 +1,10 @@
 import "server-only";
 
-import { canManageSettings, isUserRole, type UserRole } from "@/lib/auth/roles";
+import { isUserRole, type UserRole } from "@/lib/auth/roles";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-export async function requireManagerContext(): Promise<{
+export async function requireOwnerContext(): Promise<{
   userId: string;
   organizationId: string;
   role: UserRole;
@@ -17,8 +17,8 @@ export async function requireManagerContext(): Promise<{
     .eq("id", ctx.userId)
     .maybeSingle();
   const role = profile?.role && isUserRole(profile.role) ? profile.role : null;
-  if (!role || !canManageSettings(role)) {
-    throw new Error("Only owners and managers can change settings.");
+  if (role !== "owner") {
+    throw new Error("Only owners can perform this action.");
   }
   return { userId: ctx.userId, organizationId: ctx.organizationId, role };
 }

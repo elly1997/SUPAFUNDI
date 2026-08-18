@@ -56,11 +56,19 @@ export function StockTransferDialog({
     mutationFn: transferStockFromList,
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success(
-          r.referenceNo
-            ? `Transfer ${r.referenceNo} sent — awaiting receipt at destination`
-            : "Transfer sent — awaiting receipt at destination"
-        );
+        if ("pendingApproval" in r && r.pendingApproval) {
+          toast.success(
+            r.referenceNo
+              ? `Transfer ${r.referenceNo} submitted — awaiting manager approval`
+              : "Transfer submitted — awaiting manager approval"
+          );
+        } else {
+          toast.success(
+            r.referenceNo
+              ? `Transfer ${r.referenceNo} sent — awaiting receipt at destination`
+              : "Transfer sent — awaiting receipt at destination"
+          );
+        }
         onOpenChange(false);
         onSuccess?.();
       } else toast.error(r.message);
@@ -143,8 +151,9 @@ export function StockTransferDialog({
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              Stock is deducted from this outlet immediately. The destination
-              outlet will see a receive-goods alert to confirm receipt.
+              Managers and owners approve transfers before stock leaves the source
+              outlet. Once approved and dispatched, the destination outlet
+              confirms receipt.
             </p>
             <DialogFooter>
               <Button

@@ -44,7 +44,7 @@ async function loadGrantedOutletIds(userId: string): Promise<Set<string>> {
  * Request-scoped memoization for outlet list (safe with cookies / RLS).
  * Do not use unstable_cache here — Supabase server client reads cookies.
  *
- * Owners/managers see all outlets (active + inactive); other staff see active
+ * Owners see all outlets (active + inactive); other staff see active
  * outlets plus any they were granted via an outlet-access code.
  */
 export const getCachedOutlets = cache(
@@ -86,7 +86,7 @@ export const getCachedOutlets = cache(
       role = profile?.role ?? null;
     }
 
-    if (role === "owner" || role === "manager") {
+    if (role === "owner") {
       return all;
     }
 

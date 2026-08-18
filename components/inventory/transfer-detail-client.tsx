@@ -14,6 +14,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  canApproveStockTransfers,
+  isUserRole,
+} from "@/lib/auth/roles";
+import {
   approveStockTransfer,
   cancelStockTransfer,
   dispatchStockTransfer,
@@ -21,11 +25,15 @@ import {
   receiveStockTransfer,
 } from "@/lib/actions/transfers";
 import { formatDateTimeEAT } from "@/lib/utils/currency";
+import { useAuthStore } from "@/stores/authStore";
 
 type Props = { transferId: string };
 
 export function TransferDetailClient({ transferId }: Props) {
   const queryClient = useQueryClient();
+  const sessionRole = useAuthStore((s) => s.session?.role ?? null);
+  const role = isUserRole(sessionRole ?? "") ? sessionRole : null;
+  const canApprove = canApproveStockTransfers(role);
   const { data: tr, isLoading } = useQuery({
     queryKey: ["stock-transfer", transferId],
     queryFn: () => getStockTransferById(transferId),
@@ -104,10 +112,15 @@ export function TransferDetailClient({ transferId }: Props) {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {pending && (
+            {pending && canApprove && (
               <Button onClick={() => approveMut.mutate()} disabled={approveMut.isPending}>
                 Approve
               </Button>
+            )}
+            {pending && !canApprove && (
+              <p className="text-sm text-amber-600">
+                Awaiting manager or owner approval
+              </p>
             )}
             {approved && (
               <Button onClick={() => dispatchMut.mutate()} disabled={dispatchMut.isPending}>
@@ -172,9 +185,9 @@ export function TransferDetailClient({ transferId }: Props) {
 
       <Card className="border-muted">
         <CardContent className="py-4 text-sm text-muted-foreground">
-          <strong>Workflow:</strong> Request → Manager approves → Dispatch (stock leaves
-          source) → Receive at destination. No GL entry — inventory moves between outlets
-          at cost.
+          <strong>Workflow:</strong> Request → Owner/manager approves → Dispatch
+          (stock leaves source) → Receive at destination. No GL entry —
+          inventory moves between outlets at cost.
         </CardContent>
       </Card>
     </div>

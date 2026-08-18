@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { UserRole } from "@/lib/auth/roles";
+import { canSwitchOutlets, type UserRole } from "@/lib/auth/roles";
 import {
   resolveActiveOutletId,
   type OutletLike,
@@ -61,10 +61,15 @@ export const useAuthStore = create<AuthState>((set) => ({
   setSession: (session, outlets) => {
     const stored = readStoredOutlet();
     const activeOutletId = session
-      ? resolveActiveOutletId(outlets ?? [], {
-          stored,
-          profileOutletId: session.outletId,
-        })
+      ? canSwitchOutlets(session.role)
+        ? resolveActiveOutletId(outlets ?? [], {
+            stored,
+            profileOutletId: session.outletId,
+          })
+        : resolveActiveOutletId(outlets ?? [], {
+            stored: null,
+            profileOutletId: session.outletId,
+          })
       : null;
     if (activeOutletId) {
       writeStoredOutlet(activeOutletId);
@@ -72,6 +77,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ session, activeOutletId });
   },
   setActiveOutletId: (outletId) => {
+    const { session } = useAuthStore.getState();
+    if (session && !canSwitchOutlets(session.role)) {
+      const locked = session.outletId;
+      if (locked && outletId && outletId !== locked) return;
+    }
     writeStoredOutlet(outletId);
     set({ activeOutletId: outletId });
   },

@@ -6,6 +6,14 @@ import { requireManagerContext } from "@/lib/server/require-manager";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
+type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
+
+function payrollDb(supabase: Supabase) {
+  return supabase as unknown as {
+    from: (table: string) => any;
+  };
+}
+
 export type EmployeeRow = {
   id: string;
   profile_id: string | null;
@@ -26,16 +34,18 @@ const employeeInput = z.object({
 
 export async function listEmployees(): Promise<EmployeeRow[]> {
   const ctx = await requireOrgContext();
+  if (!ctx.outletId) return [];
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await supabase
+  const { data, error } = await payrollDb(supabase)
     .from("employees")
     .select(
       "id, profile_id, full_name, phone, job_title, gross_monthly_salary, is_active"
     )
     .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", ctx.outletId)
     .order("full_name");
   if (error) throw new Error(error.message);
-  return (data ?? []).map((e) => ({
+  return ((data ?? []) as any[]).map((e: any) => ({
     id: e.id,
     profile_id: e.profile_id,
     full_name: e.full_name,
@@ -53,12 +63,19 @@ export async function createEmployee(
     await requireManagerContext();
     const input = employeeInput.parse(raw);
     const ctx = await requireOrgContext();
+    if (!ctx.outletId) {
+      return {
+        ok: false,
+        message: "Select a working outlet before creating employees.",
+      };
+    }
     const supabase = await createServerSupabaseClient();
 
-    const { data, error } = await supabase
+    const { data, error } = await payrollDb(supabase)
       .from("employees")
       .insert({
         organization_id: ctx.organizationId,
+        outlet_id: ctx.outletId,
         profile_id: input.profileId ?? null,
         full_name: input.fullName.trim(),
         phone: input.phone?.trim() || null,
@@ -90,9 +107,15 @@ export async function updateEmployee(
     await requireManagerContext();
     const input = employeeInput.parse(raw);
     const ctx = await requireOrgContext();
+    if (!ctx.outletId) {
+      return {
+        ok: false,
+        message: "Select a working outlet before updating employees.",
+      };
+    }
     const supabase = await createServerSupabaseClient();
 
-    const { error } = await supabase
+    const { error } = await payrollDb(supabase)
       .from("employees")
       .update({
         full_name: input.fullName.trim(),
@@ -103,7 +126,8 @@ export async function updateEmployee(
         ...(raw.isActive !== undefined ? { is_active: raw.isActive } : {}),
       })
       .eq("id", id)
-      .eq("organization_id", ctx.organizationId);
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", ctx.outletId);
     if (error) return { ok: false, message: error.message };
 
     revalidatePath("/finance/payroll");
@@ -122,31 +146,38 @@ export async function importEmployeesFromProfiles(): Promise<
   try {
     await requireManagerContext();
     const ctx = await requireOrgContext();
+    if (!ctx.outletId) {
+      return {
+        ok: false,
+        message: "Select a working outlet before importing outlet staff.",
+      };
+    }
     const supabase = await createServerSupabaseClient();
 
     const { data: profiles } = await supabase
       .from("profiles")
       .select("id, full_name, phone, is_active")
       .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", ctx.outletId)
       .eq("is_active", true);
 
-    const { data: existing } = await supabase
+    const { data: existing } = await payrollDb(supabase)
       .from("employees")
       .select("profile_id")
       .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", ctx.outletId)
       .not("profile_id", "is", null);
 
-    const linked = new Set(
-      (existing ?? []).map((e) => e.profile_id)
-    );
+    const linked = new Set(((existing ?? []) as any[]).map((e: any) => e.profile_id));
     let imported = 0;
 
     for (const p of profiles ?? []) {
       if (linked.has(p.id)) continue;
       const name = p.full_name?.trim();
       if (!name) continue;
-      const { error } = await supabase.from("employees").insert({
+      const { error } = await payrollDb(supabase).from("employees").insert({
         organization_id: ctx.organizationId,
+        outlet_id: ctx.outletId,
         profile_id: p.id,
         full_name: name,
         phone: p.phone,

@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { performSignOut } from "@/lib/auth/sign-out-client";
+import { canSwitchOutlets } from "@/lib/auth/roles";
 import { updateActiveOutlet } from "@/lib/actions/auth";
 import { cn } from "@/lib/utils";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
@@ -59,6 +60,7 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
   }
 
   const displayName = session.fullName || session.email;
+  const canSwitch = canSwitchOutlets(session.role);
   const outletValue =
     resolveActiveOutletId(outlets, {
       stored: activeOutletId,
@@ -68,6 +70,7 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
   const isPos = pathname === "/pos" || pathname.startsWith("/pos/");
 
   const onOutletChange = (outletId: string) => {
+    if (!canSwitch) return;
     setActiveOutletId(outletId);
     startTransition(async () => {
       const res = await updateActiveOutlet(outletId);
@@ -115,19 +118,25 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
         {outlets.length > 0 && !isPos ? (
           <label className="inline-flex min-w-0 max-w-[11rem] items-center gap-1.5 rounded-lg border border-border bg-surface-1 px-2 py-1 text-sm">
             <Store className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-            <select
-              value={outletValue}
-              disabled={pending || outlets.length === 0}
-              onChange={(e) => onOutletChange(e.target.value)}
-              className="min-w-0 flex-1 truncate border-0 bg-transparent py-0 text-sm font-medium text-foreground focus:outline-none focus:ring-0"
-              aria-label="Active outlet"
-            >
-              {outlets.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.name}
-                </option>
-              ))}
-            </select>
+            {canSwitch ? (
+              <select
+                value={outletValue}
+                disabled={pending || outlets.length === 0}
+                onChange={(e) => onOutletChange(e.target.value)}
+                className="min-w-0 flex-1 truncate border-0 bg-transparent py-0 text-sm font-medium text-foreground focus:outline-none focus:ring-0"
+                aria-label="Active outlet"
+              >
+                {outlets.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="min-w-0 flex-1 truncate py-0 text-sm font-medium text-foreground">
+                {outlets.find((o) => o.id === outletValue)?.name ?? "Outlet"}
+              </span>
+            )}
           </label>
         ) : null}
 

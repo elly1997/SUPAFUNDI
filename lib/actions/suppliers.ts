@@ -120,6 +120,7 @@ type SupplierBillRow = {
 async function payablesBySupplier(
   supabase: SupabaseClient,
   organizationId: string,
+  outletId: string,
   supplierIds: string[]
 ): Promise<Map<string, number>> {
   const map = new Map<string, number>();
@@ -129,6 +130,7 @@ async function payablesBySupplier(
     .from("supplier_bills")
     .select("supplier_id, total_amount, amount_paid, status")
     .eq("organization_id", organizationId)
+    .eq("outlet_id", outletId)
     .in("supplier_id", supplierIds)
     .in("status", ["open", "partial", "draft"]);
 
@@ -159,6 +161,7 @@ async function payablesBySupplier(
 
 export async function listSuppliers(): Promise<SupplierListRow[]> {
   const ctx = await requireOrgContext();
+  if (!ctx.outletId) return [];
   const supabase = await createServerSupabaseClient();
   const { data, error } = await apDb(supabase)
     .from("suppliers")
@@ -166,6 +169,7 @@ export async function listSuppliers(): Promise<SupplierListRow[]> {
       "id, name, phone, contact_person, credit_limit, is_active"
     )
     .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", ctx.outletId)
     .order("name");
   if (error) throw new Error(error.message);
 
@@ -180,6 +184,7 @@ export async function listSuppliers(): Promise<SupplierListRow[]> {
   const payables = await payablesBySupplier(
     supabase,
     ctx.organizationId,
+    ctx.outletId,
     rows.map((r) => r.id)
   );
 
@@ -301,7 +306,7 @@ export async function getSupplierDetail(
     credit_days: number;
   };
 
-  const payables = await payablesBySupplier(supabase, ctx.organizationId, [
+  const payables = await payablesBySupplier(supabase, ctx.organizationId, ctx.outletId ?? "", [
     supplierId,
   ]);
 
@@ -311,6 +316,7 @@ export async function getSupplierDetail(
       "id, bill_no, bill_date, due_date, total_amount, amount_paid, status"
     )
     .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", ctx.outletId ?? "")
     .eq("supplier_id", supplierId)
     .order("bill_date", { ascending: false })
     .limit(50);
@@ -366,11 +372,15 @@ export async function createSupplierRecord(
 ): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
   const input = supplierInput.parse(raw);
   const ctx = await requireOrgContext();
+  if (!ctx.outletId) {
+    return { ok: false, message: "Select a working outlet before adding suppliers." };
+  }
   const supabase = await createServerSupabaseClient();
   const { data, error } = await apDb(supabase)
     .from("suppliers")
     .insert({
       organization_id: ctx.organizationId,
+      outlet_id: ctx.outletId,
       name: input.name.trim(),
       contact_person: input.contactPerson?.trim() || null,
       phone: input.phone?.trim() || null,
@@ -412,7 +422,11 @@ export async function updateSupplier(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const input = supplierUpdateInput.parse(raw);
-    const { organizationId } = await requireManagerContext();
+    await requireManagerContext();
+    const { organizationId, outletId } = await requireOrgContext();
+    if (!outletId) {
+      return { ok: false, message: "Select a working outlet before updating suppliers." };
+    }
     const supabase = await createServerSupabaseClient();
     const { data, error } = await apDb(supabase)
       .from("suppliers")
@@ -431,6 +445,7 @@ export async function updateSupplier(
       })
       .eq("id", supplierId)
       .eq("organization_id", organizationId)
+      .eq("outlet_id", outletId)
       .select("id")
       .maybeSingle();
     if (error) return { ok: false, message: error.message };
@@ -452,9 +467,10 @@ export async function updateSupplier(
 async function supplierDeleteBlockers(
   supabase: SupabaseClient,
   organizationId: string,
+  outletId: string,
   supplierId: string
 ): Promise<string | null> {
-  const payables = await payablesBySupplier(supabase, organizationId, [
+  const payables = await payablesBySupplier(supabase, organizationId, outletId, [
     supplierId,
   ]);
   if ((payables.get(supplierId) ?? 0) > 0) {
@@ -465,6 +481,7 @@ async function supplierDeleteBlockers(
     .from("supplier_bills")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId)
+    .eq("outlet_id", outletId)
     .eq("supplier_id", supplierId)
     .in("status", ["open", "partial", "draft"]);
   if ((openBills ?? 0) > 0) {
@@ -475,6 +492,7 @@ async function supplierDeleteBlockers(
     .from("purchase_orders")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId)
+    .eq("outlet_id", outletId)
     .eq("supplier_id", supplierId)
     .in("status", ["draft", "sent", "partial"]);
   if ((openPos ?? 0) > 0) {
@@ -485,6 +503,7 @@ async function supplierDeleteBlockers(
     .from("grns")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId)
+    .eq("outlet_id", outletId)
     .eq("supplier_id", supplierId)
     .eq("payment_method", "on_account");
   if ((unpaidGrns ?? 0) > 0) {
@@ -495,6 +514,7 @@ async function supplierDeleteBlockers(
     .from("supplier_payments")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId)
+    .eq("outlet_id", outletId)
     .eq("supplier_id", supplierId);
   if ((payments ?? 0) > 0) {
     return "Supplier has payment history. Cannot delete.";
@@ -507,19 +527,25 @@ export async function deleteSupplier(
   supplierId: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
-    const { organizationId } = await requireManagerContext();
+    await requireManagerContext();
+    const { organizationId, outletId } = await requireOrgContext();
+    if (!outletId) {
+      return { ok: false, message: "Select a working outlet before deleting suppliers." };
+    }
     const supabase = await createServerSupabaseClient();
     const { data: row } = await apDb(supabase)
       .from("suppliers")
       .select("id")
       .eq("id", supplierId)
       .eq("organization_id", organizationId)
+      .eq("outlet_id", outletId)
       .maybeSingle();
     if (!row) return { ok: false, message: "Supplier not found." };
 
     const blocked = await supplierDeleteBlockers(
       supabase,
       organizationId,
+      outletId,
       supplierId
     );
     if (blocked) return { ok: false, message: blocked };
@@ -528,7 +554,8 @@ export async function deleteSupplier(
       .from("suppliers")
       .delete()
       .eq("id", supplierId)
-      .eq("organization_id", organizationId);
+      .eq("organization_id", organizationId)
+      .eq("outlet_id", outletId);
     if (error) return { ok: false, message: error.message };
 
     revalidatePath("/suppliers");

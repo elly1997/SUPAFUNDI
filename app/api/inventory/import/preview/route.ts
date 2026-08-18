@@ -2,11 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { InventoryImportRow } from "@/lib/excel/parse-inventory";
 import {
-  runInventoryImport,
+  previewInventoryImport,
   type InventoryImportMode,
 } from "@/lib/inventory/run-import";
 import { requireOrgContext } from "@/lib/server/org-context";
-import { revalidatePath } from "next/cache";
 
 const importRowBody = z.object({
   code: z.string().optional(),
@@ -21,10 +20,8 @@ const importRowBody = z.object({
 
 const bodySchema = z.object({
   outletId: z.string().uuid(),
-  mode: z
-    .enum(["catalog_and_stock", "catalog_only", "stock_only"])
-    .optional(),
-  rows: z.array(importRowBody).min(1).max(50),
+  mode: z.enum(["catalog_and_stock", "catalog_only", "stock_only"]),
+  rows: z.array(importRowBody).min(1).max(1000),
 });
 
 export async function POST(request: Request) {
@@ -39,19 +36,16 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await runInventoryImport(
+    const result = await previewInventoryImport(
       ctx.organizationId,
       parsed.data.outletId,
       parsed.data.rows as InventoryImportRow[],
-      (parsed.data.mode ?? "catalog_and_stock") as InventoryImportMode
+      parsed.data.mode as InventoryImportMode
     );
-
-    revalidatePath("/inventory/products");
-    revalidatePath("/inventory/stock");
 
     return NextResponse.json(result);
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Import failed";
+    const message = e instanceof Error ? e.message : "Preview failed";
     const status = message.includes("signed in") ? 401 : 500;
     return NextResponse.json({ error: message }, { status });
   }

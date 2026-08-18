@@ -79,6 +79,7 @@ export function CatalogBackupPanel() {
       return importInventoryInChunks(
         effectiveOutletId,
         restoreRows,
+        "catalog_and_stock",
         (done, total) => setRestoreProgress(`${done} / ${total} rows`)
       );
     },

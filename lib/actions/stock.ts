@@ -33,7 +33,13 @@ function escapeLikePattern(value: string) {
 
 function pricesDb(supabase: Supabase) {
   return supabase as unknown as {
-    from: (table: "product_prices") => ReturnType<Supabase["from"]>;
+    from: (table: string) => any;
+  };
+}
+
+function catalogDb(supabase: Supabase) {
+  return supabase as unknown as {
+    from: (table: string) => any;
   };
 }
 
@@ -243,14 +249,16 @@ async function computeStockLevelsSummaryFast(
   stockMap: Map<string, { quantity: number; cost_price: number }>
 ): Promise<StockLevelsSummary> {
   const products = await fetchAllPaginated(async (from, to) => {
-    const { data, error } = await supabase
+    const { data, error } = await catalogDb(supabase)
       .from("products")
       .select("id, reorder_point")
       .eq("organization_id", organizationId)
+      .eq("outlet_id", outletId)
       .eq("is_active", true)
       .range(from, to);
     return { data, error };
   });
+  const productRows = products as any[];
 
   let totalValue = 0;
   let skusWithQty = 0;
@@ -258,7 +266,7 @@ async function computeStockLevelsSummaryFast(
   let outOfStockCount = 0;
   const idsWithQty: string[] = [];
 
-  for (const p of products) {
+  for (const p of productRows) {
     const stock = stockMap.get(p.id);
     const qty = stock?.quantity ?? 0;
     const cost = stock?.cost_price ?? 0;
@@ -288,7 +296,7 @@ async function computeStockLevelsSummaryFast(
   return {
     totalValue,
     totalRetailValue: roundMoney(totalRetailValue),
-    lineCount: products.length,
+    lineCount: productRows.length,
     skusWithQty,
     lowStockCount,
     outOfStockCount,
@@ -298,6 +306,7 @@ async function computeStockLevelsSummaryFast(
 async function fetchFilteredProductLites(
   supabase: Supabase,
   organizationId: string,
+  outletId: string,
   search: string,
   categoryId: string | null,
   categoryNameById: Map<string, string>
@@ -311,10 +320,11 @@ async function fetchFilteredProductLites(
   }
 
   const rows = await fetchAllPaginated(async (from, to) => {
-    let query = supabase
+    let query = catalogDb(supabase)
       .from("products")
       .select("id, name, code, unit, category_id, reorder_point")
       .eq("organization_id", organizationId)
+      .eq("outlet_id", outletId)
       .eq("is_active", true);
 
     if (categoryId) query = query.eq("category_id", categoryId);
@@ -333,7 +343,7 @@ async function fetchFilteredProductLites(
     return { data, error };
   });
 
-  return rows.map((p) => ({
+  return (rows as any[]).map((p: any) => ({
     id: p.id,
     name: p.name,
     code: p.code,
@@ -393,8 +403,8 @@ export async function listStockLevels(
       return { data, error };
     }),
     fetchByInChunks(productIds, async (chunk) => {
-      const { data, error } = await supabase
-        .from("products")
+          const { data, error } = await catalogDb(supabase)
+            .from("products")
         .select("id, reorder_point")
         .in("id", chunk);
       return { data, error };
@@ -411,7 +421,7 @@ export async function listStockLevels(
     qtyMap.set(s.product_id, Number(s.quantity));
   }
   const reorderMap = new Map(
-    reorderRows.map((p) => [p.id, Number(p.reorder_point ?? 0)])
+    (reorderRows as any[]).map((p: any) => [p.id, Number(p.reorder_point ?? 0)])
   );
   const outletName = outletRow.data?.name ?? "—";
 
@@ -532,6 +542,7 @@ export async function listStockLevelsPage(
     const allMatching = await fetchFilteredProductLites(
       supabase,
       ctx.organizationId,
+      filterOutlet,
       search,
       categoryId,
       categoryNameById
@@ -551,13 +562,14 @@ export async function listStockLevelsPage(
         .map(([id]) => id);
     }
 
-    let query = supabase
+    let query = catalogDb(supabase)
       .from("products")
       .select(
         "id, name, code, unit, category_id, reorder_point",
         { count: "exact" }
       )
       .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", filterOutlet)
       .eq("is_active", true);
 
     if (categoryId) query = query.eq("category_id", categoryId);
@@ -575,7 +587,7 @@ export async function listStockLevelsPage(
       .range(from, to);
     if (error) throw new Error(error.message);
 
-    pageProducts = (products ?? []).map((p) => ({
+    pageProducts = ((products ?? []) as any[]).map((p: any) => ({
       id: p.id,
       name: p.name,
       code: p.code,

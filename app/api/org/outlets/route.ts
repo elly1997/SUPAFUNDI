@@ -43,9 +43,8 @@ export async function GET() {
       .maybeSingle();
     const role = profile?.role ?? null;
 
-    // Owners and managers see every outlet (active + inactive) so they can
-    // manage assignments and switch into any branch.
-    if (role === "owner" || role === "manager") {
+    // Owners see every outlet (active + inactive) so they can switch into any branch.
+    if (role === "owner") {
       return NextResponse.json({ outlets: all });
     }
 

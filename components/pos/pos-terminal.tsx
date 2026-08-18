@@ -64,6 +64,7 @@ import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { computeCartMargin } from "@/lib/utils/cart-margin";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
+import { canSwitchOutlets } from "@/lib/auth/roles";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
 import type { AddProductResult } from "@/stores/cartStore";
@@ -127,19 +128,21 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const [qtyOpen, setQtyOpen] = useState(false);
   const prevPricingModeRef = useRef<PosPricingMode>(pricingMode);
 
+  const canSwitch = canSwitchOutlets(session?.role ?? null);
+
   useEffect(() => {
     if (!outlets.length) return;
     const resolved = resolveActiveOutletId(outlets, {
-      stored: activeOutletId,
+      stored: canSwitch ? activeOutletId : null,
       profileOutletId: session?.outletId,
     });
     if (resolved && resolved !== activeOutletId) {
       setActiveOutletId(resolved);
     }
-  }, [activeOutletId, outlets, session?.outletId, setActiveOutletId]);
+  }, [activeOutletId, canSwitch, outlets, session?.outletId, setActiveOutletId]);
 
   const effectiveOutletId = resolveActiveOutletId(outlets, {
-    stored: activeOutletId,
+    stored: canSwitch ? activeOutletId : null,
     profileOutletId: session?.outletId,
   });
 
@@ -730,9 +733,15 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                         <div className="mb-3 flex size-14 items-center justify-center rounded-2xl bg-muted">
                           <Search className="size-7 text-muted-foreground/50" />
                         </div>
-                        <p className="font-medium">No products found</p>
+                        <p className="font-medium">
+                          {search.trim()
+                            ? "No products found"
+                            : "No items yet for this outlet"}
+                        </p>
                         <p className="mt-1 max-w-xs text-sm text-muted-foreground">
-                          Add stock at this outlet or try another search term.
+                          {search.trim()
+                            ? "Try another search term or check the item code for this outlet."
+                            : "Import the outlet catalog first, then load opening stock before selling."}
                         </p>
                       </div>
                     ) : (

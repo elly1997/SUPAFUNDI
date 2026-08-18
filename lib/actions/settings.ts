@@ -9,7 +9,11 @@ import {
   slugifyExpenseCategory,
   type ExpenseCategory,
 } from "@/lib/constants/expense-categories";
-import { USER_ROLES } from "@/lib/auth/roles";
+import {
+  USER_ROLES,
+  canAssignOwnerRole,
+  canInviteUsers,
+} from "@/lib/auth/roles";
 import { loadOutletsForSettings } from "@/lib/data/settings-team";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { requireManagerContext } from "@/lib/server/require-manager";
@@ -309,7 +313,13 @@ export async function inviteOrganizationUser(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const input = inviteUserSchema.parse(raw);
-    const { organizationId } = await requireManager();
+    const { organizationId, role: actorRole } = await requireManager();
+    if (!canInviteUsers(actorRole)) {
+      return { ok: false, message: "Only owners and managers can invite users." };
+    }
+    if (input.role === "owner" && !canAssignOwnerRole(actorRole)) {
+      return { ok: false, message: "Only owners can invite another owner." };
+    }
     const admin = createAdminSupabaseClient();
 
     if (input.outletId) {
@@ -363,6 +373,62 @@ export async function inviteOrganizationUser(
   }
 }
 
+export async function resendOrganizationUserInvite(
+  userId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const { organizationId, role: actorRole } = await requireManager();
+    if (!canInviteUsers(actorRole)) {
+      return { ok: false, message: "Only owners and managers can resend invites." };
+    }
+
+    const admin = createAdminSupabaseClient();
+    const { data: target } = await admin
+      .from("profiles")
+      .select("id, email, full_name")
+      .eq("id", userId)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (!target?.email) return { ok: false, message: "User not found." };
+
+    const { data: authUser } = await admin.auth.admin.getUserById(userId);
+    const invitedAt = authUser?.user?.invited_at;
+    const confirmedAt = authUser?.user?.email_confirmed_at;
+    const lastSignIn = authUser?.user?.last_sign_in_at;
+    const pending =
+      invitedAt && !confirmedAt && !lastSignIn
+        ? true
+        : Boolean(invitedAt && !confirmedAt);
+    if (!pending) {
+      return {
+        ok: false,
+        message: "This user has already accepted their invite.",
+      };
+    }
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const { error: inviteErr } = await admin.auth.admin.inviteUserByEmail(
+      target.email,
+      {
+        data: { full_name: target.full_name ?? "" },
+        redirectTo: `${appUrl}/login`,
+      }
+    );
+    if (inviteErr) {
+      return { ok: false, message: inviteErr.message };
+    }
+
+    revalidatePath("/settings/users");
+    revalidatePath("/settings/general");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Resend invite failed",
+    };
+  }
+}
+
 const updateUserSchema = z.object({
   fullName: z.string().min(2).max(200),
   role: z.enum(USER_ROLES),
@@ -376,7 +442,14 @@ export async function updateOrganizationUser(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const input = updateUserSchema.parse(raw);
-    const { organizationId, userId: actorId } = await requireManager();
+    const { organizationId, userId: actorId, role: actorRole } =
+      await requireManager();
+    if (!canInviteUsers(actorRole)) {
+      return { ok: false, message: "Only owners and managers can edit users." };
+    }
+    if (input.role === "owner" && !canAssignOwnerRole(actorRole)) {
+      return { ok: false, message: "Only owners can assign the owner role." };
+    }
 
     if (userId === actorId && !input.isActive) {
       return { ok: false, message: "You cannot deactivate your own account." };

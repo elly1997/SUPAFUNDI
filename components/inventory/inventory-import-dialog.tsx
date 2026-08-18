@@ -23,12 +23,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { importInventoryInChunks } from "@/lib/api/inventory-import-fetch";
-import { formatTzs } from "@/lib/utils/currency";
+import {
+  importInventoryInChunks,
+  previewInventoryImportApi,
+} from "@/lib/api/inventory-import-fetch";
 import {
   parseInventoryWorkbook,
   type InventoryImportRow,
 } from "@/lib/excel/parse-inventory";
+import type {
+  InventoryImportMode,
+  InventoryImportPreview,
+} from "@/lib/inventory/run-import";
 
 type OutletOption = { id: string; name: string };
 
@@ -52,6 +58,9 @@ export function InventoryImportDialog({
   );
   const [importOutletId, setImportOutletId] = useState("");
   const [importProgress, setImportProgress] = useState<string | null>(null);
+  const [importMode, setImportMode] =
+    useState<InventoryImportMode>("catalog_and_stock");
+  const [preview, setPreview] = useState<InventoryImportPreview | null>(null);
 
   useEffect(() => {
     if (open && defaultOutletId) {
@@ -63,6 +72,8 @@ export function InventoryImportDialog({
     if (!open) {
       setImportRows(null);
       setImportProgress(null);
+      setImportMode("catalog_and_stock");
+      setPreview(null);
     }
   }, [open]);
 
@@ -75,6 +86,7 @@ export function InventoryImportDialog({
       return importInventoryInChunks(
         importOutletId,
         importRows,
+        importMode,
         (done, total) => setImportProgress(`${done} / ${total} rows`)
       );
     },
@@ -96,6 +108,7 @@ export function InventoryImportDialog({
       }
       onOpenChange(false);
       setImportRows(null);
+      setPreview(null);
       onImported?.();
     },
     onError: (e) => {
@@ -114,8 +127,22 @@ export function InventoryImportDialog({
       return;
     }
     setImportRows(parsed.rows);
+    setPreview(null);
     toast.success(`Parsed ${parsed.rows.length} row(s). Review and import.`);
   }, []);
+
+  const previewMutation = useMutation({
+    mutationFn: async () => {
+      if (!importOutletId || !importRows?.length) {
+        throw new Error("Choose an outlet and a valid file.");
+      }
+      return previewInventoryImportApi(importOutletId, importRows, importMode);
+    },
+    onSuccess: (res) => setPreview(res),
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Preview failed");
+    },
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -123,12 +150,9 @@ export function InventoryImportDialog({
         <DialogHeader>
           <DialogTitle>Import from Excel</DialogTitle>
           <DialogDescription>
-            Import stock take into the selected outlet only. Product names/codes
-            are shared org-wide; quantities land on this branch. Same layout as
-            General Stock: Page, Code, Name, Category, Quantity, Cost, Retail
-            Price, Unit, Notes. Duplicate product names are rejected. Blank code
-            = auto-generated. Use the same code as an existing item to update
-            stock at this outlet only.
+            Import runs only inside the selected outlet. Use catalog mode first
+            to create the outlet's own items, then opening-stock mode to load
+            quantities without mixing with the main store.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -155,6 +179,30 @@ export function InventoryImportDialog({
             )}
           </div>
           <div className="space-y-2">
+            <Label>Import mode</Label>
+            <select
+              aria-label="Import mode"
+              className="flex h-9 w-full max-w-md rounded-lg border border-input bg-background px-3 text-sm"
+              value={importMode}
+              onChange={(e) =>
+                setImportMode(e.target.value as InventoryImportMode)
+              }
+            >
+              <option value="catalog_and_stock">
+                Create/update catalog + load stock
+              </option>
+              <option value="catalog_only">
+                Create/update outlet catalog only
+              </option>
+              <option value="stock_only">Load opening stock only</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Same names are checked only inside this outlet. A missing item in
+              stock-only mode is treated as an error until the outlet catalog is
+              created first.
+            </p>
+          </div>
+          <div className="space-y-2">
             <Label htmlFor="stock-xlsx">Spreadsheet (.xlsx)</Label>
             <Input
               id="stock-xlsx"
@@ -164,43 +212,70 @@ export function InventoryImportDialog({
             />
           </div>
           {importRows && importRows.length > 0 && (
-            <div className="max-h-48 overflow-auto rounded-md border text-sm">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Code</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Qty</TableHead>
-                    <TableHead>Cost</TableHead>
-                    <TableHead>Retail</TableHead>
-                    <TableHead>Unit</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {importRows.slice(0, 50).map((r, i) => (
-                    <TableRow key={`${r.code}-${i}`}>
-                      <TableCell className="font-mono text-xs">{r.code}</TableCell>
-                      <TableCell>{r.name}</TableCell>
-                      <TableCell>{r.category}</TableCell>
-                      <TableCell>{r.quantity}</TableCell>
-                      <TableCell>
-                        {r.cost != null ? formatTzs(r.cost) : "—"}
-                      </TableCell>
-                      <TableCell>
-                        {r.retailPrice != null ? formatTzs(r.retailPrice) : "—"}
-                      </TableCell>
-                      <TableCell>{r.unit}</TableCell>
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={
+                    previewMutation.isPending ||
+                    !importOutletId ||
+                    !importRows?.length
+                  }
+                  onClick={() => previewMutation.mutate()}
+                >
+                  {previewMutation.isPending && (
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                  )}
+                  Preview import
+                </Button>
+                {preview ? (
+                  <p className="text-xs text-muted-foreground">
+                    {preview.summary.create} create, {preview.summary.update} update,{" "}
+                    {preview.summary.missing} missing, {preview.summary.conflict} conflict
+                  </p>
+                ) : null}
+              </div>
+              <div className="max-h-56 overflow-auto rounded-md border text-sm">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Code</TableHead>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Qty</TableHead>
+                      <TableHead>Action</TableHead>
+                      <TableHead>Preview</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              {importRows.length > 50 && (
-                <p className="border-t p-2 text-muted-foreground">
-                  …and {importRows.length - 50} more rows (all will be imported).
-                </p>
-              )}
-            </div>
+                  </TableHeader>
+                  <TableBody>
+                    {importRows.slice(0, 50).map((r, i) => {
+                      const status =
+                        preview?.rows.find(
+                          (p) => p.code === (r.code ?? "") && p.name === r.name
+                        ) ?? null;
+                      return (
+                        <TableRow key={`${r.code}-${i}`}>
+                          <TableCell className="font-mono text-xs">{r.code}</TableCell>
+                          <TableCell>{r.name}</TableCell>
+                          <TableCell>{r.category}</TableCell>
+                          <TableCell>{r.quantity}</TableCell>
+                          <TableCell>{status?.action ?? "—"}</TableCell>
+                          <TableCell className="max-w-[18rem] truncate">
+                            {status?.message ?? "Run preview"}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+                {importRows.length > 50 && (
+                  <p className="border-t p-2 text-muted-foreground">
+                    …and {importRows.length - 50} more rows (all will be previewed/imported).
+                  </p>
+                )}
+              </div>
+            </>
           )}
         </div>
         <DialogFooter>
@@ -216,7 +291,9 @@ export function InventoryImportDialog({
             disabled={
               importMutation.isPending ||
               !importOutletId ||
-              !importRows?.length
+              !importRows?.length ||
+              (preview != null &&
+                (preview.summary.conflict > 0 || preview.summary.missing > 0))
             }
             onClick={() => importMutation.mutate()}
           >

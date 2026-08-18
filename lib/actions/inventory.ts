@@ -45,9 +45,30 @@ type ProductPriceRow = {
   auto_generated?: boolean;
 };
 
+async function resolveCatalogOutletId(
+  requestedOutletId: string | null | undefined
+): Promise<{ organizationId: string; outletId: string; userId: string }> {
+  const ctx = await requireOrgContext();
+  const outletId = requestedOutletId ?? ctx.outletId;
+  if (!outletId) {
+    throw new Error("Select an active outlet first.");
+  }
+  return {
+    organizationId: ctx.organizationId,
+    outletId,
+    userId: ctx.userId,
+  };
+}
+
 function pricesDb(supabase: Supabase) {
   return supabase as unknown as {
-    from: (table: "product_prices") => ReturnType<Supabase["from"]>;
+    from: (table: string) => any;
+  };
+}
+
+function catalogDb(supabase: Supabase) {
+  return supabase as unknown as {
+    from: (table: string) => any;
   };
 }
 
@@ -126,10 +147,11 @@ export async function createProduct(
         input.categoryName
       );
 
-      const { data: existing } = await supabase
+      const { data: existing } = await catalogDb(supabase)
         .from("products")
         .select("id")
         .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", input.outletId)
         .eq("code", code)
         .maybeSingle();
 
@@ -137,13 +159,14 @@ export async function createProduct(
         return { ok: false, message: `Product code "${code}" already exists.` };
       }
 
-      const { data: allNames } = await supabase
+      const { data: allNames } = await catalogDb(supabase)
         .from("products")
         .select("id, name")
-        .eq("organization_id", ctx.organizationId);
+        .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", input.outletId);
       const nameKey = normalizeProductName(input.name);
-      const nameClash = (allNames ?? []).find(
-        (p) => normalizeProductName(p.name) === nameKey
+      const nameClash = ((allNames ?? []) as any[]).find(
+        (p: any) => normalizeProductName(p.name) === nameKey
       );
       if (nameClash) {
         return {
@@ -152,10 +175,11 @@ export async function createProduct(
         };
       }
 
-      const { data: product, error: pErr } = await supabase
+      const { data: product, error: pErr } = await catalogDb(supabase)
         .from("products")
         .insert({
           organization_id: ctx.organizationId,
+          outlet_id: input.outletId,
           category_id: categoryId,
           name: input.name.trim(),
           unit: input.unit.trim(),
@@ -284,11 +308,12 @@ export async function adjustProductStock(
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
 
-    const { data: product } = await supabase
+    const { data: product } = await catalogDb(supabase)
       .from("products")
       .select("id")
       .eq("id", input.productId)
       .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", input.outletId)
       .maybeSingle();
     if (!product) {
       return { ok: false, message: "Product not found." };
@@ -361,11 +386,12 @@ export async function getProductStockSnapshot(
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
 
-  const { data: product } = await supabase
+  const { data: product } = await catalogDb(supabase)
     .from("products")
     .select("id, unit")
     .eq("id", productId)
     .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", outletId)
     .maybeSingle();
   if (!product) return null;
 
@@ -432,13 +458,15 @@ export async function listProductPriceCatalog(
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
   const costOutletId = outletId ?? ctx.outletId;
+  if (!costOutletId) return [];
 
   const [products, categoriesRes] = await Promise.all([
     fetchAllPaginated(async (from, to) => {
-      const { data, error } = await supabase
+      const { data, error } = await catalogDb(supabase)
         .from("products")
         .select("id, name, code, unit, category_id")
         .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", costOutletId)
         .eq("is_active", true)
         .range(from, to);
       return { data, error };
@@ -451,12 +479,13 @@ export async function listProductPriceCatalog(
   if (categoriesRes.error) {
     throw new Error(categoriesRes.error.message);
   }
-  if (!products.length) return [];
+  const productRows = (products ?? []) as any[];
+  if (!productRows.length) return [];
 
   const categoryNameById = new Map(
     (categoriesRes.data ?? []).map((c) => [c.id, c.name as string])
   );
-  const ids = products.map((p) => p.id);
+  const ids = productRows.map((p: any) => p.id);
   const [prices, stockRows] = await Promise.all([
     fetchByInChunks(ids, async (chunk) => {
       const { data, error } = await pricesDb(supabase)
@@ -500,7 +529,7 @@ export async function listProductPriceCatalog(
     qtyMap.set(s.product_id, Number(s.quantity));
   }
 
-  const rows: ProductPriceCatalogRow[] = products.map((p) => {
+  const rows: ProductPriceCatalogRow[] = productRows.map((p: any) => {
     const retail = retailMap.get(p.id);
     return {
       id: p.id,
@@ -616,6 +645,15 @@ export async function listProductPriceCatalogPage(
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
   const costOutletId = input.outletId ?? ctx.outletId;
+  if (!costOutletId) {
+    return {
+      products: [],
+      page: 1,
+      pageSize: normalizePageSize(input.pageSize),
+      total: 0,
+      hasMore: false,
+    };
+  }
   const page = normalizePage(input.page);
   const pageSize = normalizePageSize(input.pageSize);
   const from = (page - 1) * pageSize;
@@ -641,10 +679,11 @@ export async function listProductPriceCatalogPage(
       .map((c) => c.id);
   }
 
-  let query = supabase
+  let query = catalogDb(supabase)
     .from("products")
     .select("id, name, code, unit, category_id", { count: "exact" })
     .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", costOutletId)
     .eq("is_active", true);
 
   if (categoryId) query = query.eq("category_id", categoryId);
@@ -715,29 +754,33 @@ export async function patchProductCatalogField(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const input = catalogPatchInput.parse(raw);
-    const ctx = await requireOrgContext();
+    const { organizationId, outletId, userId } = await resolveCatalogOutletId(
+      input.outletId ?? null
+    );
     const supabase = await createServerSupabaseClient();
 
-    const { data: product } = await supabase
+    const { data: product } = await catalogDb(supabase)
       .from("products")
       .select("id, name, code")
       .eq("id", input.productId)
-      .eq("organization_id", ctx.organizationId)
+      .eq("organization_id", organizationId)
+      .eq("outlet_id", outletId)
       .maybeSingle();
     if (!product) return { ok: false, message: "Product not found." };
 
     if (input.field === "code") {
       const code = String(input.value).trim();
       if (!code) return { ok: false, message: "Code cannot be empty." };
-      const { data: clash } = await supabase
+      const { data: clash } = await catalogDb(supabase)
         .from("products")
         .select("id")
-        .eq("organization_id", ctx.organizationId)
+        .eq("organization_id", organizationId)
+        .eq("outlet_id", outletId)
         .eq("code", code)
         .neq("id", input.productId)
         .maybeSingle();
       if (clash) return { ok: false, message: `Code "${code}" is already used.` };
-      const { error } = await supabase
+      const { error } = await catalogDb(supabase)
         .from("products")
         .update({ code })
         .eq("id", input.productId);
@@ -745,7 +788,7 @@ export async function patchProductCatalogField(
     } else if (input.field === "unit") {
       const unit = String(input.value).trim();
       if (!unit) return { ok: false, message: "Unit cannot be empty." };
-      const { error } = await supabase
+      const { error } = await catalogDb(supabase)
         .from("products")
         .update({ unit })
         .eq("id", input.productId);
@@ -767,28 +810,21 @@ export async function patchProductCatalogField(
         autoGenerated: false,
       });
       if (input.reason?.trim() || prevRetail !== price) {
-        const outletId = input.outletId ?? ctx.outletId;
-        if (outletId) {
-          await supabase.from("stock_movements").insert({
-            organization_id: ctx.organizationId,
-            outlet_id: outletId,
-            product_id: input.productId,
-            movement_type: "adjustment_in",
-            quantity: 0,
-            unit_cost: price,
-            reference_type: "price_adjustment",
-            notes: input.reason?.trim()
-              ? `Retail ${prevRetail} → ${price}: ${input.reason.trim()}`
-              : `Retail price ${prevRetail} → ${price}`,
-            created_by: ctx.userId,
-          });
-        }
+        await supabase.from("stock_movements").insert({
+          organization_id: organizationId,
+          outlet_id: outletId,
+          product_id: input.productId,
+          movement_type: "adjustment_in",
+          quantity: 0,
+          unit_cost: price,
+          reference_type: "price_adjustment",
+          notes: input.reason?.trim()
+            ? `Retail ${prevRetail} → ${price}: ${input.reason.trim()}`
+            : `Retail price ${prevRetail} → ${price}`,
+          created_by: userId,
+        });
       }
     } else if (input.field === "costPrice") {
-      const outletId = input.outletId ?? ctx.outletId;
-      if (!outletId) {
-        return { ok: false, message: "Select an active outlet for cost price." };
-      }
       const cost = Number(input.value);
       if (!Number.isFinite(cost) || cost < 0) {
         return { ok: false, message: "Invalid cost price." };
@@ -802,7 +838,7 @@ export async function patchProductCatalogField(
       const prevCost = Number(stock?.cost_price ?? 0);
       const { error } = await supabase.from("stock").upsert(
         {
-          organization_id: ctx.organizationId,
+          organization_id: organizationId,
           outlet_id: outletId,
           product_id: input.productId,
           quantity: Number(stock?.quantity ?? 0),
@@ -813,7 +849,7 @@ export async function patchProductCatalogField(
       if (error) return { ok: false, message: error.message };
       if (input.reason?.trim() || prevCost !== cost) {
         await supabase.from("stock_movements").insert({
-          organization_id: ctx.organizationId,
+          organization_id: organizationId,
           outlet_id: outletId,
           product_id: input.productId,
           movement_type: "adjustment_in",
@@ -823,7 +859,7 @@ export async function patchProductCatalogField(
           notes: input.reason?.trim()
             ? `Cost ${prevCost} → ${cost}: ${input.reason.trim()}`
             : `Buying price ${prevCost} → ${cost}`,
-          created_by: ctx.userId,
+          created_by: userId,
         });
       }
     }

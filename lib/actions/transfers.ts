@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import {
+  canApproveStockTransfers,
   canManageSettings,
   isUserRole,
   type UserRole,
@@ -344,7 +345,12 @@ export async function listIncomingStockTransfers(
 export async function transferStockFromList(
   raw: z.infer<typeof createTransferInput>
 ): Promise<
-  | { ok: true; transferId: string; referenceNo: string | null }
+  | {
+      ok: true;
+      transferId: string;
+      referenceNo: string | null;
+      pendingApproval?: boolean;
+    }
   | { ok: false; message: string }
 > {
   const created = await createStockTransfer(raw);
@@ -352,6 +358,20 @@ export async function transferStockFromList(
 
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const role = await getProfileRole(supabase, ctx.userId);
+
+  if (!canApproveStockTransfers(role)) {
+    revalidatePath("/inventory/transfers");
+    revalidatePath("/inventory/stock");
+    const detail = await getStockTransferById(created.transferId);
+    return {
+      ok: true,
+      transferId: created.transferId,
+      referenceNo: detail?.reference_no ?? null,
+      pendingApproval: true,
+    };
+  }
+
   const { error: approveErr } = await supabase
     .from("stock_transfers")
     .update({ status: "approved", approved_by: ctx.userId })
@@ -377,6 +397,7 @@ export async function transferStockFromList(
     ok: true,
     transferId: created.transferId,
     referenceNo: detail?.reference_no ?? null,
+    pendingApproval: false,
   };
 }
 
@@ -386,8 +407,8 @@ export async function approveStockTransfer(
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
   const role = await getProfileRole(supabase, ctx.userId);
-  if (!canManageSettings(role)) {
-    return { ok: false, message: "Only managers can approve transfers." };
+  if (!canApproveStockTransfers(role)) {
+    return { ok: false, message: "Only owners and managers can approve transfers." };
   }
   const { data: tr } = await supabase
     .from("stock_transfers")

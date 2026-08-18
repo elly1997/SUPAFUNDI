@@ -17,6 +17,31 @@ export function canManageSettings(role: UserRole | null): boolean {
   return role === "owner" || role === "manager";
 }
 
+/** Owners and managers may invite or edit team members. */
+export function canInviteUsers(role: UserRole | null): boolean {
+  return canManageSettings(role);
+}
+
+/** Owners and managers may approve inter-outlet stock transfers. */
+export function canApproveStockTransfers(role: UserRole | null): boolean {
+  return canManageSettings(role);
+}
+
+/** Only owners may assign or change the owner role. */
+export function canAssignOwnerRole(role: UserRole | null): boolean {
+  return role === "owner";
+}
+
+/** Only owners may assign staff to outlets and set their login password. */
+export function canAssignOutletAccess(role: UserRole | null): boolean {
+  return role === "owner";
+}
+
+/** Only owners may change the active working outlet in the header/POS. */
+export function canSwitchOutlets(role: UserRole | null): boolean {
+  return role === "owner";
+}
+
 export function canManageUsers(role: UserRole | null): boolean {
   return role === "owner" || role === "manager";
 }

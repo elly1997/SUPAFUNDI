@@ -10,6 +10,7 @@ type ContextBarProps = {
   outletId: string;
   onOutletChange: (id: string) => void;
   outletChangeDisabled?: boolean;
+  canSwitchOutlet?: boolean;
 };
 
 export function ContextBar({
@@ -17,6 +18,7 @@ export function ContextBar({
   outletId,
   onOutletChange,
   outletChangeDisabled,
+  canSwitchOutlet = true,
 }: ContextBarProps) {
   const session = useAuthStore((s) => s.session);
   const { businessDate, onBusinessDateChange, reconciledDates } =
@@ -36,19 +38,25 @@ export function ContextBar({
       ) : null}
       <span className="inline-flex items-center gap-1.5 rounded-md border bg-background px-2 py-0.5 text-muted-foreground">
         <Store className="size-3.5 shrink-0" />
-        <select
-          value={outletId}
-          disabled={outletChangeDisabled || outlets.length === 0}
-          onChange={(e) => onOutletChange(e.target.value)}
-          className="max-w-[10rem] truncate border-0 bg-transparent py-0 text-sm font-medium text-foreground focus:outline-none focus:ring-0"
-          aria-label="Active outlet"
-        >
-          {outlets.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.name}
-            </option>
-          ))}
-        </select>
+        {canSwitchOutlet ? (
+          <select
+            value={outletId}
+            disabled={outletChangeDisabled || outlets.length === 0}
+            onChange={(e) => onOutletChange(e.target.value)}
+            className="max-w-[10rem] truncate border-0 bg-transparent py-0 text-sm font-medium text-foreground focus:outline-none focus:ring-0"
+            aria-label="Active outlet"
+          >
+            {outlets.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <span className="max-w-[10rem] truncate py-0 text-sm font-medium text-foreground">
+            {outlets.find((o) => o.id === outletId)?.name ?? "Outlet"}
+          </span>
+        )}
       </span>
       <DatePicker
         value={businessDate}

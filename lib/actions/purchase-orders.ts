@@ -637,6 +637,7 @@ export async function receiveFromPurchaseOrder(
       const bill = await createSupplierBillFromGrn({
         grnId: grn.id,
         supplierId: po.supplier_id,
+        outletId: po.outlet_id,
         billDate: receivedDate,
         subtotal: inventoryValue,
         taxAmount,
@@ -821,6 +822,7 @@ export async function payPurchaseOrder(
       const bill = await createSupplierBillFromGrn({
         grnId: grn?.id ?? input.poId,
         supplierId: po.supplier_id,
+        outletId: po.outlet_id,
         billDate: po.order_date,
         subtotal: po.subtotal,
         taxAmount: po.tax_amount,

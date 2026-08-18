@@ -46,6 +46,7 @@ import {
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
+import { useAuthStore } from "@/stores/authStore";
 
 type SupplierPayMethod = "cash" | "mpesa" | "bank_transfer" | "cheque";
 
@@ -55,6 +56,7 @@ function formatPayableBillLabel(b: PayableBillRow): string {
 
 export function PayablesPageClient() {
   const queryClient = useQueryClient();
+  const outletId = useAuthStore((s) => s.activeOutletId);
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const [billOpen, setBillOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
@@ -69,13 +71,15 @@ export function PayablesPageClient() {
   const [paymentRef, setPaymentRef] = useState("");
 
   const { data: bills = [], isLoading } = useQuery({
-    queryKey: ["payables-open"],
+    queryKey: ["payables-open", outletId],
     queryFn: fetchOpenPayables,
+    enabled: !!outletId,
   });
 
   const { data: suppliers = [] } = useQuery({
-    queryKey: ["suppliers-list"],
+    queryKey: ["suppliers-list", outletId],
     queryFn: fetchSuppliers,
+    enabled: !!outletId,
   });
 
   const totalDue = bills.reduce((s, b) => s + b.balance, 0);
@@ -91,7 +95,7 @@ export function PayablesPageClient() {
     paymentMethod === "cheque";
 
   const { data: collectionAccounts = [] } = useQuery({
-    queryKey: ["payment-accounts", "outbound", paymentMethod],
+    queryKey: ["payment-accounts", outletId, "outbound", paymentMethod],
     enabled: payOpen && needsCollectionAccount,
     queryFn: async () => {
       const all = await fetchPaymentAccounts();

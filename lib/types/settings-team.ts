@@ -17,6 +17,8 @@ export type UserRow = {
   role: string;
   outlet_id: string | null;
   outlet_name: string | null;
+  /** Additional outlets granted beyond home outlet (owner assignment). */
+  granted_outlet_names: string[];
   is_active: boolean;
   invite_status: UserInviteStatus;
   invited_at: string | null;

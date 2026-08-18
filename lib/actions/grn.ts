@@ -248,6 +248,7 @@ export async function receiveGoods(
       const bill = await createSupplierBillFromGrn({
         grnId: grn.id,
         supplierId: input.supplierId,
+        outletId: input.outletId,
         billDate: receivedDate,
         subtotal: inventoryValue,
         taxAmount,

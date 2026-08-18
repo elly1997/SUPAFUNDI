@@ -13,6 +13,12 @@ import { validateCollectionAccount } from "@/lib/finance/collection-accounts";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
+function payrollDb(supabase: Supabase) {
+  return supabase as unknown as {
+    from: (table: string) => any;
+  };
+}
+
 const PAYROLL_MONTH = /^\d{4}-\d{2}$/;
 
 function monthBounds(payrollMonth: string): { from: string; to: string } {
@@ -56,6 +62,7 @@ export type PayrollRunDetail = {
 async function sumAdvancesForEmployee(
   supabase: Supabase,
   organizationId: string,
+  outletId: string,
   employeeId: string,
   from: string,
   to: string
@@ -64,6 +71,7 @@ async function sumAdvancesForEmployee(
     .from("expenses")
     .select("id, amount, expense_date, description, category")
     .eq("organization_id", organizationId)
+    .eq("outlet_id", outletId)
     .eq("employee_id", employeeId)
     .gte("expense_date", from)
     .lte("expense_date", to);
@@ -88,25 +96,27 @@ async function sumAdvancesForEmployee(
 async function sumBonusesForEmployee(
   supabase: Supabase,
   organizationId: string,
+  outletId: string,
   employeeId: string,
   from: string,
   to: string
 ): Promise<{ total: number; items: PayrollLineDetail["bonus_items"] }> {
-  const { data } = await supabase
+  const { data } = await payrollDb(supabase)
     .from("employee_bonuses")
     .select("id, amount, bonus_date, description")
     .eq("organization_id", organizationId)
+    .eq("outlet_id", outletId)
     .eq("employee_id", employeeId)
     .gte("bonus_date", from)
     .lte("bonus_date", to);
 
-  const items = (data ?? []).map((b) => ({
+  const items = ((data ?? []) as any[]).map((b: any) => ({
     id: b.id,
     amount: Number(b.amount),
     bonus_date: b.bonus_date,
     description: b.description,
   }));
-  const total = roundMoney(items.reduce((s, b) => s + b.amount, 0));
+  const total = roundMoney(items.reduce((s: number, b: any) => s + b.amount, 0));
   return { total, items };
 }
 
@@ -121,13 +131,17 @@ export async function refreshPayrollRun(
     }
     await requireManagerContext();
     const ctx = await requireOrgContext();
+    if (!ctx.outletId) {
+      return { ok: false, message: "Select a working outlet first." };
+    }
     const supabase = await createServerSupabaseClient();
     const { from, to } = monthBounds(payrollMonth);
 
-    let { data: run } = await supabase
+    let { data: run } = await payrollDb(supabase)
       .from("payroll_runs")
       .select("id, payroll_month, status, closed_at")
       .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", ctx.outletId)
       .eq("payroll_month", payrollMonth)
       .maybeSingle();
 
@@ -136,10 +150,11 @@ export async function refreshPayrollRun(
     }
 
     if (!run) {
-      const { data: created, error } = await supabase
+      const { data: created, error } = await payrollDb(supabase)
         .from("payroll_runs")
         .insert({
           organization_id: ctx.organizationId,
+          outlet_id: ctx.outletId,
           payroll_month: payrollMonth,
           status: "open",
         })
@@ -151,10 +166,11 @@ export async function refreshPayrollRun(
       run = created;
     }
 
-    const { data: employees } = await supabase
+    const { data: employees } = await payrollDb(supabase)
       .from("employees")
       .select("id, full_name, gross_monthly_salary")
       .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", ctx.outletId)
       .eq("is_active", true);
 
     for (const emp of employees ?? []) {
@@ -162,6 +178,7 @@ export async function refreshPayrollRun(
       const { total: advances } = await sumAdvancesForEmployee(
           supabase,
           ctx.organizationId,
+          ctx.outletId,
           emp.id,
           from,
           to
@@ -169,6 +186,7 @@ export async function refreshPayrollRun(
       const { total: bonuses } = await sumBonusesForEmployee(
         supabase,
         ctx.organizationId,
+        ctx.outletId,
         emp.id,
         from,
         to
@@ -212,13 +230,15 @@ export async function getPayrollRunDetail(
   payrollMonth: string
 ): Promise<PayrollRunDetail | null> {
   const ctx = await requireOrgContext();
+  if (!ctx.outletId) return null;
   const supabase = await createServerSupabaseClient();
   const { from, to } = monthBounds(payrollMonth);
 
-  const { data: run } = await supabase
+  const { data: run } = await payrollDb(supabase)
     .from("payroll_runs")
     .select("id, payroll_month, status, closed_at")
     .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", ctx.outletId)
     .eq("payroll_month", payrollMonth)
     .maybeSingle();
 
@@ -231,12 +251,15 @@ export async function getPayrollRunDetail(
     )
     .eq("payroll_run_id", run.id);
 
-  const { data: employees } = await supabase
+  const { data: employees } = await payrollDb(supabase)
     .from("employees")
     .select("id, full_name")
-    .eq("organization_id", ctx.organizationId);
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", ctx.outletId);
 
-  const nameById = new Map((employees ?? []).map((e) => [e.id, e.full_name]));
+  const nameById = new Map<string, string>(
+    ((employees ?? []) as any[]).map((e: any) => [String(e.id), String(e.full_name)])
+  );
 
   const lineDetails: PayrollLineDetail[] = [];
   let grossSum = 0;
@@ -248,6 +271,7 @@ export async function getPayrollRunDetail(
     const { items: advanceItems } = await sumAdvancesForEmployee(
       supabase,
       ctx.organizationId,
+      ctx.outletId,
       line.employee_id,
       from,
       to
@@ -255,6 +279,7 @@ export async function getPayrollRunDetail(
     const { items: bonusItems } = await sumBonusesForEmployee(
       supabase,
       ctx.organizationId,
+      ctx.outletId,
       line.employee_id,
       from,
       to
@@ -315,10 +340,14 @@ export async function recordEmployeeBonus(
     await requireManagerContext();
     const input = bonusInput.parse(raw);
     const ctx = await requireOrgContext();
+    if (!ctx.outletId) {
+      return { ok: false, message: "Select a working outlet first." };
+    }
     const supabase = await createServerSupabaseClient();
 
-    const { error } = await supabase.from("employee_bonuses").insert({
+    const { error } = await payrollDb(supabase).from("employee_bonuses").insert({
       organization_id: ctx.organizationId,
+      outlet_id: ctx.outletId,
       employee_id: input.employeeId,
       amount: input.amount,
       bonus_date: input.bonusDate,
@@ -359,6 +388,9 @@ export async function closePayrollRun(
     await requireManagerContext();
     const input = closePayrollSchema.parse(raw);
     const ctx = await requireOrgContext();
+    if (!ctx.outletId) {
+      return { ok: false, message: "Select a working outlet first." };
+    }
     const supabase = await createServerSupabaseClient();
 
     const refresh = await refreshPayrollRun(input.payrollMonth);
@@ -391,6 +423,7 @@ export async function closePayrollRun(
         description: `Payroll ${input.payrollMonth} — ${line.employee_name}`,
         sourceType: "payroll",
         sourceId: pay.lineId,
+        outletId: ctx.outletId,
         entryDate: paymentDate,
         lines: buildPayrollPaymentJournalLines({
           grossSalary: line.gross_salary,
@@ -431,7 +464,7 @@ export async function closePayrollRun(
         .eq("id", pay.lineId);
     }
 
-    await supabase
+    await payrollDb(supabase)
       .from("payroll_runs")
       .update({
         status: "closed",
@@ -459,10 +492,11 @@ export async function listPayrollMonths(): Promise<
 > {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
-  const { data: runs } = await supabase
+  const { data: runs } = await payrollDb(supabase)
     .from("payroll_runs")
     .select("id, payroll_month, status")
     .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", ctx.outletId)
     .order("payroll_month", { ascending: false });
 
   const out: { payroll_month: string; status: string; net_total: number }[] = [];

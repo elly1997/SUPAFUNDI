@@ -6,6 +6,7 @@ import { z } from "zod";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { requireManagerContext } from "@/lib/server/require-manager";
+import { requireOwnerContext } from "@/lib/server/require-owner";
 import { requireOrgContext } from "@/lib/server/org-context";
 import {
   isSmsConfigured,
@@ -236,6 +237,146 @@ export async function redeemOutletAccessOtp(
     return {
       ok: false,
       message: e instanceof Error ? e.message : "Could not redeem code",
+    };
+  }
+}
+
+const assignUserOutletSchema = z.object({
+  userId: z.string().uuid(),
+  outletId: z.string().uuid(),
+  password: z.string().min(8).max(128),
+  setAsHomeOutlet: z.boolean().default(true),
+});
+
+export type AssignUserToOutletResult =
+  | {
+      ok: true;
+      email: string;
+      outletName: string;
+      setAsHomeOutlet: boolean;
+    }
+  | { ok: false; message: string };
+
+/** Owner assigns an existing user to an outlet and sets their login password. */
+export async function assignUserToOutlet(
+  raw: z.infer<typeof assignUserOutletSchema>
+): Promise<AssignUserToOutletResult> {
+  try {
+    const input = assignUserOutletSchema.parse(raw);
+    const { organizationId, userId: actorId } = await requireOwnerContext();
+    const admin = createAdminSupabaseClient();
+
+    const { data: target } = await admin
+      .from("profiles")
+      .select("id, email, full_name, role, organization_id")
+      .eq("id", input.userId)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (!target?.email) return { ok: false, message: "User not found." };
+    if (target.role === "owner" && target.id !== actorId) {
+      return { ok: false, message: "Cannot reassign another owner's outlet." };
+    }
+
+    const { data: outlet } = await admin
+      .from("outlets")
+      .select("id, name, is_active")
+      .eq("id", input.outletId)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (!outlet) return { ok: false, message: "Invalid outlet." };
+
+    const now = new Date().toISOString();
+
+    const { error: grantErr } = await admin.from("user_outlet_access").upsert(
+      {
+        user_id: input.userId,
+        outlet_id: input.outletId,
+        organization_id: organizationId,
+        granted_by: actorId,
+        granted_at: now,
+      },
+      { onConflict: "user_id,outlet_id" }
+    );
+    if (grantErr) return { ok: false, message: grantErr.message };
+
+    if (input.setAsHomeOutlet) {
+      const { error: profileErr } = await admin
+        .from("profiles")
+        .update({ outlet_id: input.outletId })
+        .eq("id", input.userId)
+        .eq("organization_id", organizationId);
+      if (profileErr) return { ok: false, message: profileErr.message };
+    }
+
+    const { error: pwdErr } = await admin.auth.admin.updateUserById(
+      input.userId,
+      { password: input.password }
+    );
+    if (pwdErr) return { ok: false, message: pwdErr.message };
+
+    revalidatePath("/settings/users");
+    revalidatePath("/settings/general");
+    revalidatePath("/", "layout");
+
+    return {
+      ok: true,
+      email: target.email,
+      outletName: outlet.name,
+      setAsHomeOutlet: input.setAsHomeOutlet,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not assign outlet",
+    };
+  }
+}
+
+export async function revokeUserOutletAccess(raw: {
+  userId: string;
+  outletId: string;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const input = z
+      .object({
+        userId: z.string().uuid(),
+        outletId: z.string().uuid(),
+      })
+      .parse(raw);
+    const { organizationId } = await requireOwnerContext();
+    const admin = createAdminSupabaseClient();
+
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("outlet_id")
+      .eq("id", input.userId)
+      .eq("organization_id", organizationId)
+      .maybeSingle();
+    if (!profile) return { ok: false, message: "User not found." };
+
+    if (profile.outlet_id === input.outletId) {
+      return {
+        ok: false,
+        message:
+          "This is the user's home outlet. Assign them to a different home outlet first.",
+      };
+    }
+
+    const { error } = await admin
+      .from("user_outlet_access")
+      .delete()
+      .eq("user_id", input.userId)
+      .eq("outlet_id", input.outletId)
+      .eq("organization_id", organizationId);
+    if (error) return { ok: false, message: error.message };
+
+    revalidatePath("/settings/users");
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not revoke access",
     };
   }
 }

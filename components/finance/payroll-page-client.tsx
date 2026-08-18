@@ -51,6 +51,7 @@ import {
   updateEmployeeApi,
 } from "@/lib/api/payroll-fetch";
 import { formatTzs } from "@/lib/utils/currency";
+import { useAuthStore } from "@/stores/authStore";
 
 function currentPayrollMonth(): string {
   const d = new Date();
@@ -66,6 +67,7 @@ type PayLineDraft = {
 
 export function PayrollPageClient() {
   const queryClient = useQueryClient();
+  const outletId = useAuthStore((s) => s.activeOutletId);
   const [payrollMonth, setPayrollMonth] = useState(currentPayrollMonth());
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<EmployeeRow | null>(null);
@@ -81,8 +83,9 @@ export function PayrollPageClient() {
   const [bonusDesc, setBonusDesc] = useState("");
 
   const { data: employees = [], isLoading: empLoading } = useQuery({
-    queryKey: ["employees"],
+    queryKey: ["employees", outletId],
     queryFn: fetchEmployees,
+    enabled: !!outletId,
   });
 
   const {
@@ -90,8 +93,9 @@ export function PayrollPageClient() {
     isLoading: runLoading,
     refetch: refetchRun,
   } = useQuery({
-    queryKey: ["payroll-run", payrollMonth],
+    queryKey: ["payroll-run", outletId, payrollMonth],
     queryFn: () => fetchPayrollRun(payrollMonth),
+    enabled: !!outletId,
   });
 
   const activeEmployees = useMemo(
@@ -104,7 +108,7 @@ export function PayrollPageClient() {
     onSuccess: (r) => {
       if (r.ok) {
         toast.success("Payroll figures updated");
-        void queryClient.invalidateQueries({ queryKey: ["payroll-run", payrollMonth] });
+        void queryClient.invalidateQueries({ queryKey: ["payroll-run", outletId, payrollMonth] });
       } else toast.error(r.message);
     },
   });
@@ -114,7 +118,7 @@ export function PayrollPageClient() {
     onSuccess: (r) => {
       if (r.ok) {
         toast.success(`Imported ${r.imported} team member(s)`);
-        void queryClient.invalidateQueries({ queryKey: ["employees"] });
+        void queryClient.invalidateQueries({ queryKey: ["employees", outletId] });
       } else toast.error(r.message);
     },
   });
@@ -135,7 +139,7 @@ export function PayrollPageClient() {
         setNewPhone("");
         setNewTitle("");
         setNewGross("");
-        void queryClient.invalidateQueries({ queryKey: ["employees"] });
+        void queryClient.invalidateQueries({ queryKey: ["employees", outletId] });
       } else toast.error(r.message);
     },
   });
@@ -152,7 +156,7 @@ export function PayrollPageClient() {
       if (r.ok) {
         toast.success("Saved");
         setEditTarget(null);
-        void queryClient.invalidateQueries({ queryKey: ["employees"] });
+        void queryClient.invalidateQueries({ queryKey: ["employees", outletId] });
         void refreshMut.mutate();
       } else toast.error(r.message);
     },
@@ -172,7 +176,7 @@ export function PayrollPageClient() {
         setBonusTarget(null);
         setBonusAmount("");
         setBonusDesc("");
-        void queryClient.invalidateQueries({ queryKey: ["payroll-run", payrollMonth] });
+        void queryClient.invalidateQueries({ queryKey: ["payroll-run", outletId, payrollMonth] });
       } else toast.error(r.message);
     },
   });
@@ -193,7 +197,7 @@ export function PayrollPageClient() {
         toast.success("Payroll closed — salaries posted and paid");
         setCloseOpen(false);
         void refetchRun();
-        void queryClient.invalidateQueries({ queryKey: ["employees"] });
+        void queryClient.invalidateQueries({ queryKey: ["employees", outletId] });
       } else toast.error(r.message);
     },
   });

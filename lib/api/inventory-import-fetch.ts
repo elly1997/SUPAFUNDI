@@ -1,5 +1,9 @@
 import type { InventoryImportRow } from "@/lib/excel/parse-inventory";
-import type { ImportInventoryResult } from "@/lib/inventory/run-import";
+import type {
+  InventoryImportMode,
+  InventoryImportPreview,
+  ImportInventoryResult,
+} from "@/lib/inventory/run-import";
 
 const CHUNK_SIZE = 40;
 
@@ -14,13 +18,14 @@ async function parseJsonError(res: Response): Promise<string> {
 
 export async function postInventoryImportChunk(
   outletId: string,
-  rows: InventoryImportRow[]
+  rows: InventoryImportRow[],
+  mode: InventoryImportMode
 ): Promise<ImportInventoryResult> {
   const res = await fetch("/api/inventory/import", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ outletId, rows }),
+    body: JSON.stringify({ outletId, mode, rows }),
   });
   if (!res.ok) {
     throw new Error(await parseJsonError(res));
@@ -40,6 +45,7 @@ export async function postInventoryImportChunk(
 export async function importInventoryInChunks(
   outletId: string,
   rows: InventoryImportRow[],
+  mode: InventoryImportMode,
   onProgress?: (done: number, total: number) => void
 ): Promise<ImportInventoryResult> {
   const total = rows.length;
@@ -51,7 +57,7 @@ export async function importInventoryInChunks(
 
   for (let i = 0; i < total; i += CHUNK_SIZE) {
     const chunk = rows.slice(i, i + CHUNK_SIZE);
-    const res = await postInventoryImportChunk(outletId, chunk);
+    const res = await postInventoryImportChunk(outletId, chunk, mode);
     aggregated.imported += res.imported;
     aggregated.updated += res.updated;
     aggregated.errors.push(...res.errors);
@@ -59,4 +65,21 @@ export async function importInventoryInChunks(
   }
 
   return aggregated;
+}
+
+export async function previewInventoryImportApi(
+  outletId: string,
+  rows: InventoryImportRow[],
+  mode: InventoryImportMode
+): Promise<InventoryImportPreview> {
+  const res = await fetch("/api/inventory/import/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ outletId, rows, mode }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseJsonError(res));
+  }
+  return res.json() as Promise<InventoryImportPreview>;
 }

@@ -32,8 +32,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
-import { createStockTransfer, listStockTransfers } from "@/lib/actions/transfers";
+import {
+  approveStockTransfer,
+  createStockTransfer,
+  listStockTransfers,
+} from "@/lib/actions/transfers";
 import { usePosProducts } from "@/hooks/usePosProducts";
+import {
+  canApproveStockTransfers,
+  isUserRole,
+} from "@/lib/auth/roles";
 import { useAuthStore } from "@/stores/authStore";
 
 type Line = { productId: string; name: string; requestedQty: number };
@@ -48,6 +56,9 @@ const STATUS_COLORS: Record<string, string> = {
 
 export function TransfersPageClient() {
   const defaultOutlet = useAuthStore((s) => s.activeOutletId);
+  const sessionRole = useAuthStore((s) => s.session?.role ?? null);
+  const role = isUserRole(sessionRole ?? "") ? sessionRole : null;
+  const canApprove = canApproveStockTransfers(role);
   const [open, setOpen] = useState(false);
   const [fromOutletId, setFromOutletId] = useState(defaultOutlet ?? "");
   const [toOutletId, setToOutletId] = useState("");
@@ -78,6 +89,19 @@ export function TransfersPageClient() {
     },
   });
 
+  const approveMut = useMutation({
+    mutationFn: approveStockTransfer,
+    onSuccess: (r, transferId) => {
+      if (r.ok) {
+        toast.success("Transfer approved");
+        queryClient.invalidateQueries({ queryKey: ["stock-transfers"] });
+        queryClient.invalidateQueries({ queryKey: ["stock-transfer", transferId] });
+      } else toast.error(r.message);
+    },
+  });
+
+  const pendingCount = transfers.filter((t) => t.status === "pending").length;
+
   const addLine = () => {
     const p = products.find((x) => x.id === pickProduct);
     if (!p || qty <= 0) return;
@@ -106,6 +130,12 @@ export function TransfersPageClient() {
         </Button>
       </CardHeader>
       <CardContent>
+        {canApprove && pendingCount > 0 ? (
+          <p className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+            {pendingCount} transfer{pendingCount === 1 ? "" : "s"} awaiting your
+            approval.
+          </p>
+        ) : null}
         {isLoading ? (
           <div className="flex justify-center py-8">
             <Loader2 className="h-6 w-6 animate-spin" />
@@ -123,6 +153,7 @@ export function TransfersPageClient() {
                 <TableHead>To</TableHead>
                 <TableHead>Items</TableHead>
                 <TableHead>Status</TableHead>
+                {canApprove ? <TableHead /> : null}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -144,6 +175,19 @@ export function TransfersPageClient() {
                   >
                     {t.status}
                   </TableCell>
+                  {canApprove ? (
+                    <TableCell className="text-right">
+                      {t.status === "pending" ? (
+                        <Button
+                          size="sm"
+                          disabled={approveMut.isPending}
+                          onClick={() => approveMut.mutate(t.id)}
+                        >
+                          Approve
+                        </Button>
+                      ) : null}
+                    </TableCell>
+                  ) : null}
                 </TableRow>
               ))}
             </TableBody>

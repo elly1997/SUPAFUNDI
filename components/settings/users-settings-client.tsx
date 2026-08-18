@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, KeyRound, Loader2, UserPlus } from "lucide-react";
+import { Check, Copy, KeyRound, Loader2, Mail, Store, UserPlus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -30,22 +30,42 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { USER_ROLES } from "@/lib/auth/roles";
+import {
+  USER_ROLES,
+  canAssignOutletAccess,
+  canAssignOwnerRole,
+  canInviteUsers,
+  isUserRole,
+} from "@/lib/auth/roles";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { UserInviteStatusBadge } from "@/components/settings/user-invite-status-badge";
 import { fetchSettingsUsers } from "@/lib/api/settings-team-fetch";
 import {
   inviteOrganizationUser,
+  resendOrganizationUserInvite,
   updateOrganizationUser,
 } from "@/lib/actions/settings";
+import { useAuthStore } from "@/stores/authStore";
 import {
+  assignUserToOutlet,
   issueOutletAccessOtp,
+  type AssignUserToOutletResult,
   type IssueOutletAccessOtpResult,
 } from "@/lib/actions/outlet-access";
 import type { UserRow } from "@/lib/types/settings-team";
 
 type IssuedOtp = Extract<IssueOutletAccessOtpResult, { ok: true }>;
+type AssignedOutlet = Extract<AssignUserToOutletResult, { ok: true }>;
+
+const ROLE_LABELS: Record<(typeof USER_ROLES)[number], string> = {
+  owner: "Owner — full access, switch outlets",
+  manager: "Manager — approve transfers, invite staff",
+  cashier: "Cashier — POS and daily sales",
+  accountant: "Accountant — finance and reports",
+  sales_rep: "Sales rep — POS and customer sales",
+  viewer: "Viewer — read-only reports",
+};
 
 export function UsersSettingsClient() {
   const [open, setOpen] = useState(false);
@@ -58,8 +78,22 @@ export function UsersSettingsClient() {
   const [otpUser, setOtpUser] = useState<UserRow | null>(null);
   const [otpOutletId, setOtpOutletId] = useState("");
   const [otpResult, setOtpResult] = useState<IssuedOtp | null>(null);
+  const [assignUser, setAssignUser] = useState<UserRow | null>(null);
+  const [assignOutletId, setAssignOutletId] = useState("");
+  const [assignPassword, setAssignPassword] = useState("");
+  const [assignAsHome, setAssignAsHome] = useState(true);
+  const [assignResult, setAssignResult] = useState<AssignedOutlet | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedCredentials, setCopiedCredentials] = useState(false);
   const queryClient = useQueryClient();
+  const sessionRole = useAuthStore((s) => s.session?.role ?? null);
+  const actorRole = isUserRole(sessionRole ?? "") ? sessionRole : null;
+  const canInvite = canInviteUsers(actorRole);
+  const canAssignOwner = canAssignOwnerRole(actorRole);
+  const canAssignOutlet = canAssignOutletAccess(actorRole);
+  const assignableRoles = USER_ROLES.filter(
+    (r) => r !== "owner" || canAssignOwner
+  );
 
   const {
     data: users = [],
@@ -119,6 +153,38 @@ export function UsersSettingsClient() {
     },
   });
 
+  const resendMut = useMutation({
+    mutationFn: (userId: string) => resendOrganizationUserInvite(userId),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Invitation resent");
+        queryClient.invalidateQueries({ queryKey: ["settings-users"] });
+      } else toast.error(r.message);
+    },
+  });
+
+  const assignMut = useMutation({
+    mutationFn: async () => {
+      if (!assignUser) throw new Error("No user selected");
+      return assignUserToOutlet({
+        userId: assignUser.id,
+        outletId: assignOutletId,
+        password: assignPassword,
+        setAsHomeOutlet: assignAsHome,
+      });
+    },
+    onSuccess: (r) => {
+      if (r.ok) {
+        setAssignResult(r);
+        queryClient.invalidateQueries({ queryKey: ["settings-users"] });
+        queryClient.invalidateQueries({ queryKey: ["org-outlets"] });
+        toast.success(`${r.email} assigned to ${r.outletName}`);
+      } else toast.error(r.message);
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Could not assign outlet"),
+  });
+
   const otpMut = useMutation({
     mutationFn: async () => {
       if (!otpUser) throw new Error("No user selected");
@@ -135,6 +201,38 @@ export function UsersSettingsClient() {
     onError: (e) =>
       toast.error(e instanceof Error ? e.message : "Could not issue code"),
   });
+
+  const closeAssignDialog = () => {
+    setAssignUser(null);
+    setAssignOutletId("");
+    setAssignPassword("");
+    setAssignAsHome(true);
+    setAssignResult(null);
+    setCopiedCredentials(false);
+    assignMut.reset();
+  };
+
+  const openAssignDialog = (u: UserRow) => {
+    setAssignUser(u);
+    setAssignOutletId(u.outlet_id ?? defaultOutletId);
+    setAssignPassword("");
+    setAssignAsHome(true);
+    setAssignResult(null);
+    setCopiedCredentials(false);
+    assignMut.reset();
+  };
+
+  const copyCredentials = async () => {
+    if (!assignResult || !assignPassword) return;
+    const text = `Login: ${assignResult.email}\nPassword: ${assignPassword}\nOutlet: ${assignResult.outletName}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedCredentials(true);
+      toast.success("Login details copied");
+    } catch {
+      toast.error("Copy failed");
+    }
+  };
 
   const openOtpDialog = (u: UserRow) => {
     setOtpUser(u);
@@ -166,15 +264,17 @@ export function UsersSettingsClient() {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle>Team members</CardTitle>
-        <Button
-          onClick={() => {
-            reset();
-            setOpen(true);
-          }}
-        >
-          <UserPlus className="mr-2 h-4 w-4" />
-          Invite user
-        </Button>
+        {canInvite ? (
+          <Button
+            onClick={() => {
+              reset();
+              setOpen(true);
+            }}
+          >
+            <UserPlus className="mr-2 h-4 w-4" />
+            Invite user
+          </Button>
+        ) : null}
       </CardHeader>
       <CardContent>
         {isError ? (
@@ -214,7 +314,16 @@ export function UsersSettingsClient() {
                   <TableCell>{u.full_name ?? "—"}</TableCell>
                   <TableCell>{u.email ?? "—"}</TableCell>
                   <TableCell className="capitalize">{u.role}</TableCell>
-                  <TableCell>{u.outlet_name ?? "—"}</TableCell>
+                  <TableCell>
+                    <div className="space-y-0.5">
+                      <span>{u.outlet_name ?? "—"}</span>
+                      {u.granted_outlet_names.length > 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          Also: {u.granted_outlet_names.join(", ")}
+                        </p>
+                      ) : null}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <UserInviteStatusBadge
                       status={u.invite_status}
@@ -223,29 +332,56 @@ export function UsersSettingsClient() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openOtpDialog(u)}
-                        title="Send an outlet access code to the owner to share"
-                      >
-                        <KeyRound className="mr-1 h-4 w-4" />
-                        Access code
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setEdit(u);
-                          setFullName(u.full_name ?? "");
-                          setRole(u.role);
-                          setOutletId(u.outlet_id ?? "");
-                          setIsActive(u.is_active);
-                          setOpen(true);
-                        }}
-                      >
-                        Edit
-                      </Button>
+                      {u.invite_status === "pending_invite" && canInvite ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={resendMut.isPending}
+                          onClick={() => resendMut.mutate(u.id)}
+                          title="Resend invitation email"
+                        >
+                          <Mail className="mr-1 h-4 w-4" />
+                          Resend
+                        </Button>
+                      ) : null}
+                      {canAssignOutlet && u.role !== "owner" ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openAssignDialog(u)}
+                          title="Assign outlet and set login password"
+                        >
+                          <Store className="mr-1 h-4 w-4" />
+                          Assign outlet
+                        </Button>
+                      ) : null}
+                      {canInvite && !canAssignOutlet ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openOtpDialog(u)}
+                          title="Send an outlet access code to the owner to share"
+                        >
+                          <KeyRound className="mr-1 h-4 w-4" />
+                          Access code
+                        </Button>
+                      ) : null}
+                      {canInvite ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setEdit(u);
+                            setFullName(u.full_name ?? "");
+                            setRole(u.role);
+                            setOutletId(u.outlet_id ?? "");
+                            setIsActive(u.is_active);
+                            setOpen(true);
+                          }}
+                        >
+                          Edit
+                        </Button>
+                      ) : null}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -288,13 +424,17 @@ export function UsersSettingsClient() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {USER_ROLES.map((r) => (
+                  {assignableRoles.map((r) => (
                     <SelectItem key={r} value={r} className="capitalize">
                       {r.replace("_", " ")}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                {ROLE_LABELS[role as (typeof USER_ROLES)[number]] ??
+                  "Choose a role for this team member."}
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Home outlet</Label>
@@ -439,6 +579,135 @@ export function UsersSettingsClient() {
                 : otpResult
                   ? "Generate new code"
                   : "Generate code"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!assignUser}
+        onOpenChange={(v) => {
+          if (!v) closeAssignDialog();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Assign outlet &amp; login</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Move an existing team member to another outlet. Set a password
+              they will use to sign in (username is their email).
+            </p>
+            <div className="space-y-2">
+              <Label>User</Label>
+              <Input
+                readOnly
+                value={
+                  assignUser
+                    ? `${assignUser.full_name ?? assignUser.email ?? "User"} (${assignUser.email ?? "no email"})`
+                    : ""
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Outlet</Label>
+              <Select
+                value={assignOutletId || "__none__"}
+                onValueChange={(v) =>
+                  setAssignOutletId(!v || v === "__none__" ? "" : v)
+                }
+                disabled={outletsLoading || assignMut.isPending}
+              >
+                <SelectTrigger>
+                  <SelectValue
+                    placeholder={
+                      outletsLoading ? "Loading outlets…" : "Choose an outlet"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__" disabled>
+                    Choose an outlet
+                  </SelectItem>
+                  {outlets.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}
+                      {o.code ? ` (${o.code})` : ""}
+                      {o.is_active === false ? " — Inactive" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Login password</Label>
+              <Input
+                type="password"
+                autoComplete="new-password"
+                placeholder="Min. 8 characters"
+                value={assignPassword}
+                onChange={(e) => setAssignPassword(e.target.value)}
+                disabled={assignMut.isPending}
+              />
+              <p className="text-xs text-muted-foreground">
+                Share this password with the user. Their username is{" "}
+                <strong className="text-foreground">{assignUser?.email}</strong>.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={assignAsHome}
+                onChange={(e) => setAssignAsHome(e.target.checked)}
+                disabled={assignMut.isPending}
+              />
+              Set as home outlet (where they work by default)
+            </label>
+
+            {assignResult ? (
+              <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-4 text-sm">
+                <p className="font-medium text-foreground">
+                  Assigned to {assignResult.outletName}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Username:</span>{" "}
+                  <span className="font-mono">{assignResult.email}</span>
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Password:</span>{" "}
+                  <span className="font-mono">{assignPassword}</span>
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={copyCredentials}
+                >
+                  {copiedCredentials ? (
+                    <Check className="mr-1 h-4 w-4" />
+                  ) : (
+                    <Copy className="mr-1 h-4 w-4" />
+                  )}
+                  {copiedCredentials ? "Copied" : "Copy login details"}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              disabled={
+                !assignOutletId ||
+                assignPassword.length < 8 ||
+                assignMut.isPending
+              }
+              onClick={() => assignMut.mutate()}
+            >
+              {assignMut.isPending
+                ? "Saving…"
+                : assignResult
+                  ? "Update again"
+                  : "Assign & set password"}
             </Button>
           </DialogFooter>
         </DialogContent>

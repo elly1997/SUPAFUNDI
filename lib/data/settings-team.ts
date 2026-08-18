@@ -121,16 +121,39 @@ export async function loadUsersForSettings(
   );
   const authById = new Map(authMeta.map((a) => [a.id, a.meta]));
 
+  const profileIds = (profiles ?? []).map((p) => p.id);
+  const grantedByUser = new Map<string, string[]>();
+  if (profileIds.length) {
+    const { data: grants } = await supabase
+      .from("user_outlet_access")
+      .select("user_id, outlet_id")
+      .eq("organization_id", organizationId)
+      .in("user_id", profileIds);
+    for (const g of grants ?? []) {
+      const uid = String(g.user_id);
+      const name = outletMap.get(String(g.outlet_id));
+      if (!name) continue;
+      const list = grantedByUser.get(uid) ?? [];
+      if (!list.includes(name)) list.push(name);
+      grantedByUser.set(uid, list);
+    }
+  }
+
   return (profiles ?? []).map((p) => {
     const authUser = authById.get(p.id) ?? null;
     const invite_status = deriveInviteStatus(p.is_active, authUser);
+    const homeOutletId = p.outlet_id != null ? String(p.outlet_id) : null;
+    const granted = (grantedByUser.get(p.id) ?? []).filter(
+      (name) => name !== (homeOutletId ? outletMap.get(homeOutletId) : null)
+    );
     return {
       id: String(p.id),
       email: p.email != null ? String(p.email) : null,
       full_name: p.full_name != null ? String(p.full_name) : null,
       role: String(p.role),
-      outlet_id: p.outlet_id != null ? String(p.outlet_id) : null,
-      outlet_name: p.outlet_id ? (outletMap.get(p.outlet_id) ?? null) : null,
+      outlet_id: homeOutletId,
+      outlet_name: homeOutletId ? (outletMap.get(homeOutletId) ?? null) : null,
+      granted_outlet_names: granted,
       is_active: Boolean(p.is_active),
       invite_status,
       invited_at: authUser?.invited_at ?? null,
