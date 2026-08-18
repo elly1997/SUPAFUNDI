@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -40,10 +40,19 @@ export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "/";
+  const inviteError = searchParams.get("error");
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [loading, setLoading] = useState(false);
   const [signInErrors, setSignInErrors] = useState<FieldErrors>({});
   const [signUpErrors, setSignUpErrors] = useState<FieldErrors>({});
+
+  useEffect(() => {
+    if (inviteError === "invite") {
+      toast.error(
+        "This invite link is invalid or expired. Ask the owner to resend the invite."
+      );
+    }
+  }, [inviteError]);
 
   const handleSignInSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

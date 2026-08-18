@@ -1,5 +1,10 @@
 /** Routes that do not require authentication. */
-export const AUTH_PUBLIC_PATHS = ["/login", "/setup"] as const;
+export const AUTH_PUBLIC_PATHS = [
+  "/login",
+  "/setup",
+  "/auth/callback",
+  "/auth/confirm",
+] as const;
 
 export function isAuthPublicPath(pathname: string): boolean {
   return AUTH_PUBLIC_PATHS.some(

@@ -29,13 +29,20 @@ Open [http://localhost:3000](http://localhost:3000). Use `npm run dev:clean` if 
    | `NEXT_PUBLIC_SUPABASE_URL` | Yes |
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes |
    | `SUPABASE_SERVICE_ROLE_KEY` | Yes |
-   | `NEXT_PUBLIC_APP_URL` | Yes — e.g. `https://your-site.netlify.app` |
+   | `NEXT_PUBLIC_APP_URL` | Yes — `https://hardwarepos.netlify.app` (must match the live site) |
    | `AT_API_KEY` | SMS — Africa's Talking API key |
    | `AT_USERNAME` | SMS — Africa's Talking app username |
    | `AT_SENDER_ID` | SMS — optional approved sender ID |
    | `AT_SANDBOX` | SMS — set `true` for sandbox testing |
 
-5. **Supabase** — Authentication → URL configuration: set **Site URL** and redirect URLs to your Netlify domain.
+5. **Supabase** — Authentication → URL configuration:
+   - **Site URL:** `https://hardwarepos.netlify.app` (the live Netlify site, not a preview URL)
+   - **Redirect URLs** include:
+     - `https://hardwarepos.netlify.app/**`
+     - `https://hardwarepos.netlify.app/auth/callback`
+     - `https://hardwarepos.netlify.app/auth/confirm`
+     - `https://hardwarepos.netlify.app/login`
+   - Staff invite emails use this Site URL. A wrong Netlify hostname shows **Site not found**. After changing it, resend the invite.
 
 After deploy, the build log should show `publish: /opt/build/repo/.next` and `publishOrigin: config` (not `ui` with repo root).
 

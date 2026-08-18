@@ -19,6 +19,7 @@ import { requireOrgContext } from "@/lib/server/org-context";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { getInviteRedirectUrl } from "@/lib/env/app-url";
 
 const MIGRATION_HINT =
   "Run Supabase migrations (outlet is_default + expense categories) in SQL Editor.";
@@ -332,11 +333,11 @@ export async function inviteOrganizationUser(
       if (!outlet) return { ok: false, message: "Invalid outlet." };
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const redirectTo = await getInviteRedirectUrl();
     const { data: invited, error: inviteErr } =
       await admin.auth.admin.inviteUserByEmail(input.email, {
         data: { full_name: input.fullName },
-        redirectTo: `${appUrl}/login`,
+        redirectTo,
       });
     if (inviteErr || !invited.user) {
       return { ok: false, message: inviteErr?.message ?? "Invite failed" };
@@ -406,12 +407,12 @@ export async function resendOrganizationUserInvite(
       };
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const redirectTo = await getInviteRedirectUrl();
     const { error: inviteErr } = await admin.auth.admin.inviteUserByEmail(
       target.email,
       {
         data: { full_name: target.full_name ?? "" },
-        redirectTo: `${appUrl}/login`,
+        redirectTo,
       }
     );
     if (inviteErr) {
