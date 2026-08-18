@@ -10,7 +10,7 @@ type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
 function payrollDb(supabase: Supabase) {
   return supabase as unknown as {
-    from: (table: string) => any;
+    from: (table: string) => ReturnType<Supabase["from"]>;
   };
 }
 
@@ -45,7 +45,7 @@ export async function listEmployees(): Promise<EmployeeRow[]> {
     .eq("outlet_id", ctx.outletId)
     .order("full_name");
   if (error) throw new Error(error.message);
-  return ((data ?? []) as any[]).map((e: any) => ({
+  return ((data ?? []) as EmployeeRow[]).map((e) => ({
     id: e.id,
     profile_id: e.profile_id,
     full_name: e.full_name,
@@ -168,7 +168,11 @@ export async function importEmployeesFromProfiles(): Promise<
       .eq("outlet_id", ctx.outletId)
       .not("profile_id", "is", null);
 
-    const linked = new Set(((existing ?? []) as any[]).map((e: any) => e.profile_id));
+    const linked = new Set(
+      ((existing ?? []) as { profile_id: string | null }[])
+        .map((e) => e.profile_id)
+        .filter((id): id is string => Boolean(id))
+    );
     let imported = 0;
 
     for (const p of profiles ?? []) {

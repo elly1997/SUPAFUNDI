@@ -11,7 +11,7 @@ type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
 function catalogDb(supabase: Supabase) {
   return supabase as unknown as {
-    from: (table: string) => any;
+    from: (table: string) => ReturnType<Supabase["from"]>;
   };
 }
 
@@ -111,7 +111,11 @@ async function loadOutletProducts(
 
   const byCode = new Map<string, { id: string; name: string }>();
   const byName = new Map<string, { id: string; code: string | null }>();
-  for (const p of existingProducts as any[]) {
+  for (const p of existingProducts as {
+    id: string;
+    code: string | null;
+    name: string;
+  }[]) {
     if (p.code) byCode.set(p.code.trim().toUpperCase(), { id: p.id, name: p.name });
     byName.set(normalizeProductName(p.name), {
       id: p.id,

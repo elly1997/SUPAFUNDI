@@ -33,13 +33,13 @@ function escapeLikePattern(value: string) {
 
 function pricesDb(supabase: Supabase) {
   return supabase as unknown as {
-    from: (table: string) => any;
+    from: (table: string) => ReturnType<Supabase["from"]>;
   };
 }
 
 function catalogDb(supabase: Supabase) {
   return supabase as unknown as {
-    from: (table: string) => any;
+    from: (table: string) => ReturnType<Supabase["from"]>;
   };
 }
 
@@ -258,7 +258,7 @@ async function computeStockLevelsSummaryFast(
       .range(from, to);
     return { data, error };
   });
-  const productRows = products as any[];
+  const productRows = products as { id: string; reorder_point: number | null }[];
 
   let totalValue = 0;
   let skusWithQty = 0;
@@ -343,7 +343,7 @@ async function fetchFilteredProductLites(
     return { data, error };
   });
 
-  return (rows as any[]).map((p: any) => ({
+  return (rows as ProductLite[]).map((p) => ({
     id: p.id,
     name: p.name,
     code: p.code,
@@ -421,7 +421,10 @@ export async function listStockLevels(
     qtyMap.set(s.product_id, Number(s.quantity));
   }
   const reorderMap = new Map(
-    (reorderRows as any[]).map((p: any) => [p.id, Number(p.reorder_point ?? 0)])
+    (reorderRows as { id: string; reorder_point: number | null }[]).map((p) => [
+      p.id,
+      Number(p.reorder_point ?? 0),
+    ])
   );
   const outletName = outletRow.data?.name ?? "—";
 
@@ -587,7 +590,7 @@ export async function listStockLevelsPage(
       .range(from, to);
     if (error) throw new Error(error.message);
 
-    pageProducts = ((products ?? []) as any[]).map((p: any) => ({
+    pageProducts = ((products ?? []) as ProductLite[]).map((p) => ({
       id: p.id,
       name: p.name,
       code: p.code,

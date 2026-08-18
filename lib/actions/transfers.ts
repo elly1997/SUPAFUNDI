@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import {
   canApproveStockTransfers,
-  canManageSettings,
   isUserRole,
   type UserRole,
 } from "@/lib/auth/roles";

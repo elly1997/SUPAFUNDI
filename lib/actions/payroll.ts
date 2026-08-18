@@ -15,7 +15,7 @@ type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
 function payrollDb(supabase: Supabase) {
   return supabase as unknown as {
-    from: (table: string) => any;
+    from: (table: string) => ReturnType<Supabase["from"]>;
   };
 }
 
@@ -110,13 +110,20 @@ async function sumBonusesForEmployee(
     .gte("bonus_date", from)
     .lte("bonus_date", to);
 
-  const items = ((data ?? []) as any[]).map((b: any) => ({
+  const items = (
+    (data ?? []) as {
+      id: string;
+      amount: number;
+      bonus_date: string;
+      description: string | null;
+    }[]
+  ).map((b) => ({
     id: b.id,
     amount: Number(b.amount),
     bonus_date: b.bonus_date,
     description: b.description,
   }));
-  const total = roundMoney(items.reduce((s: number, b: any) => s + b.amount, 0));
+  const total = roundMoney(items.reduce((s, b) => s + b.amount, 0));
   return { total, items };
 }
 
@@ -258,7 +265,10 @@ export async function getPayrollRunDetail(
     .eq("outlet_id", ctx.outletId);
 
   const nameById = new Map<string, string>(
-    ((employees ?? []) as any[]).map((e: any) => [String(e.id), String(e.full_name)])
+    ((employees ?? []) as { id: string; full_name: string }[]).map((e) => [
+      String(e.id),
+      String(e.full_name),
+    ])
   );
 
   const lineDetails: PayrollLineDetail[] = [];

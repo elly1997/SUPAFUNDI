@@ -62,13 +62,13 @@ async function resolveCatalogOutletId(
 
 function pricesDb(supabase: Supabase) {
   return supabase as unknown as {
-    from: (table: string) => any;
+    from: (table: string) => ReturnType<Supabase["from"]>;
   };
 }
 
 function catalogDb(supabase: Supabase) {
   return supabase as unknown as {
-    from: (table: string) => any;
+    from: (table: string) => ReturnType<Supabase["from"]>;
   };
 }
 
@@ -165,8 +165,8 @@ export async function createProduct(
         .eq("organization_id", ctx.organizationId)
         .eq("outlet_id", input.outletId);
       const nameKey = normalizeProductName(input.name);
-      const nameClash = ((allNames ?? []) as any[]).find(
-        (p: any) => normalizeProductName(p.name) === nameKey
+      const nameClash = ((allNames ?? []) as { id: string; name: string }[]).find(
+        (p) => normalizeProductName(p.name) === nameKey
       );
       if (nameClash) {
         return {
@@ -479,13 +479,20 @@ export async function listProductPriceCatalog(
   if (categoriesRes.error) {
     throw new Error(categoriesRes.error.message);
   }
-  const productRows = (products ?? []) as any[];
+  type CatalogProduct = {
+    id: string;
+    name: string;
+    code: string | null;
+    unit: string;
+    category_id: string | null;
+  };
+  const productRows = (products ?? []) as CatalogProduct[];
   if (!productRows.length) return [];
 
   const categoryNameById = new Map(
     (categoriesRes.data ?? []).map((c) => [c.id, c.name as string])
   );
-  const ids = productRows.map((p: any) => p.id);
+  const ids = productRows.map((p) => p.id);
   const [prices, stockRows] = await Promise.all([
     fetchByInChunks(ids, async (chunk) => {
       const { data, error } = await pricesDb(supabase)
@@ -529,7 +536,7 @@ export async function listProductPriceCatalog(
     qtyMap.set(s.product_id, Number(s.quantity));
   }
 
-  const rows: ProductPriceCatalogRow[] = productRows.map((p: any) => {
+  const rows: ProductPriceCatalogRow[] = productRows.map((p) => {
     const retail = retailMap.get(p.id);
     return {
       id: p.id,

@@ -151,7 +151,7 @@ export function InventoryImportDialog({
           <DialogTitle>Import from Excel</DialogTitle>
           <DialogDescription>
             Import runs only inside the selected outlet. Use catalog mode first
-            to create the outlet's own items, then opening-stock mode to load
+            to create items for this outlet, then opening-stock mode to load
             quantities without mixing with the main store.
           </DialogDescription>
         </DialogHeader>

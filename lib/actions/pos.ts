@@ -48,11 +48,36 @@ export type PosCatalogInput = {
   limit?: number;
 };
 
+type PosProductLite = {
+  id: string;
+  name: string;
+  code: string | null;
+  barcode: string | null;
+  unit: string;
+  category_id: string | null;
+};
+
+type PosPriceRow = {
+  product_id: string;
+  price_type: string;
+  price: number;
+};
+
+type PosStockRow = {
+  product_id: string;
+  quantity: number;
+  cost_price: number | null;
+};
+
 function catalogDb(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>
 ) {
   return supabase as unknown as {
-    from: (table: string) => any;
+    from: (
+      table: string
+    ) => ReturnType<
+      Awaited<ReturnType<typeof createServerSupabaseClient>>["from"]
+    >;
   };
 }
 
@@ -119,7 +144,7 @@ export async function listPosCatalogProducts(
     .order("name", { ascending: true })
     .limit(queryLimit);
   if (productErr) throw new Error(productErr.message);
-  const products = (productsRaw ?? []) as any[];
+  const products = (productsRaw ?? []) as PosProductLite[];
 
   if (!products.length) return [];
 
@@ -149,21 +174,21 @@ export async function listPosCatalogProducts(
 
   const retailMap = new Map<string, number>();
   const wholesaleMap = new Map<string, number>();
-  for (const p of priceRows as any[]) {
+  for (const p of priceRows as PosPriceRow[]) {
     const price = Number(p.price);
     if (p.price_type === "retail") retailMap.set(p.product_id, price);
     if (p.price_type === "wholesale") wholesaleMap.set(p.product_id, price);
   }
 
   const stockMap = new Map(
-    (stockRows as any[]).map((s: any) => [
+    (stockRows as PosStockRow[]).map((s) => [
       s.product_id,
       { qty: Number(s.quantity), cost: Number(s.cost_price ?? 0) },
     ])
   );
 
   return products
-    .map((p: any) => {
+    .map((p) => {
       const stock = stockMap.get(p.id);
       const retailPrice = retailMap.get(p.id) ?? 0;
       const wholesalePrice = wholesaleMap.get(p.id) ?? retailPrice;
@@ -192,8 +217,8 @@ export async function listPosCatalogProducts(
               ),
       };
     })
-    .filter((p: any) => p.stockQty > 0 || p.retailPrice > 0 || p.wholesalePrice > 0)
-    .sort((a: any, b: any) => {
+    .filter((p) => p.stockQty > 0 || p.retailPrice > 0 || p.wholesalePrice > 0)
+    .sort((a, b) => {
       const demand = b.recentSoldQty - a.recentSoldQty;
       if (demand !== 0) return demand;
       return a.name.localeCompare(b.name);
@@ -226,7 +251,9 @@ export async function getTopPosProducts(
     .in("id", productIds);
 
   const productMap = new Map(
-    ((products ?? []) as any[]).map((p: any) => [p.id, p] as const)
+    ((products ?? []) as { id: string; name: string; code: string | null }[]).map(
+      (p) => [p.id, p] as const
+    )
   );
 
   return sorted.map(([productId, qty]) => {
