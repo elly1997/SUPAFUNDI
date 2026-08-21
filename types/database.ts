@@ -501,6 +501,7 @@ export type Database = {
           notes: string | null;
           cashier_id: string | null;
           sale_date: string;
+          updated_at?: string;
         };
         Insert: {
           id?: string;

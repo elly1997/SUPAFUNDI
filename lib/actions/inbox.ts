@@ -4,13 +4,18 @@ import { approveStockTransfer, listPendingTransfersOrgWide } from "@/lib/actions
 import {
   approveVoidRequest,
   listPendingVoidRequests,
+  listRecentVoidedSales,
   rejectVoidRequest,
 } from "@/lib/actions/void-requests";
 import { listUnreconciledDays } from "@/lib/actions/daily-closing";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { formatTzs } from "@/lib/utils/currency";
 
-export type InboxKind = "transfer_approval" | "void_receipt" | "reconciliation";
+export type InboxKind =
+  | "transfer_approval"
+  | "void_receipt"
+  | "void_done"
+  | "reconciliation";
 
 export type InboxItem = {
   id: string;
@@ -24,17 +29,47 @@ export type InboxItem = {
   referenceId: string;
 };
 
+async function settled<T>(promise: Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await promise;
+  } catch {
+    return fallback;
+  }
+}
+
 export async function listInboxItems(): Promise<{
   items: InboxItem[];
   openCount: number;
+  warnings: string[];
 }> {
   await requireManagerContext();
 
-  const [transfers, voids, days] = await Promise.all([
-    listPendingTransfersOrgWide(),
-    listPendingVoidRequests(),
-    listUnreconciledDays(null, 20),
+  const warnings: string[] = [];
+
+  const [transfers, voidsResult, days, recentVoids] = await Promise.all([
+    settled(listPendingTransfersOrgWide(), []),
+    (async () => {
+      try {
+        return {
+          rows: await listPendingVoidRequests(),
+          error: null as string | null,
+        };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Void requests unavailable";
+        if (/void_requests|does not exist|schema cache/i.test(msg)) {
+          return {
+            rows: [],
+            error:
+              "Void requests table is missing. Run migration 20260819120000_void_requests.sql in Supabase SQL editor.",
+          };
+        }
+        return { rows: [], error: msg };
+      }
+    })(),
+    settled(listUnreconciledDays(null, 30), []),
+    settled(listRecentVoidedSales(14, 40), []),
   ]);
+  if (voidsResult.error) warnings.push(voidsResult.error);
 
   const items: InboxItem[] = [];
 
@@ -52,19 +87,35 @@ export async function listInboxItems(): Promise<{
     });
   }
 
-  for (const v of voids) {
+  for (const v of voidsResult.rows) {
     items.push({
       id: `void:${v.id}`,
       kind: "void_receipt",
       outletId: v.outletId,
       outletName: v.outletName,
-      title: `Void receipt ${v.invoiceNo}`,
+      title: `Void request ${v.invoiceNo}`,
       body: [v.requestedByName ? `From ${v.requestedByName}` : null, v.reason]
         .filter(Boolean)
         .join(" · "),
       href: `/sales/${v.saleId}`,
       createdAt: v.createdAt,
       referenceId: v.id,
+    });
+  }
+
+  const pendingSaleIds = new Set(voidsResult.rows.map((v) => v.saleId));
+  for (const v of recentVoids) {
+    if (pendingSaleIds.has(v.saleId)) continue;
+    items.push({
+      id: `voided:${v.saleId}`,
+      kind: "void_done",
+      outletId: v.outletId,
+      outletName: v.outletName,
+      title: `Voided ${v.invoiceNo}`,
+      body: `Cancelled receipt · ${formatTzs(v.totalAmount)}`,
+      href: `/sales/${v.saleId}`,
+      createdAt: v.voidedAt,
+      referenceId: v.saleId,
     });
   }
 
@@ -75,7 +126,10 @@ export async function listInboxItems(): Promise<{
       outletId: d.outletId,
       outletName: d.outletName,
       title: `Reconcile ${d.businessDate}`,
-      body: `Expected cash ${formatTzs(d.expectedCash)}`,
+      body:
+        d.expectedCash > 0
+          ? `Expected cash ${formatTzs(d.expectedCash)}`
+          : "Day has sales or expenses — open closing to reconcile",
       href: `/daily-closing?date=${encodeURIComponent(d.businessDate)}&outlet=${encodeURIComponent(d.outletId)}`,
       createdAt: `${d.businessDate}T12:00:00.000Z`,
       referenceId: d.outletId,
@@ -83,16 +137,23 @@ export async function listInboxItems(): Promise<{
   }
 
   items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const actionable = items.filter((i) => i.kind !== "reconciliation").length;
+  const openCount =
+    transfers.length + voidsResult.rows.length + days.length;
+
   return {
     items,
-    openCount: actionable + days.length,
+    openCount,
+    warnings,
   };
 }
 
 export async function getInboxOpenCount(): Promise<number> {
-  const { openCount } = await listInboxItems();
-  return openCount;
+  try {
+    const { openCount } = await listInboxItems();
+    return openCount;
+  } catch {
+    return 0;
+  }
 }
 
 export async function actOnInboxTransfer(

@@ -14,7 +14,7 @@ import { buildCashVarianceJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { getOrganizationSettings } from "@/lib/actions/settings";
 import { fetchAllPaginated } from "@/lib/supabase/query-chunks";
-import { businessDayBounds, isoDateToTimestamptz } from "@/lib/utils/iso-date";
+import { businessDayBounds, isoDateToTimestamptz, addDaysIso, todayIso } from "@/lib/utils/iso-date";
 import {
   isCustomerArPaymentRef,
   isCustomerDepositRef,
@@ -593,6 +593,7 @@ export async function listUnreconciledDays(
 ): Promise<UnreconciledDayRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const lookbackFrom = `${addDaysIso(todayIso(), -45)}T00:00:00.000Z`;
 
   let outletsQuery = supabase
     .from("outlets")
@@ -603,61 +604,75 @@ export async function listUnreconciledDays(
   const { data: outlets } = await outletsQuery;
   if (!outlets?.length) return [];
 
-  const results: UnreconciledDayRow[] = [];
+  const candidates: Omit<UnreconciledDayRow, "expectedCash">[] = [];
 
   for (const o of outlets) {
-    const { data: sales } = await supabase
-      .from("sales")
-      .select("sale_date")
-      .eq("organization_id", ctx.organizationId)
-      .eq("outlet_id", o.id)
-      .eq("status", "completed")
-      .order("sale_date", { ascending: false })
-      .limit(2000);
-
-    const { data: expenses } = await supabase
-      .from("expenses")
-      .select("expense_date")
-      .eq("organization_id", ctx.organizationId)
-      .eq("outlet_id", o.id)
-      .order("expense_date", { ascending: false })
-      .limit(2000);
+    const [{ data: sales }, { data: expenses }, { data: reconciled }] =
+      await Promise.all([
+        supabase
+          .from("sales")
+          .select("sale_date")
+          .eq("organization_id", ctx.organizationId)
+          .eq("outlet_id", o.id)
+          .eq("status", "completed")
+          .gte("sale_date", lookbackFrom)
+          .order("sale_date", { ascending: false })
+          .limit(500),
+        supabase
+          .from("expenses")
+          .select("expense_date")
+          .eq("organization_id", ctx.organizationId)
+          .eq("outlet_id", o.id)
+          .gte("expense_date", lookbackFrom.slice(0, 10))
+          .order("expense_date", { ascending: false })
+          .limit(500),
+        supabase
+          .from("daily_closings")
+          .select("business_date")
+          .eq("organization_id", ctx.organizationId)
+          .eq("outlet_id", o.id)
+          .eq("status", "reconciled")
+          .gte("business_date", lookbackFrom.slice(0, 10)),
+      ]);
 
     const dates = new Set<string>();
     for (const s of sales ?? []) {
       dates.add(String(s.sale_date).slice(0, 10));
     }
     for (const e of expenses ?? []) {
-      dates.add(e.expense_date);
+      dates.add(String(e.expense_date).slice(0, 10));
     }
 
-    const { data: reconciled } = await supabase
-      .from("daily_closings")
-      .select("business_date")
-      .eq("organization_id", ctx.organizationId)
-      .eq("outlet_id", o.id)
-      .eq("status", "reconciled");
-
     const reconciledSet = new Set(
-      (reconciled ?? []).map((r) => r.business_date)
+      (reconciled ?? []).map((r) => String(r.business_date).slice(0, 10))
     );
 
     for (const d of Array.from(dates)) {
       if (reconciledSet.has(d)) continue;
-      const summary = await computeDayCashSummary(o.id, d);
-      results.push({
+      candidates.push({
         businessDate: d,
         outletId: o.id,
         outletName: o.name,
-        expectedCash: summary.expectedCash,
         hasActivity: true,
       });
     }
   }
 
-  return results
+  const top = candidates
     .sort((a, b) => b.businessDate.localeCompare(a.businessDate))
     .slice(0, limit);
+
+  /** Only compute expected cash for the rows we return (keeps Inbox fast). */
+  const results: UnreconciledDayRow[] = [];
+  for (const c of top) {
+    try {
+      const summary = await computeDayCashSummary(c.outletId, c.businessDate);
+      results.push({ ...c, expectedCash: summary.expectedCash });
+    } catch {
+      results.push({ ...c, expectedCash: 0 });
+    }
+  }
+  return results;
 }
 
 export async function getReconciledDatesInRange(

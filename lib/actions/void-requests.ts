@@ -28,6 +28,15 @@ export type VoidRequestRow = {
   createdAt: string;
 };
 
+export type RecentVoidedSaleRow = {
+  saleId: string;
+  invoiceNo: string;
+  outletId: string;
+  outletName: string;
+  totalAmount: number;
+  voidedAt: string;
+};
+
 async function getProfileRole(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
   userId: string
@@ -153,6 +162,77 @@ export async function listPendingVoidRequests(): Promise<VoidRequestRow[]> {
     reason: r.reason,
     requestedByName: r.requested_by ? (nameMap.get(r.requested_by) ?? null) : null,
     createdAt: r.created_at,
+  }));
+}
+
+/** Recently cancelled sales — shown in Inbox as void notifications. */
+export async function listRecentVoidedSales(
+  withinDays = 14,
+  limit = 40
+): Promise<RecentVoidedSaleRow[]> {
+  await requireManagerContext();
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const { addDaysIso, todayIso } = await import("@/lib/utils/iso-date");
+  const from = `${addDaysIso(todayIso(), -Math.max(1, withinDays))}T00:00:00.000Z`;
+
+  const { data, error } = await supabase
+    .from("sales")
+    .select("id, invoice_no, outlet_id, total_amount, updated_at, sale_date")
+    .eq("organization_id", ctx.organizationId)
+    .eq("status", "cancelled")
+    .gte("updated_at", from)
+    .order("updated_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    // Fallback when updated_at filter is unavailable on older clients.
+    const fallback = await supabase
+      .from("sales")
+      .select("id, invoice_no, outlet_id, total_amount, sale_date")
+      .eq("organization_id", ctx.organizationId)
+      .eq("status", "cancelled")
+      .gte("sale_date", from)
+      .order("sale_date", { ascending: false })
+      .limit(limit);
+    if (fallback.error) throw new Error(fallback.error.message);
+    const rows = fallback.data ?? [];
+    const outletIds = Array.from(
+      new Set(rows.map((r) => r.outlet_id).filter((id): id is string => !!id))
+    );
+    const { data: outlets } = outletIds.length
+      ? await supabase.from("outlets").select("id, name").in("id", outletIds)
+      : { data: [] as { id: string; name: string }[] };
+    const outletMap = new Map((outlets ?? []).map((o) => [o.id, o.name]));
+    return rows.map((r) => ({
+      saleId: r.id,
+      invoiceNo: r.invoice_no,
+      outletId: r.outlet_id ?? "",
+      outletName: r.outlet_id
+        ? (outletMap.get(r.outlet_id) ?? "Outlet")
+        : "Outlet",
+      totalAmount: Number(r.total_amount),
+      voidedAt: String(r.sale_date),
+    }));
+  }
+
+  const rows = data ?? [];
+  const outletIds = Array.from(
+    new Set(rows.map((r) => r.outlet_id).filter((id): id is string => !!id))
+  );
+  const { data: outlets } = outletIds.length
+    ? await supabase.from("outlets").select("id, name").in("id", outletIds)
+    : { data: [] as { id: string; name: string }[] };
+  const outletMap = new Map((outlets ?? []).map((o) => [o.id, o.name]));
+
+  return rows.map((r) => ({
+    saleId: r.id,
+    invoiceNo: r.invoice_no,
+    outletId: r.outlet_id ?? "",
+    outletName: r.outlet_id
+      ? (outletMap.get(r.outlet_id) ?? "Outlet")
+      : "Outlet",
+    totalAmount: Number(r.total_amount),
+    voidedAt: String(r.updated_at ?? r.sale_date),
   }));
 }
 
