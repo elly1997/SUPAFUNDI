@@ -7,6 +7,7 @@ import { ChevronRight } from "lucide-react";
 const LABELS: Record<string, string> = {
   "": "Dashboard",
   "daily-closing": "Daily closing",
+  inbox: "Inbox",
   pos: "POS Terminal",
   sales: "Sales",
   inventory: "Inventory",

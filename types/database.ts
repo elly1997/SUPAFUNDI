@@ -527,6 +527,8 @@ export type Database = {
           status?: string;
           notes?: string | null;
           deposit_applied?: number;
+          balance_due?: number;
+          amount_paid?: number;
         };
         Relationships: [];
       };

@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { AppNavTabs } from "@/components/layout/app-nav-tabs";
 import { PosModuleNav } from "@/components/layout/pos-module-nav";
 import { BrandLogo } from "@/components/layout/brand-logo";
+import { InboxButton } from "@/components/layout/inbox-button";
 import { LiveClock } from "@/components/layout/live-clock";
 import { SyncBadge } from "@/components/layout/sync-badge";
 import { filterNavForRole } from "@/components/layout/nav-config";
@@ -158,6 +159,7 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
         ) : null}
 
         <div className="ml-auto flex items-center gap-2">
+          <InboxButton />
           {!isPos ? <LiveClock /> : null}
           {!isPos ? <SyncBadge state="synced" /> : null}
           <span className="hidden items-center gap-1.5 text-sm text-muted-foreground md:inline-flex">

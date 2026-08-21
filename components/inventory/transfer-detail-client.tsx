@@ -46,13 +46,15 @@ export function TransferDetailClient({ transferId }: Props) {
     queryClient.invalidateQueries({ queryKey: ["stock-levels"] });
     queryClient.invalidateQueries({ queryKey: ["product-price-catalog"] });
     queryClient.invalidateQueries({ queryKey: ["pos-products"] });
+    queryClient.invalidateQueries({ queryKey: ["inbox"] });
+    queryClient.invalidateQueries({ queryKey: ["inbox-count"] });
   };
 
   const approveMut = useMutation({
     mutationFn: () => approveStockTransfer(transferId),
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success("Transfer approved");
+        toast.success("Approved and sent");
         invalidate();
       } else toast.error(r.message);
     },
@@ -118,17 +120,17 @@ export function TransferDetailClient({ transferId }: Props) {
           <div className="flex flex-wrap gap-2">
             {pending && canApprove && (
               <Button onClick={() => approveMut.mutate()} disabled={approveMut.isPending}>
-                Approve
+                Approve & send
               </Button>
             )}
             {pending && !canApprove && (
               <p className="text-sm text-amber-600">
-                Awaiting manager or owner approval
+                Waiting in owner/manager Inbox
               </p>
             )}
             {approved && (
               <Button onClick={() => dispatchMut.mutate()} disabled={dispatchMut.isPending}>
-                Dispatch stock
+                Send stock
               </Button>
             )}
             {dispatched && (
@@ -189,10 +191,9 @@ export function TransferDetailClient({ transferId }: Props) {
 
       <Card className="border-muted">
         <CardContent className="py-4 text-sm text-muted-foreground">
-          <strong>Workflow:</strong> Request → Owner/manager approves → Dispatch
-          (qty leaves the source branch) → Receive at destination (qty lands on
-          that branch&apos;s catalog: match SKU/barcode/name, or copy the item).
-          Transfers do not create a sale or invoice; stock moves at cost.
+          <strong>Workflow:</strong> Send (or request) → Owner/manager Approve
+          & send from Inbox → Destination confirms receipt. Each branch keeps
+          its own catalog and document numbers.
 
         </CardContent>
       </Card>

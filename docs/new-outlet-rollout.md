@@ -40,4 +40,6 @@ This rollout keeps the main outlet history intact while allowing a new outlet to
 - Create a supplier bill in the second outlet and confirm it is hidden from the main outlet.
 - Create a collection account in the second outlet and confirm banking lists only that outlet's account.
 - Create a sale or invoice in outlet A and confirm it does not appear under outlet B.
-- Transfer stock from A to B: dispatch reduces A; receive adds to B's catalog (existing SKU/name or a copied item) and B can sell it.
+- Confirm receipt numbers on A and B do not share one sequence.
+- Transfer stock from A to B: send (or approve from Inbox); receive adds to B's catalog.
+- As cashier, request void on a receipt and confirm it appears in owner Inbox only.

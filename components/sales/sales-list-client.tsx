@@ -162,7 +162,8 @@ export function SalesListClient() {
             </div>
             <p className="text-xs text-muted-foreground hidden sm:block">
               Filter the list below or press Enter to open a sale by exact invoice
-              number. Managers can void completed sales from the list or detail page.
+              number. Voided receipts are hidden from this list; managers can void
+              completed sales from the list or detail page.
             </p>
           </div>
         </div>

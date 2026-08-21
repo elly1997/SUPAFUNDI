@@ -76,15 +76,27 @@ async function getProfileRole(
 
 async function nextTransferReference(
   supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>,
-  organizationId: string
+  organizationId: string,
+  fromOutletId: string
 ): Promise<string> {
+  const { data: outlet } = await supabase
+    .from("outlets")
+    .select("name, code")
+    .eq("id", fromOutletId)
+    .maybeSingle();
+  const prefix =
+    outlet?.code?.trim().toUpperCase() ||
+    (outlet?.name
+      ? outlet.name.replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 4)
+      : "OUT");
   const year = new Date().getFullYear();
   const { count } = await supabase
     .from("stock_transfers")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId)
+    .eq("from_outlet_id", fromOutletId)
     .gte("created_at", `${year}-01-01T00:00:00.000Z`);
-  return formatTransferReference("ORG", year, (count ?? 0) + 1);
+  return formatTransferReference(prefix || "OUT", year, (count ?? 0) + 1);
 }
 
 export async function listStockTransfers(
@@ -107,6 +119,60 @@ export async function listStockTransfers(
     );
   }
   const { data, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const rows = data ?? [];
+  const outletIds = Array.from(
+    new Set(
+      rows
+        .flatMap((r) => [r.from_outlet_id, r.to_outlet_id])
+        .filter((id): id is string => !!id)
+    )
+  );
+  const { data: outlets } = outletIds.length
+    ? await supabase.from("outlets").select("id, name").in("id", outletIds)
+    : { data: [] };
+  const outletMap = new Map((outlets ?? []).map((o) => [o.id, o.name]));
+
+  const transferIds = rows.map((r) => r.id);
+  const { data: itemCounts } = transferIds.length
+    ? await supabase
+        .from("stock_transfer_items")
+        .select("transfer_id")
+        .in("transfer_id", transferIds)
+    : { data: [] };
+  const countMap = new Map<string, number>();
+  for (const row of itemCounts ?? []) {
+    countMap.set(row.transfer_id, (countMap.get(row.transfer_id) ?? 0) + 1);
+  }
+
+  return rows.map((r) => ({
+    id: r.id,
+    reference_no: r.reference_no,
+    status: r.status,
+    from_outlet_name: r.from_outlet_id
+      ? (outletMap.get(r.from_outlet_id) ?? null)
+      : null,
+    to_outlet_name: r.to_outlet_id
+      ? (outletMap.get(r.to_outlet_id) ?? null)
+      : null,
+    created_at: r.created_at,
+    item_count: countMap.get(r.id) ?? 0,
+  }));
+}
+
+export async function listPendingTransfersOrgWide(): Promise<TransferListRow[]> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("stock_transfers")
+    .select(
+      "id, reference_no, status, from_outlet_id, to_outlet_id, created_at"
+    )
+    .eq("organization_id", ctx.organizationId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(100);
   if (error) throw new Error(error.message);
 
   const rows = data ?? [];
@@ -269,7 +335,8 @@ export async function createStockTransfer(
 
     const referenceNo = await nextTransferReference(
       supabase,
-      ctx.organizationId
+      ctx.organizationId,
+      input.fromOutletId
     );
 
     const { data: tr, error: trErr } = await supabase
@@ -406,22 +473,13 @@ export async function transferStockFromList(
     };
   }
 
-  const { error: approveErr } = await supabase
-    .from("stock_transfers")
-    .update({ status: "approved", approved_by: ctx.userId })
-    .eq("id", created.transferId);
-  if (approveErr) {
-    await supabase.from("stock_transfers").delete().eq("id", created.transferId);
-    return { ok: false, message: approveErr.message };
-  }
-
-  const dispatched = await dispatchStockTransfer(created.transferId);
-  if (!dispatched.ok) {
+  const approved = await approveStockTransfer(created.transferId);
+  if (!approved.ok) {
     await supabase
       .from("stock_transfers")
       .update({ status: "cancelled" })
       .eq("id", created.transferId);
-    return dispatched;
+    return approved;
   }
 
   const detail = await getStockTransferById(created.transferId);
@@ -459,8 +517,20 @@ export async function approveStockTransfer(
     .update({ status: "approved", approved_by: ctx.userId })
     .eq("id", transferId);
   if (error) return { ok: false, message: error.message };
+
+  const dispatched = await dispatchStockTransfer(transferId);
+  if (!dispatched.ok) {
+    revalidatePath("/inventory/transfers");
+    revalidatePath(`/inventory/transfers/${transferId}`);
+    revalidatePath("/inbox");
+    return dispatched;
+  }
+
   revalidatePath("/inventory/transfers");
   revalidatePath(`/inventory/transfers/${transferId}`);
+  revalidatePath("/inventory/stock");
+  revalidatePath("/inventory/receive");
+  revalidatePath("/inbox");
   return { ok: true };
 }
 

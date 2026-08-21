@@ -27,6 +27,16 @@ export function canApproveStockTransfers(role: UserRole | null): boolean {
   return canManageSettings(role);
 }
 
+/** Inbox (approvals + reconciliations) is owner/manager only. */
+export function canAccessInbox(role: UserRole | null): boolean {
+  return canManageSettings(role);
+}
+
+/** Counter staff may ask to void a receipt; owners/managers approve or void. */
+export function canRequestSaleVoid(role: UserRole | null): boolean {
+  return role === "cashier" || role === "sales_rep";
+}
+
 /** Only owners may assign or change the owner role. */
 export function canAssignOwnerRole(role: UserRole | null): boolean {
   return role === "owner";

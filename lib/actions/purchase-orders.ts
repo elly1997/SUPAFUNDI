@@ -132,6 +132,7 @@ async function nextPoReference(
     .from("purchase_orders")
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId)
+    .eq("outlet_id", outletId)
     .gte("order_date", `${year}-01-01`);
   return formatPoReference(prefix, year, (count ?? 0) + 1);
 }
@@ -140,15 +141,14 @@ export async function listPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
   const scopedOutletId = await resolveWorkingOutletId(ctx);
+  if (!scopedOutletId) return [];
   let query = supabase
     .from("purchase_orders")
     .select(
       "id, reference_no, status, order_date, expected_date, total_amount, outlet_id, supplier_id, source, payment_status, payment_method, paid_at"
     )
-    .eq("organization_id", ctx.organizationId);
-  if (scopedOutletId) {
-    query = query.eq("outlet_id", scopedOutletId);
-  }
+    .eq("organization_id", ctx.organizationId)
+    .eq("outlet_id", scopedOutletId);
   const { data, error } = await query
     .order("created_at", { ascending: false })
     .limit(500);

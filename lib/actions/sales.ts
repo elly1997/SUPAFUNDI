@@ -8,6 +8,7 @@ import {
   type JournalLineInput,
 } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { refreshDailyClosingSnapshot } from "@/lib/actions/daily-closing";
 import { applyCustomerDepositToCredit } from "@/lib/actions/credit";
 import { creditAccountFromPosSale } from "@/lib/actions/banking";
 import {
@@ -870,6 +871,8 @@ export async function listSalesPage(input?: {
   fromDate?: string;
   toDate?: string;
   invoiceSearch?: string;
+  /** When true, includes voided (cancelled) receipts. Default: omit voided. */
+  includeVoided?: boolean;
 }): Promise<SalesPageResult> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
@@ -892,6 +895,9 @@ export async function listSalesPage(input?: {
     )
     .eq("organization_id", ctx.organizationId)
     .eq("outlet_id", scopedOutletId);
+  if (input?.includeVoided !== true) {
+    query = query.neq("status", "cancelled");
+  }
   if (input?.fromDate) query = query.gte("sale_date", `${input.fromDate}T00:00:00.000Z`);
   if (input?.toDate) query = query.lte("sale_date", `${input.toDate}T23:59:59.999Z`);
   if (invoiceSearch) {
@@ -937,6 +943,7 @@ export async function listRecentSales(
     outletId?: string | null;
     fromDate?: string;
     toDate?: string;
+    includeVoided?: boolean;
   }
 ): Promise<SaleListRow[]> {
   const ctx = await requireOrgContext();
@@ -951,6 +958,9 @@ export async function listRecentSales(
     )
     .eq("organization_id", ctx.organizationId)
     .eq("outlet_id", scopedOutletId);
+  if (filters?.includeVoided !== true) {
+    query = query.neq("status", "cancelled");
+  }
   if (filters?.fromDate) {
     query = query.gte("sale_date", `${filters.fromDate}T00:00:00.000Z`);
   }
@@ -1266,9 +1276,9 @@ export async function voidSale(
         await supabase.from("payments").delete().eq("id", p.id);
         continue;
       }
-      const { error: payUpdErr } = await paymentsDb(supabase)
+      const { error: payUpdErr } = await supabase
         .from("payments")
-        .update({ status: "reversed" } as never)
+        .update({ status: "reversed" })
         .eq("id", p.id);
       if (payUpdErr) {
         return { ok: false, message: payUpdErr.message };
@@ -1370,14 +1380,32 @@ export async function voidSale(
         ]);
     }
 
-    await paymentsDb(supabase)
+    await supabase
       .from("sales")
       .update({
         status: "cancelled",
         deposit_applied: 0,
         balance_due: 0,
-      } as never)
+        amount_paid: 0,
+      })
       .eq("id", saleId);
+
+    if (sale.outlet_id) {
+      await refreshDailyClosingSnapshot(
+        sale.outlet_id,
+        businessDateFromTimestamptz(String(sale.sale_date))
+      );
+    }
+
+    await supabase
+      .from("void_requests")
+      .update({
+        status: "approved",
+        resolved_by: ctx.userId,
+        resolved_at: new Date().toISOString(),
+      })
+      .eq("sale_id", saleId)
+      .eq("status", "pending");
 
     if (sale.customer_id) {
       revalidatePath(`/customers/${sale.customer_id}`);
@@ -1390,6 +1418,7 @@ export async function voidSale(
     revalidatePath("/customers");
     revalidatePath("/reports");
     revalidatePath("/daily-closing");
+    revalidatePath("/inbox");
     return { ok: true };
   } catch (e) {
     return {

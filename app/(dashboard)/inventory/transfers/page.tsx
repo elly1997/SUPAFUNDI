@@ -6,7 +6,8 @@ export default function TransfersPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Stock transfers</h1>
         <p className="text-sm text-muted-foreground">
-          Move inventory between outlets with approval and dispatch tracking.
+          Send stock to another branch. Owner/manager approve & send from Inbox;
+          destination confirms receipt.
         </p>
       </div>
       <TransfersPageClient />

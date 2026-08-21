@@ -65,6 +65,126 @@ function saleRevenue(s: {
 
 type SupabaseClient = Awaited<ReturnType<typeof createServerSupabaseClient>>;
 
+/** POS tender for the day — only completed sales; voided receipts excluded. */
+async function sumPosTenderForDay(
+  supabase: SupabaseClient,
+  organizationId: string,
+  outletId: string,
+  from: string,
+  to: string,
+  completedSaleIds: Set<string>
+): Promise<{ cashSales: number; mpesaSales: number }> {
+  if (completedSaleIds.size === 0) {
+    return { cashSales: 0, mpesaSales: 0 };
+  }
+
+  const payments = await fetchAllPaginated<{
+    amount: number;
+    payment_method: string;
+    reference_no: string | null;
+    customer_id: string | null;
+    sale_id: string;
+  }>(async (fromIdx, toIdx) => {
+    const { data, error } = await supabase
+      .from("payments")
+      .select("amount, payment_method, reference_no, customer_id, sale_id")
+      .eq("organization_id", organizationId)
+      .eq("outlet_id", outletId)
+      .eq("status", "completed")
+      .not("sale_id", "is", null)
+      .gte("payment_date", from)
+      .lte("payment_date", to)
+      .order("id", { ascending: true })
+      .range(fromIdx, toIdx);
+    return { data, error };
+  });
+
+  let cashSales = 0;
+  let mpesaSales = 0;
+  for (const p of payments) {
+    if (!completedSaleIds.has(p.sale_id)) continue;
+    // Customer AR collections are counted under cashCustomerPayments.
+    if (isCustomerArPaymentRef(p.reference_no) || p.customer_id) continue;
+    const amt = Number(p.amount);
+    if (p.payment_method === "cash") cashSales += amt;
+    else if (p.payment_method === "mpesa") mpesaSales += amt;
+  }
+
+  return { cashSales, mpesaSales };
+}
+
+/**
+ * Recompute stored daily_closings / open drawer expected cash after voids or edits.
+ * Best-effort — does not block the caller on failure.
+ */
+export async function refreshDailyClosingSnapshot(
+  outletId: string,
+  businessDate: string
+): Promise<void> {
+  try {
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const summary = await computeDayCashSummary(outletId, businessDate);
+
+    const { data: existing } = await supabase
+      .from("daily_closings")
+      .select("id, closing_balance")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", outletId)
+      .eq("business_date", businessDate)
+      .maybeSingle();
+
+    if (existing) {
+      const variance =
+        existing.closing_balance != null
+          ? roundMoney(
+              Number(existing.closing_balance) - summary.expectedCash
+            )
+          : null;
+      await supabase
+        .from("daily_closings")
+        .update({
+          expected_cash: summary.expectedCash,
+          cash_sales: summary.cashSales,
+          mpesa_sales: summary.mpesaSales,
+          variance,
+        })
+        .eq("id", existing.id);
+    }
+
+    const { data: openSession } = await supabase
+      .from("cash_sessions")
+      .select("id, closing_balance")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", outletId)
+      .eq("business_date", businessDate)
+      .eq("status", "open")
+      .maybeSingle();
+
+    if (openSession) {
+      await supabase
+        .from("cash_sessions")
+        .update({
+          expected_balance: summary.expectedCash,
+          ...(openSession.closing_balance != null
+            ? {
+                variance: roundMoney(
+                  Number(openSession.closing_balance) - summary.expectedCash
+                ),
+              }
+            : {}),
+        })
+        .eq("id", openSession.id);
+    }
+
+    revalidatePath("/daily-closing");
+    revalidatePath("/pos");
+    revalidatePath("/reports");
+  } catch {
+    /* snapshot refresh must not break void / expense flows */
+  }
+}
+
 function apDb(supabase: SupabaseClient) {
   return supabase as unknown as {
     from: (table: string) => ReturnType<SupabaseClient["from"]>;
@@ -141,35 +261,24 @@ export async function computeDayCashSummary(
     return { data, error };
   });
 
-  const saleIds = sales.map((s) => s.id);
+  const completedSaleIds = new Set(sales.map((s) => s.id));
   const salesCount = sales.length;
   let totalSales = roundMoney(sales.reduce((sum, s) => sum + saleRevenue(s), 0));
-  let cashSales = 0;
-  let mpesaSales = 0;
 
-  if (saleIds.length > 0) {
-    const payments = await fetchByInChunks(saleIds, async (chunk) => {
-      const { data, error } = await supabase
-        .from("payments")
-        .select("amount, payment_method, reference_no, customer_id")
-        .eq("organization_id", ctx.organizationId)
-        .eq("status", "completed")
-        .in("sale_id", chunk);
-      return { data, error };
-    });
+  const tender = await sumPosTenderForDay(
+    supabase,
+    ctx.organizationId,
+    outletId,
+    from,
+    to,
+    completedSaleIds
+  );
+  let cashSales = tender.cashSales;
+  let mpesaSales = tender.mpesaSales;
 
-    for (const p of payments) {
-      // Customer AR collections are counted under cashCustomerPayments.
-      if (isCustomerArPaymentRef(p.reference_no) || p.customer_id) continue;
-      const amt = Number(p.amount);
-      if (p.payment_method === "cash") cashSales += amt;
-      else if (p.payment_method === "mpesa") mpesaSales += amt;
-    }
-
-    // Fallback when legacy rows have payment amounts but zero total_amount.
-    if (totalSales === 0 && (cashSales > 0 || mpesaSales > 0)) {
-      totalSales = roundMoney(cashSales + mpesaSales);
-    }
+  // Fallback when legacy rows have payment amounts but zero total_amount.
+  if (totalSales === 0 && (cashSales > 0 || mpesaSales > 0)) {
+    totalSales = roundMoney(cashSales + mpesaSales);
   }
 
   const { data: expenses } = await supabase

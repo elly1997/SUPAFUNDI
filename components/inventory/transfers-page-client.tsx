@@ -34,7 +34,7 @@ import {
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import {
   approveStockTransfer,
-  createStockTransfer,
+  transferStockFromList,
   listStockTransfers,
 } from "@/lib/actions/transfers";
 import { usePosProducts } from "@/hooks/usePosProducts";
@@ -78,13 +78,19 @@ export function TransfersPageClient() {
   const { data: products = [] } = usePosProducts(fromOutletId || null);
 
   const createMut = useMutation({
-    mutationFn: createStockTransfer,
+    mutationFn: transferStockFromList,
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success("Transfer created (pending approval)");
+        toast.success(
+          r.pendingApproval
+            ? "Transfer sent to Inbox for owner/manager approval"
+            : "Stock sent — waiting for the other branch to receive"
+        );
         setOpen(false);
         setLines([]);
         queryClient.invalidateQueries({ queryKey: ["stock-transfers"] });
+        queryClient.invalidateQueries({ queryKey: ["inbox"] });
+        queryClient.invalidateQueries({ queryKey: ["inbox-count"] });
       } else toast.error(r.message);
     },
   });
@@ -93,9 +99,11 @@ export function TransfersPageClient() {
     mutationFn: approveStockTransfer,
     onSuccess: (r, transferId) => {
       if (r.ok) {
-        toast.success("Transfer approved");
+        toast.success("Approved and sent");
         queryClient.invalidateQueries({ queryKey: ["stock-transfers"] });
         queryClient.invalidateQueries({ queryKey: ["stock-transfer", transferId] });
+        queryClient.invalidateQueries({ queryKey: ["inbox"] });
+        queryClient.invalidateQueries({ queryKey: ["inbox-count"] });
       } else toast.error(r.message);
     },
   });
@@ -131,14 +139,13 @@ export function TransfersPageClient() {
       </CardHeader>
       <CardContent>
         <p className="mb-4 text-sm text-muted-foreground">
-          Send stock from this branch to another. The destination keeps its own
-          catalog: matching SKU, barcode, or name is reused; otherwise the item
-          is copied there on receipt.
+          Send stock to another branch. Matching SKU, barcode, or name is
+          reused there; otherwise the item is copied on receipt.
         </p>
         {canApprove && pendingCount > 0 ? (
           <p className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-            {pendingCount} transfer{pendingCount === 1 ? "" : "s"} awaiting your
-            approval.
+            {pendingCount} transfer{pendingCount === 1 ? "" : "s"} in Inbox
+            waiting for approve & send.
           </p>
         ) : null}
         {isLoading ? (
@@ -188,7 +195,7 @@ export function TransfersPageClient() {
                           disabled={approveMut.isPending}
                           onClick={() => approveMut.mutate(t.id)}
                         >
-                          Approve
+                          Approve & send
                         </Button>
                       ) : null}
                     </TableCell>
@@ -310,7 +317,7 @@ export function TransfersPageClient() {
                 })
               }
             >
-              {createMut.isPending ? "Saving…" : "Submit request"}
+              {createMut.isPending ? "Saving…" : canApprove ? "Send stock" : "Request transfer"}
             </Button>
           </DialogFooter>
         </DialogContent>

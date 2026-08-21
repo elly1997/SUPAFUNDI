@@ -5,6 +5,7 @@ import {
   Boxes,
   ClipboardList,
   FileText,
+  Inbox,
   Landmark,
   Truck,
   PackagePlus,
@@ -43,6 +44,12 @@ export type NavSection = {
 
 /** Top-level horizontal tabs (module navigation). */
 export const PRIMARY_NAV_TABS: NavItem[] = [
+  {
+    label: "Inbox",
+    href: "/inbox",
+    icon: Inbox,
+    roles: ["owner", "manager"],
+  },
   {
     label: "POS",
     href: "/pos",
@@ -104,7 +111,10 @@ export const NAV_SECTIONS: NavSection[] = [
     id: "overview",
     title: "Overview",
     defaultOpen: true,
-    items: [{ label: "Daily closing", href: "/daily-closing", icon: Sun }],
+    items: [
+      { label: "Inbox", href: "/inbox", icon: Inbox, roles: ["owner", "manager"] },
+      { label: "Daily closing", href: "/daily-closing", icon: Sun },
+    ],
   },
   {
     id: "operations",
@@ -261,6 +271,9 @@ export function roleCanManageSettings(role: UserRole): boolean {
 
 /** True if pathname matches this nav item (including child routes). */
 export function isNavItemActive(pathname: string, href: string): boolean {
+  if (href === "/inbox") {
+    return pathname === "/inbox" || pathname.startsWith("/inbox/");
+  }
   if (href === "/daily-closing") {
     return (
       pathname.startsWith("/daily-closing") ||

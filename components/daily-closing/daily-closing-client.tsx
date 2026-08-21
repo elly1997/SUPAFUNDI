@@ -69,9 +69,13 @@ export function DailyClosingClient({ outlets }: Props) {
   useEffect(() => {
     const date = searchParams.get("date");
     const counted = searchParams.get("counted");
+    const outlet = searchParams.get("outlet");
     if (date) setBusinessDate(date);
     if (counted) setCountedClosing(counted);
-  }, [searchParams, setBusinessDate]);
+    if (outlet && outlets.some((o) => o.id === outlet)) {
+      setOutletId(outlet);
+    }
+  }, [searchParams, setBusinessDate, outlets]);
 
   const effectiveOutlet =
     outletId || resolveDefaultOutletId(outlets) || undefined;
