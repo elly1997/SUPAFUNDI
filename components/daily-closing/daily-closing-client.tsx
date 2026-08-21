@@ -233,13 +233,13 @@ export function DailyClosingClient({ outlets }: Props) {
             <KpiCard
               title="Expected closing"
               value={formatTzs(summary.expectedCash)}
-              subtitle="Includes sales, customer receipts, purchases & supplier pay"
+              subtitle="Cash drawer only (cash sales + customer cash − cash outs). M-Pesa does not change this."
               variant="inflow"
             />
             <KpiCard
               title="Cash sales"
               value={formatTzs(summary.cashSales)}
-              subtitle={`M-Pesa ${formatTzs(summary.mpesaSales)}`}
+              subtitle={`M-Pesa ${formatTzs(summary.mpesaSales)} (not in expected cash)`}
             />
             <KpiCard
               title="Cash out"

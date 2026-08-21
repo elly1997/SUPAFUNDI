@@ -1276,12 +1276,19 @@ export async function voidSale(
         await supabase.from("payments").delete().eq("id", p.id);
         continue;
       }
-      const { error: payUpdErr } = await supabase
+      const { data: reversedRows, error: payUpdErr } = await supabase
         .from("payments")
         .update({ status: "reversed" })
-        .eq("id", p.id);
+        .eq("id", p.id)
+        .select("id");
       if (payUpdErr) {
         return { ok: false, message: payUpdErr.message };
+      }
+      if (!reversedRows?.length) {
+        return {
+          ok: false,
+          message: "Could not reverse payment for this sale. Try again.",
+        };
       }
     }
 
@@ -1380,7 +1387,7 @@ export async function voidSale(
         ]);
     }
 
-    await supabase
+    const { data: cancelledSale, error: saleUpdErr } = await supabase
       .from("sales")
       .update({
         status: "cancelled",
@@ -1388,7 +1395,15 @@ export async function voidSale(
         balance_due: 0,
         amount_paid: 0,
       })
-      .eq("id", saleId);
+      .eq("id", saleId)
+      .select("id")
+      .maybeSingle();
+    if (saleUpdErr) {
+      return { ok: false, message: saleUpdErr.message };
+    }
+    if (!cancelledSale) {
+      return { ok: false, message: "Could not mark sale as voided." };
+    }
 
     if (sale.outlet_id) {
       await refreshDailyClosingSnapshot(

@@ -380,7 +380,28 @@ export async function computeDayCashSummary(
       .range(fromIdx, toIdx)
   );
 
+  /** Voided invoices must not inflate customer cash collections. */
+  const linkedSaleIds = Array.from(
+    new Set(
+      customerCash
+        .map((p) => p.sale_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    )
+  );
+  const voidedSaleIds = new Set<string>();
+  if (linkedSaleIds.length > 0) {
+    const { data: linkedSales } = await supabase
+      .from("sales")
+      .select("id, status")
+      .eq("organization_id", ctx.organizationId)
+      .in("id", linkedSaleIds);
+    for (const s of linkedSales ?? []) {
+      if (s.status === "cancelled") voidedSaleIds.add(s.id);
+    }
+  }
+
   for (const p of customerCash) {
+    if (p.sale_id && voidedSaleIds.has(p.sale_id)) continue;
     const amt = Number(p.amount);
     if (isCustomerDepositRef(p.reference_no)) {
       // Deposit allocation rows share the parent DEP- reference — skip slices.
@@ -415,12 +436,11 @@ export async function computeDayCashSummary(
 
   const closingBalance =
     existing?.closing_balance != null ? Number(existing.closing_balance) : null;
+  // Always derive variance from live expected cash (voids must refresh this).
   const variance =
-    existing?.variance != null
-      ? Number(existing.variance)
-      : closingBalance != null
-        ? roundMoney(closingBalance - expectedCash)
-        : null;
+    closingBalance != null
+      ? roundMoney(closingBalance - expectedCash)
+      : null;
 
   return {
     businessDate,
