@@ -142,7 +142,7 @@ export async function listPurchaseOrders(): Promise<PurchaseOrderListRow[]> {
   const supabase = await createServerSupabaseClient();
   const scopedOutletId = await resolveWorkingOutletId(ctx);
   if (!scopedOutletId) return [];
-  let query = supabase
+  const query = supabase
     .from("purchase_orders")
     .select(
       "id, reference_no, status, order_date, expected_date, total_amount, outlet_id, supplier_id, source, payment_status, payment_method, paid_at"

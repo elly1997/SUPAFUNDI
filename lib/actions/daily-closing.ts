@@ -13,7 +13,7 @@ import {
 import { buildCashVarianceJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { getOrganizationSettings } from "@/lib/actions/settings";
-import { fetchAllPaginated, fetchByInChunks } from "@/lib/supabase/query-chunks";
+import { fetchAllPaginated } from "@/lib/supabase/query-chunks";
 import { businessDayBounds, isoDateToTimestamptz } from "@/lib/utils/iso-date";
 import {
   isCustomerArPaymentRef,
