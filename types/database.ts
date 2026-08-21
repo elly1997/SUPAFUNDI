@@ -873,6 +873,41 @@ export type Database = {
         };
         Relationships: [];
       };
+      void_requests: {
+        Row: {
+          id: string;
+          organization_id: string;
+          outlet_id: string;
+          sale_id: string;
+          invoice_no: string;
+          reason: string | null;
+          status: string;
+          requested_by: string | null;
+          resolved_by: string | null;
+          resolved_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          organization_id: string;
+          outlet_id: string;
+          sale_id: string;
+          invoice_no: string;
+          reason?: string | null;
+          status?: string;
+          requested_by?: string | null;
+          resolved_by?: string | null;
+          resolved_at?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          status?: string;
+          reason?: string | null;
+          resolved_by?: string | null;
+          resolved_at?: string | null;
+        };
+        Relationships: [];
+      };
       grn_items: {
         Row: {
           id: string;
