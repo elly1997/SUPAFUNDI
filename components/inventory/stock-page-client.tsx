@@ -17,7 +17,6 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Fragment, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
@@ -80,7 +79,7 @@ import { useOrgSettingsStore } from "@/stores/orgSettingsStore";
 import { canManageSettings, isUserRole } from "@/lib/auth/roles";
 import { groupCatalogByCategory } from "@/lib/products/catalog-grouping";
 import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
-import { suggestPurchaseOrderFromStock } from "@/lib/actions/purchase-orders";
+import { SuggestPurchaseOrderDialog } from "@/components/inventory/suggest-purchase-order-dialog";
 import { downloadInventoryTemplate } from "@/lib/excel/inventory-template";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import type { StockLevelRow, StockStatus } from "@/lib/actions/stock";
@@ -108,13 +107,13 @@ export function StockPageClient() {
   const marginPct = useOrgSettingsStore((s) => s.defaultRetailMarginPct);
   const role = useAuthStore((s) => s.session?.role ?? null);
   const canManage = canManageSettings(isUserRole(role ?? "") ? role : null);
-  const router = useRouter();
   const queryClient = useQueryClient();
   const [statementRow, setStatementRow] = useState<StockLevelRow | null>(null);
   const [transferRow, setTransferRow] = useState<StockLevelRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<StockLevelRow | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const [editProductId, setEditProductId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [pendingChange, setPendingChange] = useState<PendingInventoryChange | null>(null);
@@ -323,20 +322,6 @@ export function StockPageClient() {
     },
   });
 
-  const suggestMut = useMutation({
-    mutationFn: () => {
-      if (!outletId) throw new Error("Select an outlet");
-      return suggestPurchaseOrderFromStock(outletId);
-    },
-    onSuccess: (r) => {
-      if (r.ok) {
-        toast.success("Draft purchase order created");
-        queryClient.invalidateQueries({ queryKey: ["purchase-orders"] });
-        router.push(`/inventory/purchase-orders/${r.poId}`);
-      } else toast.error(r.message);
-    },
-  });
-
   const attentionCount =
     (kpiSummary?.lowStockCount ?? 0) + (kpiSummary?.outOfStockCount ?? 0);
 
@@ -461,6 +446,15 @@ export function StockPageClient() {
             <FileSpreadsheet className="mr-2 size-4" />
             Import Excel
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!outletId}
+            onClick={() => setSuggestOpen(true)}
+          >
+            <ClipboardList className="mr-2 size-4" />
+            Suggest PO
+          </Button>
         </div>
       </div>
 
@@ -525,14 +519,10 @@ export function StockPageClient() {
             <Button
               size="sm"
               variant="secondary"
-              disabled={!outletId || suggestMut.isPending}
-              onClick={() => suggestMut.mutate()}
+              disabled={!outletId}
+              onClick={() => setSuggestOpen(true)}
             >
-              {suggestMut.isPending ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <ClipboardList className="mr-2 h-4 w-4" />
-              )}
+              <ClipboardList className="mr-2 h-4 w-4" />
               Suggest purchase order
             </Button>
           </CardContent>
@@ -757,6 +747,14 @@ export function StockPageClient() {
           void queryClient.invalidateQueries({ queryKey: ["incoming-transfers"] });
           void queryClient.invalidateQueries({ queryKey: ["stock-transfers"] });
         }}
+      />
+
+      <SuggestPurchaseOrderDialog
+        open={suggestOpen}
+        onOpenChange={setSuggestOpen}
+        outletId={outletId}
+        outletName={activeOutletName}
+        categories={categoryOptions.map((c) => ({ id: c.id, name: c.name }))}
       />
 
       <InventoryChangeReasonDialog

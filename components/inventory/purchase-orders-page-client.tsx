@@ -35,6 +35,7 @@ import { fetchOrgOutlets } from "@/lib/api/org-outlets-fetch";
 import { resolveDefaultOutletId } from "@/lib/outlets/resolve-default";
 import { PoPayDialog } from "@/components/procurement/po-pay-dialog";
 import { PoStatusBadges } from "@/components/procurement/po-status-badges";
+import { SuggestPurchaseOrderDialog } from "@/components/inventory/suggest-purchase-order-dialog";
 import { PricingRecommendationHint } from "@/components/inventory/pricing-recommendation-hint";
 import { createPurchaseOrderApi } from "@/lib/api/daily-ops-fetch";
 import { fetchProductPricingRecommendation } from "@/lib/api/pricing-insights-fetch";
@@ -68,6 +69,7 @@ export function PurchaseOrdersPageClient() {
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const defaultOutlet = useAuthStore((s) => s.activeOutletId);
   const [open, setOpen] = useState(false);
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const [outletId, setOutletId] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
@@ -210,10 +212,22 @@ export function PurchaseOrdersPageClient() {
           <ClipboardList className="size-5 text-primary" />
           Purchase orders
         </CardTitle>
-        <Button onClick={openDialog} className="rounded-lg">
-          <Plus className="mr-2 size-4" />
-          New PO
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="rounded-lg"
+            disabled={!defaultOutlet}
+            onClick={() => setSuggestOpen(true)}
+          >
+            <ClipboardList className="mr-2 size-4" />
+            Suggest PO
+          </Button>
+          <Button onClick={openDialog} className="rounded-lg">
+            <Plus className="mr-2 size-4" />
+            New PO
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         {isLoading ? (
@@ -573,6 +587,15 @@ export function PurchaseOrdersPageClient() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SuggestPurchaseOrderDialog
+        open={suggestOpen}
+        onOpenChange={setSuggestOpen}
+        outletId={defaultOutlet || outletId || null}
+        outletName={
+          outlets.find((o) => o.id === (defaultOutlet || outletId))?.name
+        }
+      />
     </Card>
   );
 }

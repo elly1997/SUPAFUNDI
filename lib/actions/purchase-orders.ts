@@ -20,6 +20,11 @@ function apDb(supabase: SupabaseClient) {
   };
 }
 import { listStockLevels } from "@/lib/actions/stock";
+import {
+  buildPurchaseSuggestionsFromStockRows,
+  type PurchaseSuggestionMode,
+  type PurchaseSuggestionResult,
+} from "@/lib/inventory/purchase-suggestions";
 import { roundMoney } from "@/lib/utils/calculations";
 import {
   computeTaxAmount,
@@ -882,22 +887,72 @@ export async function payPurchaseOrder(
 }
 
 /** Draft PO from low/out-of-stock items at an outlet. */
+export async function buildPurchaseSuggestions(
+  outletId: string,
+  options?: {
+    mode?: PurchaseSuggestionMode;
+    categoryId?: string | null;
+    lookbackDays?: number;
+    coverTargetDays?: number;
+    minSoldQty?: number;
+    maxLines?: number;
+  }
+): Promise<PurchaseSuggestionResult> {
+  const levels = await listStockLevels(outletId);
+  return buildPurchaseSuggestionsFromStockRows(outletId, levels, options ?? {});
+}
+
+const createFromSuggestionsInput = z.object({
+  outletId: z.string().uuid(),
+  supplierId: z.string().uuid().nullable().optional(),
+  notes: z.string().max(2000).optional(),
+  lines: z
+    .array(
+      z.object({
+        productId: z.string().uuid(),
+        orderedQty: z.number().positive(),
+        unitCost: z.number().nonnegative(),
+      })
+    )
+    .min(1),
+});
+
+export async function createPurchaseOrderFromSuggestions(
+  raw: z.infer<typeof createFromSuggestionsInput>
+): Promise<{ ok: true; poId: string } | { ok: false; message: string }> {
+  try {
+    const input = createFromSuggestionsInput.parse(raw);
+    const vatConfig = await getOrgVatConfig();
+    return createPurchaseOrder({
+      outletId: input.outletId,
+      supplierId: input.supplierId ?? undefined,
+      taxRate: effectiveTaxRate(vatConfig),
+      notes:
+        input.notes?.trim() ||
+        "Suggested from sales velocity and stock cover",
+      lines: input.lines,
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      message:
+        e instanceof Error ? e.message : "Create purchase order failed",
+    };
+  }
+}
+
+/** @deprecated Use buildPurchaseSuggestions + createPurchaseOrderFromSuggestions */
 export async function suggestPurchaseOrderFromStock(
   outletId: string,
   supplierId?: string | null
 ): Promise<{ ok: true; poId: string } | { ok: false; message: string }> {
-  const levels = await listStockLevels(outletId);
-  const lines = levels
-    .filter(
-      (r) =>
-        (r.stock_status === "out_of_stock" || r.stock_status === "low") &&
-        r.suggested_order_qty > 0 &&
-        r.cost_price >= 0
-    )
-    .map((r) => ({
-      productId: r.product_id,
-      orderedQty: r.suggested_order_qty,
-      unitCost: r.cost_price,
+  const preview = await buildPurchaseSuggestions(outletId, { mode: "depleted" });
+  const lines = preview.lines
+    .filter((l) => l.selected)
+    .map((l) => ({
+      productId: l.productId,
+      orderedQty: l.suggestedQty,
+      unitCost: l.unitCost,
     }));
   if (lines.length === 0) {
     return {
@@ -905,11 +960,9 @@ export async function suggestPurchaseOrderFromStock(
       message: "No low or out-of-stock items need replenishment.",
     };
   }
-  const vatConfig = await getOrgVatConfig();
-  return createPurchaseOrder({
+  return createPurchaseOrderFromSuggestions({
     outletId,
     supplierId: supplierId ?? undefined,
-    taxRate: effectiveTaxRate(vatConfig),
     notes: "Auto-suggested from stock levels",
     lines,
   });
