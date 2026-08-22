@@ -1,0 +1,16 @@
+{
+  "name": "SUPAFUNDI Hardware POS",
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "terminals": [
+    {
+      "name": "next-dev",
+      "command": "npm run dev",
+      "description": "Next.js dev server on http://localhost:3000"
+    }
+  ],
+  "ports": [
+    { "name": "Next.js app", "port": 3000 },
+    { "name": "Supabase API", "port": 54321 }
+  ]
+}
