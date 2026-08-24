@@ -145,7 +145,8 @@ async function fetchRetailPriceMap(
 async function fetchVelocityMap(
   supabase: Supabase,
   outletId: string,
-  onlyProductIds?: Set<string>
+  onlyProductIds?: Set<string>,
+  days = 30
 ) {
   const velocity = new Map<string, number>();
   const { data: velocityRows, error: velErr } = await (
@@ -160,7 +161,7 @@ async function fetchVelocityMap(
     }
   ).rpc("get_product_sales_velocity", {
     p_outlet_id: outletId,
-    p_days: 30,
+    p_days: days,
   });
   if (velErr) throw new Error(velErr.message);
   for (const row of velocityRows ?? []) {
@@ -169,6 +170,23 @@ async function fetchVelocityMap(
     velocity.set(pid, Number(row.qty) || 0);
   }
   return velocity;
+}
+
+/** Public helper for sales qty over a lookback window (completed sales). */
+export async function fetchOutletSalesVelocity(
+  outletId: string,
+  days = 30
+): Promise<Map<string, number>> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const { data: outlet } = await supabase
+    .from("outlets")
+    .select("id")
+    .eq("id", outletId)
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+  if (!outlet) return new Map();
+  return fetchVelocityMap(supabase, outletId, undefined, days);
 }
 
 function toStockLevelRow(

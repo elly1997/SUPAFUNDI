@@ -28,8 +28,15 @@ import {
   createPurchaseOrderFromSuggestions,
 } from "@/lib/actions/purchase-orders";
 import type { PurchaseSuggestionLine } from "@/lib/inventory/purchase-suggestions";
-import type { PurchaseSuggestionMode } from "@/lib/inventory/purchase-suggestions";
-import { reasonLabels } from "@/lib/inventory/purchase-suggestions";
+import type {
+  PurchaseSuggestionMode,
+  PurchaseSuggestionSort,
+} from "@/lib/inventory/purchase-suggestions";
+import {
+  DEAD_STOCK_DAYS,
+  reasonLabels,
+  sortPurchaseSuggestionLines,
+} from "@/lib/inventory/purchase-suggestions";
 import { formatTzs } from "@/lib/utils/currency";
 import { cn } from "@/lib/utils";
 
@@ -69,6 +76,24 @@ const MODE_OPTIONS: {
     label: "Depleted",
     hint: "Low or out of stock (includes slow movers)",
   },
+  {
+    value: "dead_stock",
+    label: "Dead stock",
+    hint: `On hand, no sales in ${DEAD_STOCK_DAYS}+ days`,
+  },
+];
+
+const SORT_OPTIONS: {
+  value: PurchaseSuggestionSort;
+  label: string;
+  deadLabel?: string;
+}[] = [
+  {
+    value: "velocity_desc",
+    label: "Highest movers first",
+    deadLabel: "Highest stock value first",
+  },
+  { value: "name_asc", label: "A–Z (name)" },
 ];
 
 function Metric({
@@ -111,6 +136,7 @@ export function SuggestPurchaseOrderDialog({
   const router = useRouter();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<PurchaseSuggestionMode>(defaultMode);
+  const [sort, setSort] = useState<PurchaseSuggestionSort>("velocity_desc");
   const [categoryId, setCategoryId] = useState<string>("all");
   const [supplierId, setSupplierId] = useState<string>("");
   const [lines, setLines] = useState<PurchaseSuggestionLine[]>([]);
@@ -128,6 +154,7 @@ export function SuggestPurchaseOrderDialog({
       return buildPurchaseSuggestions(outletId, {
         mode,
         categoryId: categoryId === "all" ? null : categoryId,
+        sort: "velocity_desc",
       });
     },
     enabled: open && !!outletId,
@@ -136,17 +163,32 @@ export function SuggestPurchaseOrderDialog({
   useEffect(() => {
     if (!open) return;
     setMode(defaultMode);
+    setSort("velocity_desc");
     setCategoryId("all");
     setSupplierId("");
   }, [open, defaultMode]);
 
   useEffect(() => {
     if (suggestQuery.data?.lines) {
-      setLines(suggestQuery.data.lines.map((l) => ({ ...l })));
+      setLines(
+        sortPurchaseSuggestionLines(
+          suggestQuery.data.lines.map((l) => ({ ...l })),
+          sort
+        )
+      );
     } else {
       setLines([]);
     }
+    // Re-apply when data loads; sort changes handled below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sort applied in next effect
   }, [suggestQuery.data]);
+
+  useEffect(() => {
+    setLines((prev) => sortPurchaseSuggestionLines(prev, sort));
+  }, [sort]);
+
+  const isDeadStock = mode === "dead_stock";
+  const soldLabel = isDeadStock ? `Sold ${DEAD_STOCK_DAYS}d` : "Sold 30d";
 
   const selectedLines = useMemo(
     () => lines.filter((l) => l.selected && l.suggestedQty > 0),
@@ -232,11 +274,13 @@ export function SuggestPurchaseOrderDialog({
           </DialogTitle>
           <p className="text-xs text-muted-foreground sm:text-sm">
             {outletName ? `${outletName} · ` : ""}
-            Restock to ~30 days cover at current sell rate (last 30 days).
+            {isDeadStock
+              ? `Items on hand with no sales in the last ${DEAD_STOCK_DAYS} days (review only — not auto-ordered).`
+              : "Restock to ~30 days cover at current sell rate (last 30 days)."}
           </p>
         </DialogHeader>
 
-        <div className="grid shrink-0 gap-3 border-b border-border px-4 py-3 sm:grid-cols-3 sm:px-6">
+        <div className="grid shrink-0 gap-3 border-b border-border px-4 py-3 sm:grid-cols-2 lg:grid-cols-4 sm:px-6">
           <div className="min-w-0">
             <Label className="text-xs text-muted-foreground">Mode</Label>
             <Select
@@ -252,6 +296,26 @@ export function SuggestPurchaseOrderDialog({
                 {MODE_OPTIONS.map((o) => (
                   <SelectItem key={o.value} value={o.value}>
                     {o.label} — {o.hint}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="min-w-0">
+            <Label className="text-xs text-muted-foreground">Sort</Label>
+            <Select
+              value={sort}
+              onValueChange={(v) => {
+                if (v) setSort(v as PurchaseSuggestionSort);
+              }}
+            >
+              <SelectTrigger className="mt-1 h-10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SORT_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {isDeadStock && o.deadLabel ? o.deadLabel : o.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -278,7 +342,7 @@ export function SuggestPurchaseOrderDialog({
               </Select>
             </div>
           ) : (
-            <div className="hidden sm:block" />
+            <div className="hidden lg:block" />
           )}
           <div className="min-w-0">
             <Label className="text-xs text-muted-foreground">
@@ -317,8 +381,9 @@ export function SuggestPurchaseOrderDialog({
             </p>
           ) : lines.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
-              No products match this filter. Try Depleted mode or another
-              category.
+              {isDeadStock
+                ? `No on-hand products with zero sales in the last ${DEAD_STOCK_DAYS} days.`
+                : "No products match this filter. Try Depleted or Dead stock, or another category."}
             </p>
           ) : (
             <div className="space-y-3">
@@ -336,8 +401,19 @@ export function SuggestPurchaseOrderDialog({
                   Select all ({lines.length})
                 </label>
                 <p className="text-xs text-muted-foreground">
-                  Target cover:{" "}
-                  <span className="font-mono text-foreground">30 days</span>
+                  {isDeadStock ? (
+                    <>
+                      No sales in{" "}
+                      <span className="font-mono text-foreground">
+                        {DEAD_STOCK_DAYS}+ days
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      Target cover:{" "}
+                      <span className="font-mono text-foreground">30 days</span>
+                    </>
+                  )}
                 </p>
               </div>
 
@@ -346,12 +422,14 @@ export function SuggestPurchaseOrderDialog({
                 <span />
                 <span>Product</span>
                 <span className="text-right">On hand</span>
-                <span className="text-right">Sold 30d</span>
+                <span className="text-right">{soldLabel}</span>
                 <span className="text-right">Avg / day</span>
                 <span className="text-right">Cover</span>
                 <span className="text-right">Reorder</span>
                 <span className="text-right">Order qty</span>
-                <span className="text-right">Est. cost</span>
+                <span className="text-right">
+                  {isDeadStock ? "Stock value" : "Est. cost"}
+                </span>
               </div>
 
               <ul className="space-y-2">
@@ -404,25 +482,33 @@ export function SuggestPurchaseOrderDialog({
                             value={`${line.quantity} ${line.unit}`}
                           />
                           <Metric
-                            label="Sold 30d"
-                            value={String(Math.round(line.soldInWindow))}
+                            label={soldLabel}
+                            value={String(
+                              Math.round(
+                                isDeadStock ? line.sold90 : line.soldInWindow
+                              )
+                            )}
                           />
                           <Metric
                             label="Avg / day"
                             value={
-                              line.avgDailySales > 0
-                                ? line.avgDailySales.toFixed(1)
-                                : "—"
+                              isDeadStock
+                                ? "—"
+                                : line.avgDailySales > 0
+                                  ? line.avgDailySales.toFixed(1)
+                                  : "—"
                             }
                           />
                           <Metric
                             label="Cover"
                             value={
-                              line.daysOfCover != null
-                                ? `${line.daysOfCover}d`
-                                : "—"
+                              isDeadStock
+                                ? "—"
+                                : line.daysOfCover != null
+                                  ? `${line.daysOfCover}d`
+                                  : "—"
                             }
-                            warn={coverWarn}
+                            warn={!isDeadStock && coverWarn}
                           />
                           <Metric
                             label="Reorder"
@@ -433,8 +519,12 @@ export function SuggestPurchaseOrderDialog({
                             }
                           />
                           <Metric
-                            label="Unit cost"
-                            value={formatTzs(line.unitCost)}
+                            label={isDeadStock ? "Stock value" : "Unit cost"}
+                            value={
+                              isDeadStock
+                                ? formatTzs(line.quantity * line.unitCost)
+                                : formatTzs(line.unitCost)
+                            }
                           />
                         </div>
                         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -505,22 +595,30 @@ export function SuggestPurchaseOrderDialog({
                           </span>
                         </p>
                         <p className="text-right font-mono text-sm tabular-nums">
-                          {Math.round(line.soldInWindow)}
+                          {Math.round(
+                            isDeadStock ? line.sold90 : line.soldInWindow
+                          )}
                         </p>
                         <p className="text-right font-mono text-sm tabular-nums">
-                          {line.avgDailySales > 0
-                            ? line.avgDailySales.toFixed(1)
-                            : "—"}
+                          {isDeadStock
+                            ? "—"
+                            : line.avgDailySales > 0
+                              ? line.avgDailySales.toFixed(1)
+                              : "—"}
                         </p>
                         <p
                           className={cn(
                             "text-right font-mono text-sm tabular-nums",
-                            coverWarn && "font-semibold text-warning"
+                            !isDeadStock &&
+                              coverWarn &&
+                              "font-semibold text-warning"
                           )}
                         >
-                          {line.daysOfCover != null
-                            ? `${line.daysOfCover}d`
-                            : "—"}
+                          {isDeadStock
+                            ? "—"
+                            : line.daysOfCover != null
+                              ? `${line.daysOfCover}d`
+                              : "—"}
                         </p>
                         <p className="text-right font-mono text-sm tabular-nums text-muted-foreground">
                           {line.reorderPoint > 0 ? line.reorderPoint : "—"}
@@ -540,7 +638,11 @@ export function SuggestPurchaseOrderDialog({
                           }
                         />
                         <p className="text-right font-mono text-sm font-medium tabular-nums">
-                          {formatTzs(line.suggestedQty * line.unitCost)}
+                          {formatTzs(
+                            isDeadStock
+                              ? line.quantity * line.unitCost
+                              : line.suggestedQty * line.unitCost
+                          )}
                         </p>
                       </div>
                     </li>

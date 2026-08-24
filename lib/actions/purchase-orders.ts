@@ -20,11 +20,13 @@ function apDb(supabase: SupabaseClient) {
     from: (table: string) => ReturnType<SupabaseClient["from"]>;
   };
 }
-import { listStockLevels } from "@/lib/actions/stock";
+import { fetchOutletSalesVelocity, listStockLevels } from "@/lib/actions/stock";
 import {
   buildPurchaseSuggestionsFromStockRows,
+  DEAD_STOCK_DAYS,
   type PurchaseSuggestionMode,
   type PurchaseSuggestionResult,
+  type PurchaseSuggestionSort,
 } from "@/lib/inventory/purchase-suggestions";
 import { roundMoney } from "@/lib/utils/calculations";
 import {
@@ -904,10 +906,18 @@ export async function buildPurchaseSuggestions(
     coverTargetDays?: number;
     minSoldQty?: number;
     maxLines?: number;
+    sort?: PurchaseSuggestionSort;
   }
 ): Promise<PurchaseSuggestionResult> {
   const levels = await listStockLevels(outletId);
-  return buildPurchaseSuggestionsFromStockRows(outletId, levels, options ?? {});
+  const sold90ByProductId = await fetchOutletSalesVelocity(
+    outletId,
+    DEAD_STOCK_DAYS
+  );
+  return buildPurchaseSuggestionsFromStockRows(outletId, levels, {
+    ...(options ?? {}),
+    sold90ByProductId,
+  });
 }
 
 const createFromSuggestionsInput = z.object({
