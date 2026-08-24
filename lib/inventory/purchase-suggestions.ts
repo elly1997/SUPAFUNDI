@@ -40,6 +40,8 @@ export type PurchaseSuggestionLine = {
   reorderPoint: number;
   suggestedQty: number;
   unitCost: number;
+  /** On-hand qty × unit cost (inventory valuation). */
+  stockValue: number;
   lineCost: number;
   reasons: PurchaseSuggestionReason[];
   urgencyScore: number;
@@ -66,6 +68,8 @@ export type PurchaseSuggestionResult = {
   sort: PurchaseSuggestionSort;
   lines: PurchaseSuggestionLine[];
   totalEstimatedCost: number;
+  /** Sum of on-hand stock value for all suggestion lines (dead-stock review). */
+  totalStockValue: number;
 };
 
 function soldInWindowFromRow(
@@ -105,9 +109,11 @@ export { reasonLabels };
 
 export function sortPurchaseSuggestionLines(
   lines: PurchaseSuggestionLine[],
-  sort: PurchaseSuggestionSort
+  sort: PurchaseSuggestionSort,
+  options?: { deadStock?: boolean }
 ): PurchaseSuggestionLine[] {
   const copy = [...lines];
+  const deadStock = options?.deadStock ?? false;
   if (sort === "name_asc") {
     copy.sort((a, b) =>
       a.productName.localeCompare(b.productName, undefined, {
@@ -116,7 +122,11 @@ export function sortPurchaseSuggestionLines(
     );
   } else {
     copy.sort((a, b) => {
-      if (b.soldInWindow !== a.soldInWindow) {
+      if (deadStock) {
+        if (b.stockValue !== a.stockValue) {
+          return b.stockValue - a.stockValue;
+        }
+      } else if (b.soldInWindow !== a.soldInWindow) {
         return b.soldInWindow - a.soldInWindow;
       }
       if (b.urgencyScore !== a.urgencyScore) {
@@ -258,6 +268,8 @@ export function buildPurchaseSuggestionsFromStockRows(
 
     const isDead = mode === "dead_stock";
     const suggestedQty = isDead ? 0 : row.suggested_order_qty;
+    const stockValue =
+      Math.round(row.quantity * row.cost_price * 100) / 100;
     candidates.push({
       productId: row.product_id,
       productName: row.product_name,
@@ -273,21 +285,25 @@ export function buildPurchaseSuggestionsFromStockRows(
       reorderPoint: row.reorder_point,
       suggestedQty,
       unitCost: row.cost_price,
+      stockValue,
       lineCost: Math.round(suggestedQty * row.cost_price * 100) / 100,
       reasons,
       urgencyScore: isDead
-        ? row.quantity * Math.max(row.cost_price, 1)
+        ? stockValue
         : urgencyScore(row, sold, coverTargetDays),
       /** Dead stock is review-only by default — do not auto-order. */
       selected: !isDead,
     });
   }
 
-  const sorted = sortPurchaseSuggestionLines(candidates, sort);
+  const sorted = sortPurchaseSuggestionLines(candidates, sort, {
+    deadStock: mode === "dead_stock",
+  });
   const lines = sorted.slice(0, maxLines);
   const totalEstimatedCost = lines
     .filter((l) => l.selected)
     .reduce((s, l) => s + l.lineCost, 0);
+  const totalStockValue = lines.reduce((s, l) => s + l.stockValue, 0);
 
   return {
     outletId,
@@ -297,5 +313,6 @@ export function buildPurchaseSuggestionsFromStockRows(
     sort,
     lines,
     totalEstimatedCost: Math.round(totalEstimatedCost * 100) / 100,
+    totalStockValue: Math.round(totalStockValue * 100) / 100,
   };
 }

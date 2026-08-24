@@ -173,7 +173,8 @@ export function SuggestPurchaseOrderDialog({
       setLines(
         sortPurchaseSuggestionLines(
           suggestQuery.data.lines.map((l) => ({ ...l })),
-          sort
+          sort,
+          { deadStock: mode === "dead_stock" }
         )
       );
     } else {
@@ -184,8 +185,10 @@ export function SuggestPurchaseOrderDialog({
   }, [suggestQuery.data]);
 
   useEffect(() => {
-    setLines((prev) => sortPurchaseSuggestionLines(prev, sort));
-  }, [sort]);
+    setLines((prev) =>
+      sortPurchaseSuggestionLines(prev, sort, { deadStock: mode === "dead_stock" })
+    );
+  }, [sort, mode]);
 
   const isDeadStock = mode === "dead_stock";
   const soldLabel = isDeadStock ? `Sold ${DEAD_STOCK_DAYS}d` : "Sold 30d";
@@ -198,6 +201,11 @@ export function SuggestPurchaseOrderDialog({
   const totalCost = useMemo(
     () => selectedLines.reduce((s, l) => s + l.suggestedQty * l.unitCost, 0),
     [selectedLines]
+  );
+
+  const totalDeadStockValue = useMemo(
+    () => lines.reduce((s, l) => s + l.stockValue, 0),
+    [lines]
   );
 
   const allSelected =
@@ -387,6 +395,21 @@ export function SuggestPurchaseOrderDialog({
             </p>
           ) : (
             <div className="space-y-3">
+              {isDeadStock ? (
+                <div className="rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 sm:px-4">
+                  <p className="text-sm text-foreground">
+                    <span className="font-semibold">{lines.length}</span>{" "}
+                    {lines.length === 1 ? "SKU" : "SKUs"} on hand with no sales
+                    in {DEAD_STOCK_DAYS}+ days
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
+                    Total dead stock value{" "}
+                    <span className="font-mono text-base font-semibold tabular-nums text-warning">
+                      {formatTzs(totalDeadStockValue)}
+                    </span>
+                  </p>
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <label className="flex items-center gap-2 text-sm text-muted-foreground">
                   <input
@@ -522,7 +545,7 @@ export function SuggestPurchaseOrderDialog({
                             label={isDeadStock ? "Stock value" : "Unit cost"}
                             value={
                               isDeadStock
-                                ? formatTzs(line.quantity * line.unitCost)
+                                ? formatTzs(line.stockValue)
                                 : formatTzs(line.unitCost)
                             }
                           />
@@ -549,10 +572,14 @@ export function SuggestPurchaseOrderDialog({
                           </div>
                           <div className="text-right">
                             <p className="text-[10px] uppercase text-muted-foreground">
-                              Line cost
+                              {isDeadStock ? "Stock value" : "Line cost"}
                             </p>
                             <p className="font-mono text-base font-semibold tabular-nums">
-                              {formatTzs(line.suggestedQty * line.unitCost)}
+                              {formatTzs(
+                                isDeadStock
+                                  ? line.stockValue
+                                  : line.suggestedQty * line.unitCost
+                              )}
                             </p>
                           </div>
                         </div>
@@ -639,9 +666,7 @@ export function SuggestPurchaseOrderDialog({
                         />
                         <p className="text-right font-mono text-sm font-medium tabular-nums">
                           {formatTzs(
-                            isDeadStock
-                              ? line.quantity * line.unitCost
-                              : line.suggestedQty * line.unitCost
+                            isDeadStock ? line.stockValue : line.lineCost
                           )}
                         </p>
                       </div>
@@ -655,10 +680,31 @@ export function SuggestPurchaseOrderDialog({
 
         <DialogFooter className="mx-0 mb-0 shrink-0 flex-col gap-3 rounded-none border-t border-border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <p className="text-sm text-muted-foreground">
-            {selectedLines.length} selected ·{" "}
-            <span className="font-mono text-base font-semibold text-foreground">
-              {formatTzs(totalCost)}
-            </span>
+            {isDeadStock ? (
+              <>
+                {lines.length} {lines.length === 1 ? "SKU" : "SKUs"} · Total
+                value{" "}
+                <span className="font-mono text-base font-semibold text-warning">
+                  {formatTzs(totalDeadStockValue)}
+                </span>
+                {selectedLines.length > 0 ? (
+                  <>
+                    {" "}
+                    · {selectedLines.length} selected for PO{" "}
+                    <span className="font-mono text-base font-semibold text-foreground">
+                      {formatTzs(totalCost)}
+                    </span>
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <>
+                {selectedLines.length} selected ·{" "}
+                <span className="font-mono text-base font-semibold text-foreground">
+                  {formatTzs(totalCost)}
+                </span>
+              </>
+            )}
           </p>
           <div className="flex w-full gap-2 sm:w-auto">
             <Button
