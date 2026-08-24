@@ -22,14 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { fetchSupplierOptions } from "@/lib/api/suppliers-fetch";
 import {
   buildPurchaseSuggestions,
@@ -79,6 +71,35 @@ const MODE_OPTIONS: {
   },
 ];
 
+function Metric({
+  label,
+  value,
+  mono = true,
+  warn = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  warn?: boolean;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "truncate text-sm text-foreground",
+          mono && "font-mono tabular-nums",
+          warn && "font-semibold text-warning"
+        )}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
 export function SuggestPurchaseOrderDialog({
   open,
   onOpenChange,
@@ -101,12 +122,7 @@ export function SuggestPurchaseOrderDialog({
   });
 
   const suggestQuery = useQuery({
-    queryKey: [
-      "purchase-suggestions",
-      outletId,
-      mode,
-      categoryId,
-    ],
+    queryKey: ["purchase-suggestions", outletId, mode, categoryId],
     queryFn: () => {
       if (!outletId) throw new Error("Select an outlet");
       return buildPurchaseSuggestions(outletId, {
@@ -138,13 +154,13 @@ export function SuggestPurchaseOrderDialog({
   );
 
   const totalCost = useMemo(
-    () =>
-      selectedLines.reduce(
-        (s, l) => s + l.suggestedQty * l.unitCost,
-        0
-      ),
+    () => selectedLines.reduce((s, l) => s + l.suggestedQty * l.unitCost, 0),
     [selectedLines]
   );
+
+  const allSelected =
+    lines.length > 0 && lines.every((l) => l.selected);
+  const someSelected = lines.some((l) => l.selected) && !allSelected;
 
   const createMut = useMutation({
     mutationFn: () => {
@@ -197,24 +213,31 @@ export function SuggestPurchaseOrderDialog({
     );
   }
 
+  function toggleAll(selected: boolean) {
+    setLines((prev) => prev.map((l) => ({ ...l, selected })));
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] max-w-4xl flex-col gap-0 overflow-hidden p-0">
-        <DialogHeader className="border-b border-border px-6 py-4">
-          <DialogTitle className="flex items-center gap-2">
-            <ClipboardList className="size-5 text-primary" />
+      <DialogContent
+        className={cn(
+          "flex h-[min(92dvh,900px)] w-[calc(100%-1rem)] flex-col gap-0 overflow-hidden p-0",
+          "max-w-[calc(100%-1rem)] sm:max-w-[min(1120px,calc(100%-2rem))]"
+        )}
+      >
+        <DialogHeader className="shrink-0 space-y-1 border-b border-border px-4 py-3 sm:px-6 sm:py-4">
+          <DialogTitle className="flex items-center gap-2 pr-8 text-base sm:text-lg">
+            <ClipboardList className="size-5 shrink-0 text-primary" />
             Suggest purchase order
           </DialogTitle>
-          <p className="text-sm text-muted-foreground">
-            {outletName
-              ? `${outletName} · `
-              : ""}
+          <p className="text-xs text-muted-foreground sm:text-sm">
+            {outletName ? `${outletName} · ` : ""}
             Restock to ~30 days cover at current sell rate (last 30 days).
           </p>
         </DialogHeader>
 
-        <div className="flex flex-wrap gap-3 border-b border-border px-6 py-3">
-          <div className="min-w-[10rem] flex-1">
+        <div className="grid shrink-0 gap-3 border-b border-border px-4 py-3 sm:grid-cols-3 sm:px-6">
+          <div className="min-w-0">
             <Label className="text-xs text-muted-foreground">Mode</Label>
             <Select
               value={mode}
@@ -222,7 +245,7 @@ export function SuggestPurchaseOrderDialog({
                 if (v) setMode(v as PurchaseSuggestionMode);
               }}
             >
-              <SelectTrigger className="mt-1 h-9">
+              <SelectTrigger className="mt-1 h-10">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -235,10 +258,13 @@ export function SuggestPurchaseOrderDialog({
             </Select>
           </div>
           {categories.length > 0 ? (
-            <div className="min-w-[10rem] flex-1">
+            <div className="min-w-0">
               <Label className="text-xs text-muted-foreground">Category</Label>
-              <Select value={categoryId} onValueChange={(v) => setCategoryId(v ?? "all")}>
-                <SelectTrigger className="mt-1 h-9">
+              <Select
+                value={categoryId}
+                onValueChange={(v) => setCategoryId(v ?? "all")}
+              >
+                <SelectTrigger className="mt-1 h-10">
                   <SelectValue placeholder="All categories" />
                 </SelectTrigger>
                 <SelectContent>
@@ -251,8 +277,10 @@ export function SuggestPurchaseOrderDialog({
                 </SelectContent>
               </Select>
             </div>
-          ) : null}
-          <div className="min-w-[10rem] flex-1">
+          ) : (
+            <div className="hidden sm:block" />
+          )}
+          <div className="min-w-0">
             <Label className="text-xs text-muted-foreground">
               Supplier (optional)
             </Label>
@@ -260,7 +288,7 @@ export function SuggestPurchaseOrderDialog({
               value={supplierId || "none"}
               onValueChange={(v) => setSupplierId(v && v !== "none" ? v : "")}
             >
-              <SelectTrigger className="mt-1 h-9">
+              <SelectTrigger className="mt-1 h-10">
                 <SelectValue placeholder="Assign later" />
               </SelectTrigger>
               <SelectContent>
@@ -275,7 +303,7 @@ export function SuggestPurchaseOrderDialog({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto px-6 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-6">
           {suggestQuery.isLoading ? (
             <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" />
@@ -293,108 +321,255 @@ export function SuggestPurchaseOrderDialog({
               category.
             </p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10" />
-                  <TableHead>Product</TableHead>
-                  <TableHead className="text-right">On hand</TableHead>
-                  <TableHead className="text-right">Sold 30d</TableHead>
-                  <TableHead className="text-right">Cover</TableHead>
-                  <TableHead className="text-right">Order</TableHead>
-                  <TableHead className="text-right">Est. cost</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {lines.map((line) => (
-                  <TableRow
-                    key={line.productId}
-                    className={cn(!line.selected && "opacity-50")}
-                  >
-                    <TableCell>
-                      <input
-                        type="checkbox"
-                        className="size-4 rounded border-border"
-                        checked={line.selected}
-                        onChange={(e) =>
-                          toggleLine(line.productId, e.target.checked)
-                        }
-                        aria-label={`Include ${line.productName}`}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <div className="font-medium">{line.productName}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {line.categoryName}
-                        {line.code ? ` · ${line.code}` : ""}
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-border"
+                    checked={allSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someSelected;
+                    }}
+                    onChange={(e) => toggleAll(e.target.checked)}
+                  />
+                  Select all ({lines.length})
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  Target cover:{" "}
+                  <span className="font-mono text-foreground">30 days</span>
+                </p>
+              </div>
+
+              {/* Sticky column header — desktop */}
+              <div className="sticky top-0 z-10 hidden rounded-lg border border-border bg-card/95 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground backdrop-blur md:grid md:grid-cols-[2rem_minmax(12rem,1.6fr)_repeat(6,minmax(4.5rem,0.7fr))_6.5rem] md:gap-2">
+                <span />
+                <span>Product</span>
+                <span className="text-right">On hand</span>
+                <span className="text-right">Sold 30d</span>
+                <span className="text-right">Avg / day</span>
+                <span className="text-right">Cover</span>
+                <span className="text-right">Reorder</span>
+                <span className="text-right">Order qty</span>
+                <span className="text-right">Est. cost</span>
+              </div>
+
+              <ul className="space-y-2">
+                {lines.map((line) => {
+                  const coverWarn =
+                    line.daysOfCover != null && line.daysOfCover < 30;
+                  return (
+                    <li
+                      key={line.productId}
+                      className={cn(
+                        "rounded-lg border border-border bg-card px-3 py-3 transition-opacity",
+                        !line.selected && "opacity-55"
+                      )}
+                    >
+                      {/* Mobile / tablet card */}
+                      <div className="space-y-3 md:hidden">
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            className="mt-1 size-4 shrink-0 rounded border-border"
+                            checked={line.selected}
+                            onChange={(e) =>
+                              toggleLine(line.productId, e.target.checked)
+                            }
+                            aria-label={`Include ${line.productName}`}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium leading-snug text-foreground">
+                              {line.productName}
+                            </p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              {line.categoryName}
+                              {line.code ? ` · ${line.code}` : ""}
+                            </p>
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {reasonLabels(line.reasons).map((label) => (
+                                <span
+                                  key={label}
+                                  className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+                                >
+                                  {label}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-2 rounded-md bg-surface-1/60 p-2.5 xs:grid-cols-3 sm:grid-cols-3">
+                          <Metric
+                            label="On hand"
+                            value={`${line.quantity} ${line.unit}`}
+                          />
+                          <Metric
+                            label="Sold 30d"
+                            value={String(Math.round(line.soldInWindow))}
+                          />
+                          <Metric
+                            label="Avg / day"
+                            value={
+                              line.avgDailySales > 0
+                                ? line.avgDailySales.toFixed(1)
+                                : "—"
+                            }
+                          />
+                          <Metric
+                            label="Cover"
+                            value={
+                              line.daysOfCover != null
+                                ? `${line.daysOfCover}d`
+                                : "—"
+                            }
+                            warn={coverWarn}
+                          />
+                          <Metric
+                            label="Reorder"
+                            value={
+                              line.reorderPoint > 0
+                                ? String(line.reorderPoint)
+                                : "—"
+                            }
+                          />
+                          <Metric
+                            label="Unit cost"
+                            value={formatTzs(line.unitCost)}
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-end justify-between gap-3">
+                          <div>
+                            <Label className="text-[10px] uppercase text-muted-foreground">
+                              Order qty
+                            </Label>
+                            <Input
+                              type="number"
+                              min={0}
+                              step={1}
+                              className="mt-1 h-10 w-28 font-mono text-base"
+                              value={line.suggestedQty}
+                              disabled={!line.selected}
+                              onChange={(e) =>
+                                updateLineQty(
+                                  line.productId,
+                                  Math.max(0, Number(e.target.value) || 0)
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[10px] uppercase text-muted-foreground">
+                              Line cost
+                            </p>
+                            <p className="font-mono text-base font-semibold tabular-nums">
+                              {formatTzs(line.suggestedQty * line.unitCost)}
+                            </p>
+                          </div>
+                        </div>
                       </div>
-                      <div className="mt-0.5 flex flex-wrap gap-1">
-                        {reasonLabels(line.reasons).map((label) => (
-                          <span
-                            key={label}
-                            className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
-                          >
-                            {label}
+
+                      {/* Desktop row */}
+                      <div className="hidden items-center gap-2 md:grid md:grid-cols-[2rem_minmax(12rem,1.6fr)_repeat(6,minmax(4.5rem,0.7fr))_6.5rem]">
+                        <input
+                          type="checkbox"
+                          className="size-4 justify-self-center rounded border-border"
+                          checked={line.selected}
+                          onChange={(e) =>
+                            toggleLine(line.productId, e.target.checked)
+                          }
+                          aria-label={`Include ${line.productName}`}
+                        />
+                        <div className="min-w-0">
+                          <p className="truncate font-medium leading-snug">
+                            {line.productName}
+                          </p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {line.categoryName}
+                            {line.code ? ` · ${line.code}` : ""}
+                          </p>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {reasonLabels(line.reasons).map((label) => (
+                              <span
+                                key={label}
+                                className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+                              >
+                                {label}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <p className="text-right font-mono text-sm tabular-nums">
+                          {line.quantity}
+                          <span className="ml-1 text-xs text-muted-foreground">
+                            {line.unit}
                           </span>
-                        ))}
+                        </p>
+                        <p className="text-right font-mono text-sm tabular-nums">
+                          {Math.round(line.soldInWindow)}
+                        </p>
+                        <p className="text-right font-mono text-sm tabular-nums">
+                          {line.avgDailySales > 0
+                            ? line.avgDailySales.toFixed(1)
+                            : "—"}
+                        </p>
+                        <p
+                          className={cn(
+                            "text-right font-mono text-sm tabular-nums",
+                            coverWarn && "font-semibold text-warning"
+                          )}
+                        >
+                          {line.daysOfCover != null
+                            ? `${line.daysOfCover}d`
+                            : "—"}
+                        </p>
+                        <p className="text-right font-mono text-sm tabular-nums text-muted-foreground">
+                          {line.reorderPoint > 0 ? line.reorderPoint : "—"}
+                        </p>
+                        <Input
+                          type="number"
+                          min={0}
+                          step={1}
+                          className="h-9 w-full justify-self-end text-right font-mono"
+                          value={line.suggestedQty}
+                          disabled={!line.selected}
+                          onChange={(e) =>
+                            updateLineQty(
+                              line.productId,
+                              Math.max(0, Number(e.target.value) || 0)
+                            )
+                          }
+                        />
+                        <p className="text-right font-mono text-sm font-medium tabular-nums">
+                          {formatTzs(line.suggestedQty * line.unitCost)}
+                        </p>
                       </div>
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      {line.quantity} {line.unit}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      {Math.round(line.soldInWindow)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      {line.daysOfCover != null
-                        ? `${line.daysOfCover}d`
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Input
-                        type="number"
-                        min={0}
-                        step={1}
-                        className="ml-auto h-8 w-20 text-right font-mono"
-                        value={line.suggestedQty}
-                        disabled={!line.selected}
-                        onChange={(e) =>
-                          updateLineQty(
-                            line.productId,
-                            Math.max(0, Number(e.target.value) || 0)
-                          )
-                        }
-                      />
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      {formatTzs(line.suggestedQty * line.unitCost)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           )}
         </div>
 
-        <DialogFooter className="flex-row items-center justify-between border-t border-border px-6 py-4">
+        <DialogFooter className="mx-0 mb-0 shrink-0 flex-col gap-3 rounded-none border-t border-border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <p className="text-sm text-muted-foreground">
-            {selectedLines.length} line
-            {selectedLines.length === 1 ? "" : "s"} ·{" "}
-            <span className="font-mono font-medium text-foreground">
+            {selectedLines.length} selected ·{" "}
+            <span className="font-mono text-base font-semibold text-foreground">
               {formatTzs(totalCost)}
             </span>
           </p>
-          <div className="flex gap-2">
+          <div className="flex w-full gap-2 sm:w-auto">
             <Button
               type="button"
               variant="outline"
+              className="flex-1 sm:flex-none"
               onClick={() => onOpenChange(false)}
             >
               Cancel
             </Button>
             <Button
               type="button"
-              className="btn-primary-gradient"
+              className="btn-primary-gradient flex-1 sm:flex-none"
               disabled={
                 !outletId ||
                 selectedLines.length === 0 ||
