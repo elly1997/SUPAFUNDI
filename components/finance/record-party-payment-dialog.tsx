@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { fetchCustomerOpenInvoices } from "@/lib/api/party-statements-fetch";
 import { fetchPaymentAccounts } from "@/lib/api/banking-fetch";
+import { filterCollectionAccountsForMethod } from "@/lib/finance/collection-accounts";
 async function paySupplierApi(
   params: Parameters<typeof import("@/lib/actions/suppliers").paySupplier>[0]
 ) {
@@ -46,9 +47,16 @@ async function recordCustomerPaymentApi(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
   });
-  return res.json() as Promise<
-    { ok: true } | { ok: false; message: string }
-  >;
+  const body = (await res.json()) as
+    | { ok: true }
+    | { ok: false; message: string };
+  if (!res.ok) {
+    return {
+      ok: false as const,
+      message: body.ok === false ? body.message : "Payment failed",
+    };
+  }
+  return body;
 }
 import { formatDateEAT, formatTzs } from "@/lib/utils/currency";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
@@ -74,6 +82,7 @@ export function RecordPartyPaymentDialog({
   billId,
   onSuccess,
 }: Props) {
+  const queryClient = useQueryClient();
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const [amount, setAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(businessDate);
@@ -89,21 +98,10 @@ export function RecordPartyPaymentDialog({
     method === "mpesa" || method === "bank_transfer" || method === "cheque";
 
   const { data: accounts = [] } = useQuery({
-    queryKey: ["payment-accounts", "outbound", method],
+    queryKey: ["payment-accounts", "party-payment", method],
     enabled: open && needsBank,
-    queryFn: async () => {
-      const all = await fetchPaymentAccounts();
-      if (method === "bank_transfer" || method === "cheque") {
-        return all.filter((a) => a.is_active && a.account_type === "bank");
-      }
-      return all.filter(
-        (a) =>
-          a.is_active &&
-          (a.account_type === "mpesa" ||
-            a.account_type === "lipa" ||
-            a.account_type === "till")
-      );
-    },
+    queryFn: fetchPaymentAccounts,
+    select: (all) => filterCollectionAccountsForMethod(all, method),
   });
 
   useEffect(() => {
@@ -175,6 +173,8 @@ export function RecordPartyPaymentDialog({
       if (r.ok) {
         toast.success("Payment recorded");
         onOpenChange(false);
+        void queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
+        void queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
         onSuccess?.();
       } else toast.error(r.message);
     },

@@ -339,6 +339,7 @@ const txnInput = z.object({
   referenceNo: z.string().max(100).optional(),
   description: z.string().max(500).optional(),
   transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  outletId: z.string().uuid().optional(),
   /** Supplier/AP withdrawals may exceed recorded balance until reconciled. */
   allowNegativeBalance: z.boolean().optional(),
 });
@@ -388,7 +389,7 @@ export async function recordBankTransaction(
       .from("bank_transactions")
       .insert({
         organization_id: ctx.organizationId,
-        outlet_id: account.outlet_id ?? ctx.outletId,
+        outlet_id: input.outletId ?? account.outlet_id ?? ctx.outletId ?? null,
         bank_account_id: input.bankAccountId,
         transaction_type: input.transactionType,
         amount: input.amount,
@@ -522,6 +523,38 @@ export async function recordCashToBankDeposit(
   }
 }
 
+type CollectionReceiptMethod = "mpesa" | "bank_transfer";
+
+/** Ensure the selected collection account exists and matches the payment method. */
+export async function validateCollectionAccountForReceipt(
+  bankAccountId: string,
+  paymentMethod: CollectionReceiptMethod
+): Promise<{ ok: true; account: PaymentAccountRow } | { ok: false; message: string }> {
+  const accounts = await listPaymentAccounts();
+  const account = accounts.find((a) => a.id === bankAccountId);
+  if (!account || !account.is_active) {
+    return { ok: false, message: "Collection account not found or inactive." };
+  }
+  if (paymentMethod === "bank_transfer") {
+    if (account.account_type !== "bank") {
+      return {
+        ok: false,
+        message: "Select a bank account for bank transfer payments.",
+      };
+    }
+  } else if (
+    account.account_type !== "mpesa" &&
+    account.account_type !== "lipa" &&
+    account.account_type !== "till"
+  ) {
+    return {
+      ok: false,
+      message: "Select an M-Pesa / Lipa account for M-Pesa payments.",
+    };
+  }
+  return { ok: true, account };
+}
+
 /** Credit a collection account when a POS sale or customer payment is received. */
 export async function creditAccountFromPosSale(
   paymentAccountId: string,
@@ -529,9 +562,17 @@ export async function creditAccountFromPosSale(
   saleId: string,
   invoiceNo: string,
   businessDate?: string,
-  description?: string
+  description?: string,
+  options?: { outletId?: string; paymentMethod?: CollectionReceiptMethod }
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if (amount <= 0) return { ok: true };
+  if (options?.paymentMethod) {
+    const check = await validateCollectionAccountForReceipt(
+      paymentAccountId,
+      options.paymentMethod
+    );
+    if (!check.ok) return check;
+  }
   return recordBankTransaction({
     bankAccountId: paymentAccountId,
     transactionType: "deposit",
@@ -539,6 +580,7 @@ export async function creditAccountFromPosSale(
     referenceNo: invoiceNo,
     description: description ?? `POS sale ${invoiceNo}`,
     transactionDate: businessDate,
+    outletId: options?.outletId,
   });
 }
 

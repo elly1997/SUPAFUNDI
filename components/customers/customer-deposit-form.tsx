@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,11 +15,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { fetchPosPaymentAccounts } from "@/lib/api/banking-fetch";
+import { fetchPaymentAccounts } from "@/lib/api/banking-fetch";
 import {
   invalidateCustomerQueries,
   recordCustomerDepositApi,
 } from "@/lib/api/customers-fetch";
+import { filterCollectionAccountsForMethod } from "@/lib/finance/collection-accounts";
 import { useAuthStore } from "@/stores/authStore";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
 
@@ -43,14 +44,22 @@ export function CustomerDepositForm({ customerId, customerName }: Props) {
   const needsBank =
     paymentMethod === "mpesa" || paymentMethod === "bank_transfer";
 
-  const { data: accounts = [] } = useQuery({
-    queryKey: ["pos-accounts", paymentMethod],
+  const { data: allAccounts = [] } = useQuery({
+    queryKey: ["payment-accounts", "customer-deposit", paymentMethod],
     enabled: needsBank,
-    queryFn: () =>
-      fetchPosPaymentAccounts(
-        paymentMethod === "mpesa" ? "mpesa" : "bank_transfer"
-      ),
+    queryFn: fetchPaymentAccounts,
   });
+
+  const accounts = filterCollectionAccountsForMethod(
+    allAccounts,
+    paymentMethod
+  );
+
+  useEffect(() => {
+    if (!needsBank) return;
+    if (accounts.length === 1) setBankAccountId(accounts[0]!.id);
+    else if (accounts.length !== 1) setBankAccountId("");
+  }, [needsBank, accounts]);
 
   const mut = useMutation({
     mutationFn: recordCustomerDepositApi,
@@ -59,6 +68,8 @@ export function CustomerDepositForm({ customerId, customerName }: Props) {
         toast.success("Deposit recorded");
         setAmount("");
         invalidateCustomerQueries(queryClient);
+        void queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
+        void queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
         router.refresh();
       } else toast.error(r.message);
     },
