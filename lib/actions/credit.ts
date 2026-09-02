@@ -7,7 +7,11 @@ import {
   buildDepositAppliedToCreditJournalLines,
 } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
-import { creditAccountFromPosSale } from "@/lib/actions/banking";
+import {
+  creditAccountFromPosSale,
+  withdrawFromCollectionAccount,
+} from "@/lib/actions/banking";
+import { needsCollectionAccount } from "@/lib/finance/collection-accounts";
 import { formatCustomerArReference } from "@/lib/constants/party-payments";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
@@ -23,6 +27,34 @@ function paymentsDb(supabase: Supabase) {
   return supabase as unknown as {
     from: (table: string) => ReturnType<Supabase["from"]>;
   };
+}
+
+async function insertCustomerPaymentRow(
+  supabase: Supabase,
+  row: Record<string, unknown>,
+  paymentAccountId?: string
+): Promise<string | null> {
+  const method = String(row.payment_method ?? "");
+  const linkAccount =
+    paymentAccountId && needsCollectionAccount(method)
+      ? { ...row, payment_account_id: paymentAccountId }
+      : row;
+  let result = await paymentsDb(supabase)
+    .from("payments")
+    .insert(linkAccount)
+    .select("id")
+    .single();
+  if (result.error?.message.includes("payment_account_id")) {
+    result = await paymentsDb(supabase)
+      .from("payments")
+      .insert(row)
+      .select("id")
+      .single();
+  }
+  if (result.error) {
+    throw new Error(result.error.message);
+  }
+  return result.data ? String((result.data as { id: string }).id) : null;
 }
 
 type CreditSlice = { saleId: string; amount: number; invoiceNo: string };
@@ -64,6 +96,7 @@ export async function applyAmountToCustomerCredit(
     ledgerDescription: string;
     paymentMethod?: "cash" | "mpesa" | "bank_transfer";
     paymentReference?: string;
+    paymentAccountId?: string;
   }
 ): Promise<
   | { ok: true; applied: number; newOutstanding: number; ledgerId: string }
@@ -111,22 +144,25 @@ export async function applyAmountToCustomerCredit(
     if (saleErr) return { ok: false, message: saleErr.message };
 
     if (params.paymentMethod) {
-      await paymentsDb(supabase).from("payments").insert({
-        organization_id: ctx.organizationId,
-        outlet_id: params.outletId ?? ctx.outletId,
-        sale_id: slice.saleId,
-        payment_method: params.paymentMethod,
-        amount: slice.amount,
-        reference_no:
-          formatCustomerArReference(
+      await insertCustomerPaymentRow(
+        supabase,
+        {
+          organization_id: ctx.organizationId,
+          outlet_id: params.outletId ?? ctx.outletId,
+          sale_id: slice.saleId,
+          payment_method: params.paymentMethod,
+          amount: slice.amount,
+          reference_no: formatCustomerArReference(
             sale.invoice_no,
             params.paymentReference
           ),
-        status: "completed",
-        payment_date: paymentTs,
-        received_by: ctx.userId,
-        customer_id: params.customerId,
-      });
+          status: "completed",
+          payment_date: paymentTs,
+          received_by: ctx.userId,
+          customer_id: params.customerId,
+        },
+        params.paymentAccountId
+      );
     }
 
     newOutstanding = roundMoney(newOutstanding - slice.amount);
@@ -754,6 +790,20 @@ export async function recordCustomerPayment(
       };
     }
 
+    const paymentAccountId =
+      input.bankAccountId &&
+      (input.paymentMethod === "mpesa" ||
+        input.paymentMethod === "bank_transfer")
+        ? input.bankAccountId
+        : undefined;
+
+    const paymentIds: string[] = [];
+    const saleReversals: {
+      saleId: string;
+      amountPaid: number;
+      balanceDue: number;
+    }[] = [];
+
     for (const slice of slices) {
       const { data: sale } = await supabase
         .from("sales")
@@ -764,6 +814,11 @@ export async function recordCustomerPayment(
       if (!sale) {
         return { ok: false, message: "Sale not found." };
       }
+      saleReversals.push({
+        saleId: slice.saleId,
+        amountPaid: Number(sale.amount_paid),
+        balanceDue: Number(sale.balance_due),
+      });
       const newPaid = roundMoney(Number(sale.amount_paid) + slice.amount);
       const newDue = roundMoney(Number(sale.balance_due) - slice.amount);
       const { error: saleErr } = await supabase
@@ -775,21 +830,26 @@ export async function recordCustomerPayment(
         .eq("id", slice.saleId);
       if (saleErr) return { ok: false, message: saleErr.message };
 
-      await paymentsDb(supabase).from("payments").insert({
-        organization_id: ctx.organizationId,
-        outlet_id: ctx.outletId,
-        sale_id: slice.saleId,
-        payment_method: input.paymentMethod,
-        amount: slice.amount,
-        reference_no: formatCustomerArReference(
-          sale.invoice_no,
-          input.referenceNo
-        ),
-        status: "completed",
-        payment_date: paymentTs,
-        received_by: ctx.userId,
-        customer_id: input.customerId,
-      });
+      const paymentId = await insertCustomerPaymentRow(
+        supabase,
+        {
+          organization_id: ctx.organizationId,
+          outlet_id: ctx.outletId,
+          sale_id: slice.saleId,
+          payment_method: input.paymentMethod,
+          amount: slice.amount,
+          reference_no: formatCustomerArReference(
+            sale.invoice_no,
+            input.referenceNo
+          ),
+          status: "completed",
+          payment_date: paymentTs,
+          received_by: ctx.userId,
+          customer_id: input.customerId,
+        },
+        paymentAccountId
+      );
+      if (paymentId) paymentIds.push(paymentId);
     }
 
     const newBalance = roundMoney(owed - input.amount);
@@ -816,21 +876,46 @@ export async function recordCustomerPayment(
     }
 
     if (slices.length === 0) {
-      await paymentsDb(supabase).from("payments").insert({
-        organization_id: ctx.organizationId,
-        outlet_id: ctx.outletId,
-        payment_method: input.paymentMethod,
-        amount: input.amount,
-        reference_no: formatCustomerArReference(
-          customer.name,
-          input.referenceNo
-        ),
-        status: "completed",
-        payment_date: paymentTs,
-        received_by: ctx.userId,
-        customer_id: input.customerId,
-      });
+      const paymentId = await insertCustomerPaymentRow(
+        supabase,
+        {
+          organization_id: ctx.organizationId,
+          outlet_id: ctx.outletId,
+          payment_method: input.paymentMethod,
+          amount: input.amount,
+          reference_no: formatCustomerArReference(
+            customer.name,
+            input.referenceNo
+          ),
+          status: "completed",
+          payment_date: paymentTs,
+          received_by: ctx.userId,
+          customer_id: input.customerId,
+        },
+        paymentAccountId
+      );
+      if (paymentId) paymentIds.push(paymentId);
     }
+
+    const rollbackCustomerPayment = async () => {
+      await supabase
+        .from("customers")
+        .update({ outstanding_balance: owed })
+        .eq("id", input.customerId);
+      await supabase.from("credit_ledger").delete().eq("id", ledger.id);
+      for (const id of paymentIds) {
+        await supabase.from("payments").delete().eq("id", id);
+      }
+      for (const rev of saleReversals) {
+        await supabase
+          .from("sales")
+          .update({
+            amount_paid: rev.amountPaid,
+            balance_due: rev.balanceDue,
+          })
+          .eq("id", rev.saleId);
+      }
+    };
 
     const { error: custErr } = await supabase
       .from("customers")
@@ -838,7 +923,38 @@ export async function recordCustomerPayment(
       .eq("id", input.customerId);
     if (custErr) {
       await supabase.from("credit_ledger").delete().eq("id", ledger.id);
+      for (const id of paymentIds) {
+        await supabase.from("payments").delete().eq("id", id);
+      }
+      for (const rev of saleReversals) {
+        await supabase
+          .from("sales")
+          .update({
+            amount_paid: rev.amountPaid,
+            balance_due: rev.balanceDue,
+          })
+          .eq("id", rev.saleId);
+      }
       return { ok: false, message: custErr.message };
+    }
+
+    if (paymentAccountId) {
+      const bank = await creditAccountFromPosSale(
+        paymentAccountId,
+        input.amount,
+        ledger.id,
+        formatCustomerArReference(customer.name, input.referenceNo),
+        paymentDate,
+        `Customer payment — ${customer.name}`,
+        {
+          outletId: ctx.outletId ?? undefined,
+          paymentMethod: input.paymentMethod as "mpesa" | "bank_transfer",
+        }
+      );
+      if (!bank.ok) {
+        await rollbackCustomerPayment();
+        return bank;
+      }
     }
 
     const journal = await postJournalEntry({
@@ -853,28 +969,22 @@ export async function recordCustomerPayment(
       ),
     });
     if (!journal.ok) {
-      await supabase
-        .from("customers")
-        .update({ outstanding_balance: owed })
-        .eq("id", input.customerId);
-      await supabase.from("credit_ledger").delete().eq("id", ledger.id);
+      if (paymentAccountId) {
+        await withdrawFromCollectionAccount(
+          paymentAccountId,
+          input.amount,
+          `Reversal — customer payment — ${customer.name}`,
+          {
+            referenceNo: formatCustomerArReference(
+              customer.name,
+              input.referenceNo
+            ),
+            transactionDate: paymentDate,
+          }
+        );
+      }
+      await rollbackCustomerPayment();
       return { ok: false, message: journal.message };
-    }
-
-    if (
-      input.bankAccountId &&
-      (input.paymentMethod === "mpesa" ||
-        input.paymentMethod === "bank_transfer")
-    ) {
-      const bank = await creditAccountFromPosSale(
-        input.bankAccountId,
-        input.amount,
-        ledger.id,
-        formatCustomerArReference(customer.name, input.referenceNo),
-        paymentDate,
-        `Customer payment — ${customer.name}`
-      );
-      if (!bank.ok) return bank;
     }
 
     revalidatePath("/finance/credit");

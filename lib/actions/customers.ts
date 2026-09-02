@@ -10,7 +10,8 @@ import {
 } from "@/lib/actions/credit";
 import { buildCustomerDepositReceiptJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
-import { creditAccountFromPosSale } from "@/lib/actions/banking";
+import { creditAccountFromPosSale, withdrawFromCollectionAccount } from "@/lib/actions/banking";
+import { needsCollectionAccount } from "@/lib/finance/collection-accounts";
 import {
   formatCustomerDepositReference,
   isCustomerDepositRef,
@@ -163,26 +164,48 @@ export async function recordCustomerDeposit(
     const toDeposit = roundMoney(input.amount - toCredit);
     const newDepositBalance = roundMoney(prevDeposit + toDeposit);
 
+    const paymentAccountId =
+      input.bankAccountId &&
+      (input.paymentMethod === "mpesa" ||
+        input.paymentMethod === "bank_transfer")
+        ? input.bankAccountId
+        : undefined;
+
     const createdPaymentIds: string[] = [];
     let journalSourceId: string | undefined;
+    let creditOutstandingBefore = outstanding;
 
     /** Prepaid slice only — counted once as cashCustomerDeposits. */
     if (toDeposit > 0) {
-      const { data: payment, error: payErr } = await paymentsDb(supabase)
+      const paymentBase = {
+        organization_id: ctx.organizationId,
+        outlet_id: input.outletId,
+        payment_method: input.paymentMethod,
+        amount: toDeposit,
+        reference_no: depRef,
+        status: "completed" as const,
+        payment_date: paymentTs,
+        received_by: ctx.userId,
+        customer_id: input.customerId,
+      };
+      const withAccount =
+        paymentAccountId && needsCollectionAccount(input.paymentMethod)
+          ? { ...paymentBase, payment_account_id: paymentAccountId }
+          : paymentBase;
+      let payResult = await paymentsDb(supabase)
         .from("payments")
-        .insert({
-          organization_id: ctx.organizationId,
-          outlet_id: input.outletId,
-          payment_method: input.paymentMethod,
-          amount: toDeposit,
-          reference_no: depRef,
-          status: "completed",
-          payment_date: paymentTs,
-          received_by: ctx.userId,
-          customer_id: input.customerId,
-        })
+        .insert(withAccount)
         .select("id")
         .single();
+      if (payResult.error?.message.includes("payment_account_id")) {
+        payResult = await paymentsDb(supabase)
+          .from("payments")
+          .insert(paymentBase)
+          .select("id")
+          .single();
+      }
+      const payment = payResult.data;
+      const payErr = payResult.error;
       if (payErr || !payment) {
         return { ok: false, message: payErr?.message ?? "Deposit payment failed" };
       }
@@ -213,7 +236,35 @@ export async function recordCustomerDeposit(
       }
     }
 
-    /** AR slice — cash counted once as cashCustomerPayments (invoice-linked). */
+    const bankReference = toDeposit > 0 ? depRef : `AR-${customer.name}`;
+    const bankDescription =
+      toDeposit > 0 && toCredit > 0
+        ? `Customer receipt (deposit + credit) — ${customer.name}`
+        : toDeposit > 0
+          ? `Customer deposit — ${customer.name}`
+          : `Customer credit payment — ${customer.name}`;
+
+    if (paymentAccountId) {
+      const bankSourceId = createdPaymentIds[0] ?? input.customerId;
+      const bank = await creditAccountFromPosSale(
+        paymentAccountId,
+        input.amount,
+        bankSourceId,
+        bankReference,
+        paymentDate,
+        bankDescription,
+        {
+          outletId: input.outletId,
+          paymentMethod: input.paymentMethod as "mpesa" | "bank_transfer",
+        }
+      );
+      if (!bank.ok) {
+        await rollbackPayments();
+        return bank;
+      }
+    }
+
+    /** AR slice — counted once as cashCustomerPayments (invoice-linked). */
     if (toCredit > 0) {
       const credit = await applyAmountToCustomerCredit(supabase, ctx, {
         customerId: input.customerId,
@@ -224,14 +275,29 @@ export async function recordCustomerDeposit(
         paymentTs,
         outletId: input.outletId,
         ledgerReferenceType: "cash_to_credit",
-        ledgerDescription: "Cash applied to prior credit",
+        ledgerDescription:
+          input.paymentMethod === "bank_transfer"
+            ? "Bank transfer applied to prior credit"
+            : input.paymentMethod === "mpesa"
+              ? "M-Pesa applied to prior credit"
+              : "Cash applied to prior credit",
         paymentMethod: input.paymentMethod,
         paymentReference: undefined,
+        paymentAccountId,
       });
       if (!credit.ok) {
         await rollbackPayments();
+        if (paymentAccountId) {
+          await withdrawFromCollectionAccount(
+            paymentAccountId,
+            input.amount,
+            `Reversal — ${bankDescription}`,
+            { referenceNo: bankReference, transactionDate: paymentDate }
+          );
+        }
         return credit;
       }
+      creditOutstandingBefore = outstanding;
       if (!journalSourceId && credit.ledgerId) {
         journalSourceId = credit.ledgerId;
       }
@@ -256,36 +322,25 @@ export async function recordCustomerDeposit(
       ),
     });
     if (!journal.ok) {
+      if (paymentAccountId) {
+        await withdrawFromCollectionAccount(
+          paymentAccountId,
+          input.amount,
+          `Reversal — customer deposit — ${customer.name}`,
+          {
+            referenceNo: toDeposit > 0 ? depRef : `AR-${customer.name}`,
+            transactionDate: paymentDate,
+          }
+        );
+      }
       await rollbackPayments();
+      if (toCredit > 0) {
+        await supabase
+          .from("customers")
+          .update({ outstanding_balance: creditOutstandingBefore })
+          .eq("id", input.customerId);
+      }
       return { ok: false, message: journal.message };
-    }
-
-    if (
-      input.bankAccountId &&
-      (input.paymentMethod === "mpesa" ||
-        input.paymentMethod === "bank_transfer")
-    ) {
-      const bankSourceId = createdPaymentIds[0] ?? journalSourceId;
-      if (!bankSourceId) {
-        await rollbackPayments();
-        return { ok: false, message: "Missing payment id for bank credit." };
-      }
-      const bank = await creditAccountFromPosSale(
-        input.bankAccountId,
-        input.amount,
-        bankSourceId,
-        toDeposit > 0 ? depRef : `AR-${customer.name}`,
-        paymentDate,
-        toDeposit > 0 && toCredit > 0
-          ? `Customer cash (deposit + credit) — ${customer.name}`
-          : toDeposit > 0
-            ? `Customer deposit — ${customer.name}`
-            : `Customer credit payment — ${customer.name}`
-      );
-      if (!bank.ok) {
-        await rollbackPayments();
-        return bank;
-      }
     }
 
     await applyCustomerDepositToCredit(input.customerId, {
