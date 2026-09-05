@@ -223,6 +223,23 @@ export async function refreshPayrollRun(
       );
     }
 
+    /** Drop lines for deleted / inactive staff so duplicates disappear after removal. */
+    const activeIds = new Set(
+      ((employees ?? []) as { id: string }[]).map((e) => e.id)
+    );
+    const { data: existingLines } = await supabase
+      .from("payroll_lines")
+      .select("id, employee_id")
+      .eq("payroll_run_id", run.id);
+    const staleIds = (
+      (existingLines ?? []) as { id: string; employee_id: string }[]
+    )
+      .filter((l) => !activeIds.has(l.employee_id))
+      .map((l) => l.id);
+    if (staleIds.length > 0) {
+      await supabase.from("payroll_lines").delete().in("id", staleIds);
+    }
+
     const detail = await getPayrollRunDetail(payrollMonth);
     if (!detail) {
       return { ok: false, message: "Could not load payroll run." };

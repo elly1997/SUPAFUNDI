@@ -43,6 +43,7 @@ import type { PayrollRunDetail } from "@/lib/actions/payroll";
 import {
   closePayrollRunApi,
   createEmployeeApi,
+  deleteEmployeeApi,
   fetchEmployees,
   fetchPayrollRun,
   importEmployeesFromProfilesApi,
@@ -72,6 +73,8 @@ export function PayrollPageClient() {
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<EmployeeRow | null>(null);
   const [bonusTarget, setBonusTarget] = useState<EmployeeRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<EmployeeRow | null>(null);
+  const [reassignToId, setReassignToId] = useState<string>("");
   const [closeOpen, setCloseOpen] = useState(false);
   const [payDrafts, setPayDrafts] = useState<PayLineDraft[]>([]);
 
@@ -163,6 +166,29 @@ export function PayrollPageClient() {
         toast.success("Saved");
         setEditTarget(null);
         void queryClient.invalidateQueries({ queryKey: ["employees", outletId] });
+        void refreshMut.mutate();
+      } else toast.error(r.message);
+    },
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: () =>
+      deleteEmployeeApi(deleteTarget!.id, {
+        reassignToEmployeeId: reassignToId || null,
+      }),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success(
+          reassignToId
+            ? "Employee deleted — advances/bonuses moved to the selected staff"
+            : "Employee deleted"
+        );
+        setDeleteTarget(null);
+        setReassignToId("");
+        void queryClient.invalidateQueries({ queryKey: ["employees", outletId] });
+        void queryClient.invalidateQueries({
+          queryKey: ["payroll-run", outletId, payrollMonth],
+        });
         void refreshMut.mutate();
       } else toast.error(r.message);
     },
@@ -348,6 +374,18 @@ export function PayrollPageClient() {
                         onClick={() => setBonusTarget(e)}
                       >
                         Bonus
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="ml-1 text-destructive hover:text-destructive"
+                        onClick={() => {
+                          setDeleteTarget(e);
+                          setReassignToId("");
+                        }}
+                      >
+                        Delete
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -545,7 +583,7 @@ export function PayrollPageClient() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Gross monthly salary</Label>
+                <Label>Gross monthly salary (TZS)</Label>
                 <Input
                   type="number"
                   min={0}
@@ -555,6 +593,24 @@ export function PayrollPageClient() {
                       ...editTarget,
                       gross_monthly_salary: Number(e.target.value) || 0,
                     })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Phone</Label>
+                <Input
+                  value={editTarget.phone ?? ""}
+                  onChange={(e) =>
+                    setEditTarget({ ...editTarget, phone: e.target.value })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Job title</Label>
+                <Input
+                  value={editTarget.job_title ?? ""}
+                  onChange={(e) =>
+                    setEditTarget({ ...editTarget, job_title: e.target.value })
                   }
                 />
               </div>
@@ -570,6 +626,88 @@ export function PayrollPageClient() {
               onClick={() => editTarget && updateMut.mutate(editTarget)}
             >
               Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(o) => {
+          if (!o) {
+            setDeleteTarget(null);
+            setReassignToId("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete employee</DialogTitle>
+          </DialogHeader>
+          {deleteTarget ? (
+            <div className="space-y-3 text-sm">
+              <p>
+                Permanently remove{" "}
+                <span className="font-semibold">{deleteTarget.full_name}</span>{" "}
+                from staff &amp; payroll. This cannot be undone.
+              </p>
+              <p className="text-muted-foreground">
+                If this is a duplicate name, move their salary advances and
+                bonuses to the correct person first (e.g. delete{" "}
+                <strong>AVOTA MBOYE</strong> and keep{" "}
+                <strong>AVOTA FREDY</strong>).
+              </p>
+              <div className="space-y-2">
+                <Label>Move advances &amp; bonuses to (optional)</Label>
+                <Select
+                  value={reassignToId || "__none__"}
+                  onValueChange={(v) =>
+                    setReassignToId(!v || v === "__none__" ? "" : v)
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Leave unassigned" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">
+                      Do not move (advances become unassigned)
+                    </SelectItem>
+                    {activeEmployees
+                      .filter((e) => e.id !== deleteTarget.id)
+                      .map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {e.full_name}
+                          {e.gross_monthly_salary > 0
+                            ? ` · ${formatTzs(e.gross_monthly_salary)}/mo`
+                            : ""}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setDeleteTarget(null);
+                setReassignToId("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={!deleteTarget || deleteMut.isPending}
+              onClick={() => deleteMut.mutate()}
+            >
+              {deleteMut.isPending ? (
+                <Loader2 className="mr-2 size-4 animate-spin" />
+              ) : null}
+              Delete permanently
             </Button>
           </DialogFooter>
         </DialogContent>
