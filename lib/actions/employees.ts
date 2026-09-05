@@ -140,6 +140,110 @@ export async function updateEmployee(
   }
 }
 
+/**
+ * Permanently delete an employee.
+ * Optionally reassign salary advances (expenses) and bonuses to another
+ * employee first — use this when removing a duplicate name so history
+ * stays on the correct person.
+ */
+export async function deleteEmployee(
+  id: string,
+  options?: { reassignToEmployeeId?: string | null }
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await requireManagerContext();
+    const ctx = await requireOrgContext();
+    if (!ctx.outletId) {
+      return {
+        ok: false,
+        message: "Select a working outlet before deleting employees.",
+      };
+    }
+    const supabase = await createServerSupabaseClient();
+    const reassignTo = options?.reassignToEmployeeId?.trim() || null;
+
+    const { data: target } = await payrollDb(supabase)
+      .from("employees")
+      .select("id, full_name")
+      .eq("id", id)
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", ctx.outletId)
+      .maybeSingle();
+    if (!target) {
+      return { ok: false, message: "Employee not found." };
+    }
+
+    if (reassignTo) {
+      if (reassignTo === id) {
+        return {
+          ok: false,
+          message: "Choose a different employee to keep the advances/bonuses.",
+        };
+      }
+      const { data: survivor } = await payrollDb(supabase)
+        .from("employees")
+        .select("id")
+        .eq("id", reassignTo)
+        .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", ctx.outletId)
+        .maybeSingle();
+      if (!survivor) {
+        return {
+          ok: false,
+          message: "The employee to keep was not found at this outlet.",
+        };
+      }
+
+      const { error: expErr } = await payrollDb(supabase)
+        .from("expenses")
+        .update({ employee_id: reassignTo } as { employee_id: string })
+        .eq("organization_id", ctx.organizationId)
+        .eq("employee_id", id);
+      if (expErr) return { ok: false, message: expErr.message };
+
+      const { error: bonusErr } = await payrollDb(supabase)
+        .from("employee_bonuses")
+        .update({ employee_id: reassignTo } as { employee_id: string })
+        .eq("organization_id", ctx.organizationId)
+        .eq("employee_id", id);
+      if (bonusErr) return { ok: false, message: bonusErr.message };
+    }
+
+    /** Remove open-run payroll lines explicitly (closed runs keep history via cascade null? — lines cascade). */
+    const { data: openRuns } = await payrollDb(supabase)
+      .from("payroll_runs")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", ctx.outletId)
+      .eq("status", "open");
+    const openRunIds = ((openRuns ?? []) as { id: string }[]).map((r) => r.id);
+    if (openRunIds.length > 0) {
+      await supabase
+        .from("payroll_lines")
+        .delete()
+        .eq("employee_id", id)
+        .in("payroll_run_id", openRunIds);
+    }
+
+    const { error: delErr } = await payrollDb(supabase)
+      .from("employees")
+      .delete()
+      .eq("id", id)
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", ctx.outletId);
+    if (delErr) return { ok: false, message: delErr.message };
+
+    revalidatePath("/finance/payroll");
+    revalidatePath("/finance/expenses");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Delete failed",
+    };
+  }
+}
+
 export async function importEmployeesFromProfiles(): Promise<
   { ok: true; imported: number } | { ok: false; message: string }
 > {

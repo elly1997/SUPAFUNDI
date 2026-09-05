@@ -56,6 +56,21 @@ export async function updateEmployeeApi(
   return res.json() as Promise<{ ok: true } | { ok: false; message: string }>;
 }
 
+export async function deleteEmployeeApi(
+  id: string,
+  options?: { reassignToEmployeeId?: string | null }
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await fetch(`/api/payroll/employees/${id}`, {
+    method: "DELETE",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      reassignToEmployeeId: options?.reassignToEmployeeId ?? null,
+    }),
+  });
+  return res.json() as Promise<{ ok: true } | { ok: false; message: string }>;
+}
+
 export async function importEmployeesFromProfilesApi(): Promise<
   { ok: true; imported: number } | { ok: false; message: string }
 > {
