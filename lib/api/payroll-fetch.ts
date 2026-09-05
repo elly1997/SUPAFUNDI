@@ -84,7 +84,8 @@ export async function fetchPayrollRun(
 export async function refreshPayrollRunApi(
   payrollMonth: string
 ): Promise<
-  { ok: true; run: PayrollRunDetail } | { ok: false; message: string }
+  | { ok: true; run: PayrollRunDetail; warnings?: string[] }
+  | { ok: false; message: string }
 > {
   const res = await fetch("/api/payroll/run", {
     method: "POST",
@@ -93,7 +94,8 @@ export async function refreshPayrollRunApi(
     body: JSON.stringify({ payrollMonth }),
   });
   return res.json() as Promise<
-    { ok: true; run: PayrollRunDetail } | { ok: false; message: string }
+    | { ok: true; run: PayrollRunDetail; warnings?: string[] }
+    | { ok: false; message: string }
   >;
 }
 
