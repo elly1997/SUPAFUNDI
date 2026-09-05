@@ -9,6 +9,7 @@ import { requireManagerContext } from "@/lib/server/require-manager";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
+import { formatTzs } from "@/lib/utils/currency";
 import { validateCollectionAccount } from "@/lib/finance/collection-accounts";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -130,7 +131,8 @@ async function sumBonusesForEmployee(
 export async function refreshPayrollRun(
   payrollMonth: string
 ): Promise<
-  { ok: true; run: PayrollRunDetail } | { ok: false; message: string }
+  | { ok: true; run: PayrollRunDetail; warnings: string[] }
+  | { ok: false; message: string }
 > {
   try {
     if (!PAYROLL_MONTH.test(payrollMonth)) {
@@ -143,6 +145,7 @@ export async function refreshPayrollRun(
     }
     const supabase = await createServerSupabaseClient();
     const { from, to } = monthBounds(payrollMonth);
+    const warnings: string[] = [];
 
     let { data: run } = await payrollDb(supabase)
       .from("payroll_runs")
@@ -198,12 +201,12 @@ export async function refreshPayrollRun(
         from,
         to
       );
-      const net = roundMoney(gross + bonuses - advances);
+      const earnable = roundMoney(gross + bonuses);
+      const net = roundMoney(earnable - advances);
       if (net < 0) {
-        return {
-          ok: false,
-          message: `${emp.full_name} has advances (${advances}) exceeding gross + bonuses. Adjust advances or add bonus before closing.`,
-        };
+        warnings.push(
+          `${emp.full_name}: advances ${formatTzs(advances)} exceed gross ${formatTzs(gross)} + bonuses ${formatTzs(bonuses)}. Net set to TSh 0; excess advance stays outstanding.`
+        );
       }
 
       await supabase.from("payroll_lines").upsert(
@@ -213,7 +216,8 @@ export async function refreshPayrollRun(
           gross_salary: gross,
           advances_total: advances,
           bonuses_total: bonuses,
-          net_salary: net,
+          /** Floor at 0 so over-advanced staff do not block month close. */
+          net_salary: Math.max(0, net),
         },
         { onConflict: "payroll_run_id,employee_id" }
       );
@@ -224,7 +228,7 @@ export async function refreshPayrollRun(
       return { ok: false, message: "Could not load payroll run." };
     }
     revalidatePath("/finance/payroll");
-    return { ok: true, run: detail };
+    return { ok: true, run: detail, warnings };
   } catch (e) {
     return {
       ok: false,
@@ -387,7 +391,8 @@ const closeLineSchema = z.object({
 
 const closePayrollSchema = z.object({
   payrollMonth: z.string().regex(PAYROLL_MONTH),
-  lines: z.array(closeLineSchema).min(1),
+  /** May be empty when every employee has net 0 (fully advanced / zero gross). */
+  lines: z.array(closeLineSchema),
   notes: z.string().max(500).optional(),
 });
 
@@ -423,11 +428,17 @@ export async function closePayrollRun(
         continue;
       }
 
-      const accountCheck = validateCollectionAccount(
-        pay.paymentMethod,
-        pay.bankAccountId
-      );
-      if (!accountCheck.ok) return accountCheck;
+      const needsAccount =
+        line.net_salary > 0 &&
+        (pay.paymentMethod === "mpesa" ||
+          pay.paymentMethod === "bank_transfer");
+      if (needsAccount) {
+        const accountCheck = validateCollectionAccount(
+          pay.paymentMethod,
+          pay.bankAccountId
+        );
+        if (!accountCheck.ok) return accountCheck;
+      }
 
       const journal = await postJournalEntry({
         description: `Payroll ${input.payrollMonth} — ${line.employee_name}`,
@@ -448,7 +459,8 @@ export async function closePayrollRun(
 
       if (
         line.net_salary > 0 &&
-        (pay.paymentMethod === "mpesa" || pay.paymentMethod === "bank_transfer") &&
+        (pay.paymentMethod === "mpesa" ||
+          pay.paymentMethod === "bank_transfer") &&
         pay.bankAccountId
       ) {
         const bank = await withdrawFromCollectionAccount(

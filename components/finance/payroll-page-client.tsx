@@ -107,8 +107,14 @@ export function PayrollPageClient() {
     mutationFn: () => refreshPayrollRunApi(payrollMonth),
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success("Payroll figures updated");
-        void queryClient.invalidateQueries({ queryKey: ["payroll-run", outletId, payrollMonth] });
+        if (r.warnings && r.warnings.length > 0) {
+          for (const w of r.warnings) toast.warning(w, { duration: 8000 });
+        } else {
+          toast.success("Payroll figures updated");
+        }
+        void queryClient.invalidateQueries({
+          queryKey: ["payroll-run", outletId, payrollMonth],
+        });
       } else toast.error(r.message);
     },
   });
@@ -202,10 +208,21 @@ export function PayrollPageClient() {
     },
   });
 
-  const openCloseDialog = (run: PayrollRunDetail) => {
+  const openCloseDialog = async () => {
+    const refreshed = await refreshPayrollRunApi(payrollMonth);
+    if (!refreshed.ok) {
+      toast.error(refreshed.message);
+      return;
+    }
+    if (refreshed.warnings && refreshed.warnings.length > 0) {
+      for (const w of refreshed.warnings) toast.warning(w, { duration: 8000 });
+    }
+    void queryClient.invalidateQueries({
+      queryKey: ["payroll-run", outletId, payrollMonth],
+    });
     setPayDrafts(
-      run.lines
-        .filter((l) => l.gross_salary > 0 || l.net_salary > 0)
+      refreshed.run.lines
+        .filter((l) => l.gross_salary + l.bonuses_total > 0)
         .map((l) => ({
           lineId: l.id,
           paymentMethod: "cash" as const,
@@ -213,6 +230,15 @@ export function PayrollPageClient() {
           referenceNo: "",
         }))
     );
+    if (
+      refreshed.run.lines.every(
+        (l) => l.gross_salary + l.bonuses_total <= 0
+      )
+    ) {
+      toast.message(
+        "No earnable pay this month. Staff with advances but zero gross will keep advances outstanding — set monthly salaries under Edit if needed."
+      );
+    }
     setCloseOpen(true);
   };
 
@@ -352,7 +378,7 @@ export function PayrollPageClient() {
             </p>
           </div>
           {payrollRun && !isClosed && payrollRun.lines.length > 0 ? (
-            <Button type="button" onClick={() => openCloseDialog(payrollRun)}>
+            <Button type="button" onClick={() => void openCloseDialog()}>
               Close &amp; pay salaries
             </Button>
           ) : null}
@@ -406,13 +432,27 @@ export function PayrollPageClient() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {payrollRun.lines.map((l) => (
-                    <TableRow key={l.id}>
+                  {payrollRun.lines.map((l) => {
+                    const overAdvanced =
+                      l.advances_total > l.gross_salary + l.bonuses_total;
+                    return (
+                    <TableRow
+                      key={l.id}
+                      className={overAdvanced ? "bg-warning/5" : undefined}
+                    >
                       <TableCell>
                         <p className="font-medium">{l.employee_name}</p>
                         {l.advance_items.length > 0 ? (
                           <p className="text-xs text-muted-foreground">
                             {l.advance_items.length} advance(s) this month
+                          </p>
+                        ) : null}
+                        {overAdvanced ? (
+                          <p className="text-xs font-medium text-warning">
+                            Advances exceed gross + bonuses
+                            {l.gross_salary <= 0
+                              ? " — set a monthly gross salary on this employee"
+                              : ""}
                           </p>
                         ) : null}
                       </TableCell>
@@ -433,7 +473,8 @@ export function PayrollPageClient() {
                         {formatTzs(l.net_salary)}
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </>
@@ -593,6 +634,13 @@ export function PayrollPageClient() {
                       {formatTzs(line.net_salary)}
                     </span>
                   </div>
+                  {line.net_salary <= 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Net is TSh 0 — no cash payout. Advances are recovered up to
+                      gross + bonuses; any excess stays outstanding.
+                    </p>
+                  ) : (
+                    <>
                   <Select
                     value={draft.paymentMethod}
                     onValueChange={(v) =>
@@ -641,6 +689,8 @@ export function PayrollPageClient() {
                       )
                     }
                   />
+                    </>
+                  )}
                 </div>
               );
             })}
