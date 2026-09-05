@@ -39,7 +39,6 @@ import {
 import { CollectionAccountSelect } from "@/components/finance/collection-account-select";
 import { needsCollectionAccount } from "@/lib/finance/collection-accounts";
 import type { EmployeeRow } from "@/lib/actions/employees";
-import type { PayrollRunDetail } from "@/lib/actions/payroll";
 import {
   closePayrollRunApi,
   createEmployeeApi,
