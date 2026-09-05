@@ -485,7 +485,18 @@ export function buildPayrollPaymentJournalLines(input: {
   paymentMethod: "cash" | "mpesa" | "bank_transfer";
   employeeName: string;
 }): JournalLineInput[] {
-  const wageExpense = input.grossSalary + input.bonusesTotal;
+  const wageExpense =
+    Math.round((input.grossSalary + input.bonusesTotal + Number.EPSILON) * 100) /
+    100;
+  /** Only recover advances up to earnable pay so the journal stays balanced. */
+  const recoverableAdvances = Math.min(
+    Math.max(0, input.advancesTotal),
+    wageExpense
+  );
+  const netSalary = Math.max(
+    0,
+    Math.round((wageExpense - recoverableAdvances + Number.EPSILON) * 100) / 100
+  );
   const lines: JournalLineInput[] = [];
 
   if (wageExpense > 0) {
@@ -496,15 +507,15 @@ export function buildPayrollPaymentJournalLines(input: {
       memo: `Wages — ${input.employeeName}`,
     });
   }
-  if (input.advancesTotal > 0) {
+  if (recoverableAdvances > 0) {
     lines.push({
       accountCode: SYSTEM_ACCOUNT_CODES.employeeAdvances,
       debit: 0,
-      credit: input.advancesTotal,
+      credit: recoverableAdvances,
       memo: "Salary advance recovery",
     });
   }
-  if (input.netSalary > 0) {
+  if (netSalary > 0) {
     const cashAccount =
       input.paymentMethod === "mpesa"
         ? SYSTEM_ACCOUNT_CODES.mpesa
@@ -514,7 +525,7 @@ export function buildPayrollPaymentJournalLines(input: {
     lines.push({
       accountCode: cashAccount,
       debit: 0,
-      credit: input.netSalary,
+      credit: netSalary,
       memo: "Net salary paid",
     });
   }
