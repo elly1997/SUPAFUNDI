@@ -6,9 +6,14 @@ import {
   defaultPosMethodForAccountType,
   type PaymentAccountType,
 } from "@/lib/constants/payment-accounts";
-import { buildCashToBankJournalLines } from "@/lib/accounting/posting-rules";
+import { buildCashToBankJournalLines, buildInterAccountTransferJournalLines } from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { CASH_DRAWER_DEPOSIT_PREFIX } from "@/lib/constants/cash-deposit";
+import {
+  bankTransferPairKey,
+  isBankTransferOutflow,
+  newBankTransferRefs,
+} from "@/lib/finance/bank-transfer";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { requireManagerContext } from "@/lib/server/require-manager";
@@ -332,17 +337,36 @@ export async function createBankAccount(
   return createPaymentAccount(raw);
 }
 
-const txnInput = z.object({
-  bankAccountId: z.string().uuid(),
-  transactionType: z.enum(["deposit", "withdrawal", "transfer"]),
-  amount: z.number().positive(),
-  referenceNo: z.string().max(100).optional(),
-  description: z.string().max(500).optional(),
-  transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  outletId: z.string().uuid().optional(),
-  /** Supplier/AP withdrawals may exceed recorded balance until reconciled. */
-  allowNegativeBalance: z.boolean().optional(),
-});
+const txnInput = z
+  .object({
+    bankAccountId: z.string().uuid(),
+    transactionType: z.enum(["deposit", "withdrawal", "transfer"]),
+    amount: z.number().positive(),
+    referenceNo: z.string().max(100).optional(),
+    description: z.string().max(500).optional(),
+    transactionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    outletId: z.string().uuid().optional(),
+    /** Destination collection account — required for transfer. */
+    toBankAccountId: z.string().uuid().optional(),
+    /** Supplier/AP withdrawals may exceed recorded balance until reconciled. */
+    allowNegativeBalance: z.boolean().optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.transactionType !== "transfer") return;
+    if (!val.toBankAccountId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose the destination account.",
+        path: ["toBankAccountId"],
+      });
+    } else if (val.toBankAccountId === val.bankAccountId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Source and destination must be different accounts.",
+        path: ["toBankAccountId"],
+      });
+    }
+  });
 
 /** Active collection accounts for outbound supplier payments (not limited to POS picker). */
 export async function listOutboundPaymentAccounts(
@@ -368,6 +392,10 @@ export async function recordBankTransaction(
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
 
+    if (input.transactionType === "transfer") {
+      return recordInterAccountTransfer(supabase, ctx, input);
+    }
+
     const { data: account } = await bankDb(supabase)
       .from("bank_accounts")
       .select("id, current_balance, outlet_id")
@@ -377,9 +405,7 @@ export async function recordBankTransaction(
     if (!account) return { ok: false, message: "Account not found." };
 
     const delta =
-      input.transactionType === "withdrawal"
-        ? -input.amount
-        : input.amount;
+      input.transactionType === "withdrawal" ? -input.amount : input.amount;
     const newBalance = roundMoney(Number(account.current_balance) + delta);
     if (newBalance < 0 && !input.allowNegativeBalance) {
       return { ok: false, message: "Insufficient account balance." };
@@ -415,6 +441,171 @@ export async function recordBankTransaction(
       message: e instanceof Error ? e.message : "Transaction failed",
     };
   }
+}
+
+async function recordInterAccountTransfer(
+  supabase: SupabaseClient,
+  ctx: { organizationId: string; userId: string; outletId: string | null },
+  input: z.infer<typeof txnInput>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const toId = input.toBankAccountId!;
+  const amount = roundMoney(input.amount);
+  const txnDate =
+    input.transactionDate ?? new Date().toISOString().slice(0, 10);
+  const note = input.description?.trim() || null;
+  const extraRef = input.referenceNo?.trim();
+
+  const { data: fromAcc } = await bankDb(supabase)
+    .from("bank_accounts")
+    .select("id, name, current_balance, outlet_id, account_type, is_active")
+    .eq("id", input.bankAccountId)
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+  const { data: toAcc } = await bankDb(supabase)
+    .from("bank_accounts")
+    .select("id, name, current_balance, outlet_id, account_type, is_active")
+    .eq("id", toId)
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+  if (!fromAcc) return { ok: false, message: "Source account not found." };
+  if (!toAcc) return { ok: false, message: "Destination account not found." };
+  if (fromAcc.is_active === false) {
+    return { ok: false, message: "Source account is inactive." };
+  }
+  if (toAcc.is_active === false) {
+    return { ok: false, message: "Destination account is inactive." };
+  }
+
+  const fromBalance = roundMoney(Number(fromAcc.current_balance));
+  const toBalance = roundMoney(Number(toAcc.current_balance));
+  const fromNext = roundMoney(fromBalance - amount);
+  if (fromNext < 0 && !input.allowNegativeBalance) {
+    return {
+      ok: false,
+      message: `Insufficient balance on ${fromAcc.name}.`,
+    };
+  }
+  const toNext = roundMoney(toBalance + amount);
+  const refs = newBankTransferRefs();
+  const outNote = [
+    `Transfer to ${toAcc.name}`,
+    extraRef,
+    note,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const inNote = [
+    `Transfer from ${fromAcc.name}`,
+    extraRef,
+    note,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const outletId =
+    input.outletId ?? fromAcc.outlet_id ?? toAcc.outlet_id ?? ctx.outletId;
+
+  const { data: outTxn, error: outErr } = await bankDb(supabase)
+    .from("bank_transactions")
+    .insert({
+      organization_id: ctx.organizationId,
+      outlet_id: outletId,
+      bank_account_id: fromAcc.id,
+      transaction_type: "transfer",
+      amount,
+      reference_no: refs.outRef,
+      description: outNote,
+      transaction_date: txnDate,
+      created_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+  if (outErr || !outTxn) {
+    return {
+      ok: false,
+      message: outErr?.message ?? "Could not record transfer out.",
+    };
+  }
+
+  const { data: inTxn, error: inErr } = await bankDb(supabase)
+    .from("bank_transactions")
+    .insert({
+      organization_id: ctx.organizationId,
+      outlet_id: outletId,
+      bank_account_id: toAcc.id,
+      transaction_type: "transfer",
+      amount,
+      reference_no: refs.inRef,
+      description: inNote,
+      transaction_date: txnDate,
+      created_by: ctx.userId,
+    })
+    .select("id")
+    .single();
+  if (inErr || !inTxn) {
+    await bankDb(supabase).from("bank_transactions").delete().eq("id", outTxn.id);
+    return {
+      ok: false,
+      message: inErr?.message ?? "Could not record transfer in.",
+    };
+  }
+
+  const { error: fromBalErr } = await bankDb(supabase)
+    .from("bank_accounts")
+    .update({ current_balance: fromNext })
+    .eq("id", fromAcc.id);
+  if (fromBalErr) {
+    await bankDb(supabase).from("bank_transactions").delete().eq("id", inTxn.id);
+    await bankDb(supabase).from("bank_transactions").delete().eq("id", outTxn.id);
+    return { ok: false, message: fromBalErr.message };
+  }
+
+  const { error: toBalErr } = await bankDb(supabase)
+    .from("bank_accounts")
+    .update({ current_balance: toNext })
+    .eq("id", toAcc.id);
+  if (toBalErr) {
+    await bankDb(supabase)
+      .from("bank_accounts")
+      .update({ current_balance: fromBalance })
+      .eq("id", fromAcc.id);
+    await bankDb(supabase).from("bank_transactions").delete().eq("id", inTxn.id);
+    await bankDb(supabase).from("bank_transactions").delete().eq("id", outTxn.id);
+    return { ok: false, message: toBalErr.message };
+  }
+
+  const lines = buildInterAccountTransferJournalLines({
+    amount,
+    fromType: String(fromAcc.account_type ?? "mpesa"),
+    toType: String(toAcc.account_type ?? "bank"),
+    fromName: String(fromAcc.name),
+    toName: String(toAcc.name),
+  });
+  if (lines) {
+    const journal = await postJournalEntry({
+      description: `Transfer ${fromAcc.name} → ${toAcc.name}`,
+      sourceType: "transfer",
+      sourceId: inTxn.id,
+      outletId: outletId ?? undefined,
+      entryDate: txnDate,
+      lines,
+    });
+    if (!journal.ok) {
+      await bankDb(supabase)
+        .from("bank_accounts")
+        .update({ current_balance: fromBalance })
+        .eq("id", fromAcc.id);
+      await bankDb(supabase)
+        .from("bank_accounts")
+        .update({ current_balance: toBalance })
+        .eq("id", toAcc.id);
+      await bankDb(supabase).from("bank_transactions").delete().eq("id", inTxn.id);
+      await bankDb(supabase).from("bank_transactions").delete().eq("id", outTxn.id);
+      return { ok: false, message: journal.message };
+    }
+  }
+
+  revalidatePath("/finance/banking");
+  return { ok: true };
 }
 
 const cashDepositInput = z.object({
@@ -637,6 +828,231 @@ export async function toggleBankTransactionReconciled(
   return { ok: true };
 }
 
+async function reverseInterAccountTransfer(
+  supabase: SupabaseClient,
+  params: {
+    organizationId: string;
+    userId: string;
+    txn: {
+      id: string;
+      bank_account_id: string | null;
+      outlet_id: string | null;
+      amount: number;
+      reference_no: string | null;
+      description: string;
+      transaction_date: string;
+    };
+  }
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const pairKey = bankTransferPairKey(params.txn.reference_no);
+  if (!pairKey || !params.txn.bank_account_id) {
+    return { ok: false, message: "This transfer cannot be reversed." };
+  }
+
+  const { data: legs, error: legsErr } = await bankDb(supabase)
+    .from("bank_transactions")
+    .select(
+      "id, bank_account_id, outlet_id, reference_no, description, reversed_at, reversal_of, amount"
+    )
+    .eq("organization_id", params.organizationId)
+    .eq("transaction_type", "transfer")
+    .in("reference_no", [`${pairKey}-OUT`, `${pairKey}-IN`]);
+  if (legsErr) return { ok: false, message: legsErr.message };
+
+  const originals = (legs ?? []).filter(
+    (row: { reversal_of: string | null }) => !row.reversal_of
+  );
+  if (originals.length !== 2) {
+    return { ok: false, message: "Could not find both sides of this transfer." };
+  }
+  if (
+    originals.some(
+      (row: { reversed_at: string | null }) => row.reversed_at
+    )
+  ) {
+    return { ok: false, message: "This transfer is already reversed." };
+  }
+
+  const outLeg = originals.find((row: { reference_no: string | null }) =>
+    isBankTransferOutflow({
+      transaction_type: "transfer",
+      reference_no: row.reference_no,
+    })
+  );
+  const inLeg = originals.find(
+    (row: { id: string; reference_no: string | null }) =>
+      row.id !== outLeg?.id
+  );
+  if (!outLeg || !inLeg || !outLeg.bank_account_id || !inLeg.bank_account_id) {
+    return { ok: false, message: "Could not find both sides of this transfer." };
+  }
+
+  const amount = roundMoney(Number(params.txn.amount));
+  const { data: fromAcc } = await bankDb(supabase)
+    .from("bank_accounts")
+    .select("id, name, current_balance, account_type")
+    .eq("id", outLeg.bank_account_id)
+    .eq("organization_id", params.organizationId)
+    .maybeSingle();
+  const { data: toAcc } = await bankDb(supabase)
+    .from("bank_accounts")
+    .select("id, name, current_balance, account_type")
+    .eq("id", inLeg.bank_account_id)
+    .eq("organization_id", params.organizationId)
+    .maybeSingle();
+  if (!fromAcc || !toAcc) {
+    return { ok: false, message: "Account not found." };
+  }
+
+  const fromPrev = roundMoney(Number(fromAcc.current_balance));
+  const toPrev = roundMoney(Number(toAcc.current_balance));
+  const toNext = roundMoney(toPrev - amount);
+  if (toNext < 0) {
+    return {
+      ok: false,
+      message: `Cannot reverse: ${toAcc.name} no longer has ${roundMoney(amount)} available.`,
+    };
+  }
+  const fromNext = roundMoney(fromPrev + amount);
+  const txnDate = params.txn.transaction_date;
+
+  const { data: outRev, error: outRevErr } = await bankDb(supabase)
+    .from("bank_transactions")
+    .insert({
+      organization_id: params.organizationId,
+      bank_account_id: fromAcc.id,
+      outlet_id: outLeg.outlet_id ?? params.txn.outlet_id,
+      transaction_type: "transfer",
+      amount,
+      reference_no: `REV-${pairKey}-IN`,
+      description: `Reversal: ${outLeg.description ?? "Transfer out"}`,
+      transaction_date: txnDate,
+      created_by: params.userId,
+      is_reconciled: true,
+      reversal_of: outLeg.id,
+    })
+    .select("id")
+    .single();
+  if (outRevErr || !outRev) {
+    return {
+      ok: false,
+      message: outRevErr?.message ?? "Could not reverse the source leg.",
+    };
+  }
+
+  const { data: inRev, error: inRevErr } = await bankDb(supabase)
+    .from("bank_transactions")
+    .insert({
+      organization_id: params.organizationId,
+      bank_account_id: toAcc.id,
+      outlet_id: inLeg.outlet_id ?? params.txn.outlet_id,
+      transaction_type: "transfer",
+      amount,
+      reference_no: `REV-${pairKey}-OUT`,
+      description: `Reversal: ${inLeg.description ?? "Transfer in"}`,
+      transaction_date: txnDate,
+      created_by: params.userId,
+      is_reconciled: true,
+      reversal_of: inLeg.id,
+    })
+    .select("id")
+    .single();
+  if (inRevErr || !inRev) {
+    await bankDb(supabase).from("bank_transactions").delete().eq("id", outRev.id);
+    return {
+      ok: false,
+      message: inRevErr?.message ?? "Could not reverse the destination leg.",
+    };
+  }
+
+  const now = new Date().toISOString();
+  const { error: markErr } = await bankDb(supabase)
+    .from("bank_transactions")
+    .update({ reversed_at: now, reversed_by: params.userId })
+    .in("id", [outLeg.id, inLeg.id]);
+  if (markErr) {
+    await bankDb(supabase).from("bank_transactions").delete().eq("id", inRev.id);
+    await bankDb(supabase).from("bank_transactions").delete().eq("id", outRev.id);
+    return { ok: false, message: markErr.message };
+  }
+
+  const { error: fromBalErr } = await bankDb(supabase)
+    .from("bank_accounts")
+    .update({ current_balance: fromNext })
+    .eq("id", fromAcc.id);
+  if (fromBalErr) {
+    await bankDb(supabase)
+      .from("bank_transactions")
+      .update({ reversed_at: null, reversed_by: null })
+      .in("id", [outLeg.id, inLeg.id]);
+    await bankDb(supabase).from("bank_transactions").delete().eq("id", inRev.id);
+    await bankDb(supabase).from("bank_transactions").delete().eq("id", outRev.id);
+    return { ok: false, message: fromBalErr.message };
+  }
+
+  const { error: toBalErr } = await bankDb(supabase)
+    .from("bank_accounts")
+    .update({ current_balance: toNext })
+    .eq("id", toAcc.id);
+  if (toBalErr) {
+    await bankDb(supabase)
+      .from("bank_accounts")
+      .update({ current_balance: fromPrev })
+      .eq("id", fromAcc.id);
+    await bankDb(supabase)
+      .from("bank_transactions")
+      .update({ reversed_at: null, reversed_by: null })
+      .in("id", [outLeg.id, inLeg.id]);
+    await bankDb(supabase).from("bank_transactions").delete().eq("id", inRev.id);
+    await bankDb(supabase).from("bank_transactions").delete().eq("id", outRev.id);
+    return { ok: false, message: toBalErr.message };
+  }
+
+  const originalLines = buildInterAccountTransferJournalLines({
+    amount,
+    fromType: String(fromAcc.account_type ?? "mpesa"),
+    toType: String(toAcc.account_type ?? "bank"),
+    fromName: String(fromAcc.name),
+    toName: String(toAcc.name),
+  });
+  if (originalLines) {
+    const lines = originalLines.map((l) => ({
+      accountCode: l.accountCode,
+      debit: l.credit,
+      credit: l.debit,
+      memo: `Reversal — ${l.memo ?? ""}`.trim(),
+    }));
+    const journal = await postJournalEntry({
+      description: `Reversal of transfer ${fromAcc.name} → ${toAcc.name}`,
+      sourceType: "transfer",
+      sourceId: inRev.id,
+      outletId: params.txn.outlet_id ?? undefined,
+      entryDate: txnDate,
+      lines,
+    });
+    if (!journal.ok) {
+      await bankDb(supabase)
+        .from("bank_accounts")
+        .update({ current_balance: fromPrev })
+        .eq("id", fromAcc.id);
+      await bankDb(supabase)
+        .from("bank_accounts")
+        .update({ current_balance: toPrev })
+        .eq("id", toAcc.id);
+      await bankDb(supabase)
+        .from("bank_transactions")
+        .update({ reversed_at: null, reversed_by: null })
+        .in("id", [outLeg.id, inLeg.id]);
+      await bankDb(supabase).from("bank_transactions").delete().eq("id", inRev.id);
+      await bankDb(supabase).from("bank_transactions").delete().eq("id", outRev.id);
+      return { ok: false, message: journal.message };
+    }
+  }
+
+  revalidatePath("/finance/banking");
+  return { ok: true };
+}
+
 /**
  * Reverse a mistaken deposit or withdrawal (owner/manager).
  * Posts a linked counter-entry, restores the account balance, and for cash
@@ -668,10 +1084,29 @@ export async function reverseBankTransaction(
       };
     }
     const type = String(txn.transaction_type);
+    if (type === "transfer") {
+      return reverseInterAccountTransfer(supabase, {
+        organizationId,
+        userId,
+        txn: {
+          id: String(txn.id),
+          bank_account_id: txn.bank_account_id
+            ? String(txn.bank_account_id)
+            : null,
+          outlet_id: txn.outlet_id ? String(txn.outlet_id) : null,
+          amount: roundMoney(Number(txn.amount)),
+          reference_no: txn.reference_no ? String(txn.reference_no) : null,
+          description: String(txn.description ?? ""),
+          transaction_date: txn.transaction_date
+            ? String(txn.transaction_date)
+            : new Date().toISOString().slice(0, 10),
+        },
+      });
+    }
     if (type !== "deposit" && type !== "withdrawal") {
       return {
         ok: false,
-        message: "Only deposits and withdrawals can be reversed.",
+        message: "Only deposits, withdrawals, and transfers can be reversed.",
       };
     }
     if (!txn.bank_account_id) {

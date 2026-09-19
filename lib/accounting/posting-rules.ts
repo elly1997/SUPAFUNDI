@@ -332,6 +332,38 @@ export function buildCashToBankJournalLines(amount: number): JournalLineInput[] 
   ];
 }
 
+function collectionAccountGlCode(accountType: string | null | undefined): string {
+  if (accountType === "bank") return SYSTEM_ACCOUNT_CODES.bank;
+  return SYSTEM_ACCOUNT_CODES.mpesa;
+}
+
+/** Move money between collection accounts (M-Pesa ↔ bank). Skip if both map to the same GL. */
+export function buildInterAccountTransferJournalLines(params: {
+  amount: number;
+  fromType: string;
+  toType: string;
+  fromName: string;
+  toName: string;
+}): JournalLineInput[] | null {
+  const fromCode = collectionAccountGlCode(params.fromType);
+  const toCode = collectionAccountGlCode(params.toType);
+  if (fromCode === toCode) return null;
+  return [
+    {
+      accountCode: toCode,
+      debit: params.amount,
+      credit: 0,
+      memo: `Transfer from ${params.fromName}`,
+    },
+    {
+      accountCode: fromCode,
+      debit: 0,
+      credit: params.amount,
+      memo: `Transfer to ${params.toName}`,
+    },
+  ];
+}
+
 export type ExpensePostingInput = {
   amount: number;
   /** @deprecated use paymentMethod */

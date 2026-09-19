@@ -55,6 +55,7 @@ import {
   recordBankTransaction,
   toggleBankTransactionReconciled,
 } from "@/lib/actions/banking";
+import { isCollectionOutflow } from "@/lib/finance/bank-transfer";
 import { AdjustBalanceDialog } from "@/components/finance/adjust-balance-dialog";
 import { canManageSettings } from "@/lib/auth/roles";
 import { useAuthStore } from "@/stores/authStore";
@@ -78,9 +79,13 @@ export function BankingPageClient() {
   const [lipaMerchant, setLipaMerchant] = useState("");
   const [showInPos, setShowInPos] = useState(true);
   const [openingBal, setOpeningBal] = useState("");
-  const [txnType, setTxnType] = useState<"deposit" | "withdrawal">("deposit");
+  const [txnType, setTxnType] = useState<
+    "deposit" | "withdrawal" | "transfer"
+  >("deposit");
   const [txnAmount, setTxnAmount] = useState("");
   const [txnDesc, setTxnDesc] = useState("");
+  const [txnFromId, setTxnFromId] = useState("");
+  const [txnToId, setTxnToId] = useState("");
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [reverseTarget, setReverseTarget] = useState<BankTransactionRow | null>(
     null
@@ -163,6 +168,15 @@ export function BankingPageClient() {
 
   const txnMut = useMutation({
     mutationFn: () => {
+      if (txnType === "transfer") {
+        return recordBankTransaction({
+          bankAccountId: txnFromId,
+          toBankAccountId: txnToId,
+          transactionType: "transfer",
+          amount: Number(txnAmount),
+          description: txnDesc || undefined,
+        });
+      }
       const accountId =
         selectedAccount === "all" ? activeAccounts[0]?.id ?? "" : selectedAccount;
       return recordBankTransaction({
@@ -174,10 +188,13 @@ export function BankingPageClient() {
     },
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success("Transaction recorded");
+        toast.success(
+          txnType === "transfer" ? "Transfer recorded" : "Transaction recorded"
+        );
         setTxnOpen(false);
         setTxnAmount("");
         setTxnDesc("");
+        setTxnType("deposit");
         void queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
         void queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
       } else toast.error(r.message);
@@ -217,7 +234,9 @@ export function BankingPageClient() {
     canReverse &&
     !t.reversed_at &&
     !t.reversal_of &&
-    (t.transaction_type === "deposit" || t.transaction_type === "withdrawal");
+    (t.transaction_type === "deposit" ||
+      t.transaction_type === "withdrawal" ||
+      t.transaction_type === "transfer");
 
   const typeHint = PAYMENT_ACCOUNT_TYPES.find((t) => t.value === accountType)?.hint;
 
@@ -435,11 +454,14 @@ export function BankingPageClient() {
                     <p
                       className={cn(
                         "shrink-0 font-money font-semibold",
-                        t.transaction_type === "withdrawal" && "text-outflow",
+                        t.transaction_type === "withdrawal" ||
+                          isCollectionOutflow(t)
+                          ? "text-outflow"
+                          : "text-inflow",
                         t.reversed_at && "line-through opacity-60"
                       )}
                     >
-                      {t.transaction_type === "withdrawal" ? "−" : "+"}
+                      {isCollectionOutflow(t) ? "−" : "+"}
                       {formatTzs(t.amount)}
                     </p>
                   </div>
@@ -509,11 +531,14 @@ export function BankingPageClient() {
                       <TableCell
                         className={cn(
                           "text-right font-money",
-                          t.transaction_type === "withdrawal" && "text-outflow",
+                          t.transaction_type === "withdrawal" ||
+                            isCollectionOutflow(t)
+                            ? "text-outflow"
+                            : undefined,
                           t.reversed_at && "line-through opacity-60"
                         )}
                       >
-                        {t.transaction_type === "withdrawal" ? "−" : "+"}
+                        {isCollectionOutflow(t) ? "−" : "+"}
                         {formatTzs(t.amount)}
                       </TableCell>
                       <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">
@@ -668,13 +693,30 @@ export function BankingPageClient() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={txnOpen} onOpenChange={setTxnOpen}>
+      <Dialog
+        open={txnOpen}
+        onOpenChange={(open) => {
+          setTxnOpen(open);
+          if (open) {
+            const fromId =
+              selectedAccount !== "all"
+                ? selectedAccount
+                : (activeAccounts[0]?.id ?? "");
+            setTxnFromId(fromId);
+            setTxnToId(
+              activeAccounts.find((a) => a.id !== fromId)?.id ?? ""
+            );
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Record transaction</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            {selectedAccount === "all" && activeAccounts.length > 0 && (
+            {txnType !== "transfer" &&
+              selectedAccount === "all" &&
+              activeAccounts.length > 0 && (
               <p className="text-xs text-warning">
                 Posting to: {activeAccounts[0]?.name}. Select an account card first
                 to target another.
@@ -685,7 +727,9 @@ export function BankingPageClient() {
               <Select
                 value={txnType}
                 onValueChange={(v) =>
-                  setTxnType((v ?? "deposit") as "deposit" | "withdrawal")
+                  setTxnType(
+                    (v ?? "deposit") as "deposit" | "withdrawal" | "transfer"
+                  )
                 }
               >
                 <SelectTrigger>
@@ -694,9 +738,72 @@ export function BankingPageClient() {
                 <SelectContent>
                   <SelectItem value="deposit">Deposit</SelectItem>
                   <SelectItem value="withdrawal">Withdrawal</SelectItem>
+                  <SelectItem value="transfer">Transfer</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            {txnType === "transfer" ? (
+              <>
+                <div>
+                  <Label>From</Label>
+                  <Select
+                    value={txnFromId}
+                    onValueChange={(v) => {
+                      const next = v ?? "";
+                      setTxnFromId(next);
+                      if (txnToId === next) {
+                        setTxnToId(
+                          activeAccounts.find((a) => a.id !== next)?.id ?? ""
+                        );
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Source account" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {activeAccounts.map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.name}
+                          <span className="ml-1 text-muted-foreground">
+                            · {formatTzs(a.current_balance)}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>To</Label>
+                  <Select
+                    value={txnToId}
+                    onValueChange={(v) => setTxnToId(v ?? "")}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Destination account" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {activeAccounts
+                        .filter((a) => a.id !== txnFromId)
+                        .map((a) => (
+                          <SelectItem key={a.id} value={a.id}>
+                            {a.name}
+                            <span className="ml-1 text-muted-foreground">
+                              · {formatTzs(a.current_balance)}
+                            </span>
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  {activeAccounts.length < 2 ? (
+                    <p className="form-hint mt-1">
+                      Add a second collection account to transfer between
+                      M-Pesa, bank, Lipa, or till.
+                    </p>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
             <div>
               <Label>Amount (TZS)</Label>
               <Input
@@ -719,10 +826,12 @@ export function BankingPageClient() {
                 activeAccounts.length === 0 ||
                 !txnAmount ||
                 Number(txnAmount) <= 0 ||
-                txnMut.isPending
+                txnMut.isPending ||
+                (txnType === "transfer" &&
+                  (!txnFromId || !txnToId || txnFromId === txnToId))
               }
             >
-              Post
+              {txnType === "transfer" ? "Transfer" : "Post"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -782,9 +891,9 @@ export function BankingPageClient() {
               </div>
               <p className="form-hint text-xs">
                 A counter-entry will be posted for the same amount and the
-                account balance restored. Cash drawer deposits also update the
-                day&apos;s expected drawer cash — this only works while the day
-                is not yet reconciled.
+                account balance restored. Transfers reverse both accounts.
+                Cash drawer deposits also update the day&apos;s expected drawer
+                cash — this only works while the day is not yet reconciled.
               </p>
             </div>
           )}
