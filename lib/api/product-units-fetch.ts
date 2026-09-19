@@ -113,7 +113,8 @@ export async function saveProductEdit(
   productId: string,
   payload: {
     name: string;
-    categoryId: string | null;
+    categoryId?: string | null;
+    categoryName?: string;
     units: {
       id?: string;
       unitLabel: string;

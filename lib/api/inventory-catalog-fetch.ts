@@ -248,3 +248,32 @@ export async function deleteProductApi(
   }
   return { ok: true };
 }
+
+export async function bulkRecategorizeProductsApi(params: {
+  outletId: string;
+  productIds: string[];
+  categoryId?: string | null;
+  categoryName?: string;
+}): Promise<
+  { ok: true; updated: number } | { ok: false; message: string }
+> {
+  const res = await fetch("/api/inventory/products/recategorize", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const body = (await res.json()) as {
+    ok?: boolean;
+    updated?: number;
+    error?: string;
+    message?: string;
+  };
+  if (!res.ok || !body.ok) {
+    return {
+      ok: false,
+      message: body.error ?? body.message ?? "Could not update categories",
+    };
+  }
+  return { ok: true, updated: body.updated ?? 0 };
+}

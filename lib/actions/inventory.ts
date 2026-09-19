@@ -13,8 +13,13 @@ import { generateProductCode } from "@/lib/products/sku";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { applyMissingRetailPricesCore } from "@/lib/inventory/apply-missing-retail-prices";
 import { upsertRetailPrice } from "@/lib/inventory/product-prices";
+import {
+  ensureProductCategory,
+  resolveProductCategoryId,
+} from "@/lib/inventory/resolve-category";
 import { retailPriceFromCost } from "@/lib/utils/calculations";
 import {
+  SUPABASE_IN_FILTER_CHUNK,
   fetchAllPaginated,
   fetchByInChunks,
 } from "@/lib/supabase/query-chunks";
@@ -72,50 +77,76 @@ function catalogDb(supabase: Supabase) {
   };
 }
 
-async function ensureCategory(
-  supabase: Supabase,
-  organizationId: string,
-  categoryId: string | null,
-  categoryName: string | undefined
-): Promise<string> {
-  if (categoryId) {
-    const { data: cat } = await supabase
-      .from("categories")
+const bulkRecategorizeInput = z.object({
+  outletId: z.string().uuid(),
+  productIds: z.array(z.string().uuid()).min(1).max(200),
+  categoryId: z.string().uuid().nullable().optional(),
+  categoryName: z.string().min(1).max(200).optional(),
+});
+
+export async function bulkRecategorizeProducts(
+  raw: z.infer<typeof bulkRecategorizeInput>
+): Promise<
+  { ok: true; updated: number } | { ok: false; message: string }
+> {
+  try {
+    const input = bulkRecategorizeInput.parse(raw);
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: outlet } = await supabase
+      .from("outlets")
       .select("id")
-      .eq("id", categoryId)
-      .eq("organization_id", organizationId)
+      .eq("id", input.outletId)
+      .eq("organization_id", ctx.organizationId)
       .maybeSingle();
-    if (!cat?.id) {
-      throw new Error("Invalid category for this organization.");
+    if (!outlet) {
+      return { ok: false, message: "Invalid outlet for your organization." };
     }
-    return cat.id;
+
+    const uniqueIds = Array.from(new Set(input.productIds));
+    const resolvedCategoryId = await resolveProductCategoryId(
+      supabase,
+      ctx.organizationId,
+      input.categoryId ?? null,
+      input.categoryName
+    );
+
+    let updated = 0;
+    for (let i = 0; i < uniqueIds.length; i += SUPABASE_IN_FILTER_CHUNK) {
+      const chunk = uniqueIds.slice(i, i + SUPABASE_IN_FILTER_CHUNK);
+      const { data, error } = await catalogDb(supabase)
+        .from("products")
+        .update({ category_id: resolvedCategoryId })
+        .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", input.outletId)
+        .in("id", chunk)
+        .select("id");
+      if (error) {
+        return { ok: false, message: error.message };
+      }
+      updated += data?.length ?? 0;
+    }
+
+    if (updated === 0) {
+      return {
+        ok: false,
+        message:
+          "No matching products in this outlet. Switch branch or refresh the list.",
+      };
+    }
+
+    revalidatePath("/inventory/products");
+    revalidatePath("/inventory/stock");
+    revalidatePath("/pos");
+    revalidatePath("/reports");
+    return { ok: true, updated };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not update categories",
+    };
   }
-  if (!categoryName?.trim()) {
-    throw new Error("Category is required.");
-  }
-  const name = categoryName.trim();
-  const { data: list, error: listErr } = await supabase
-    .from("categories")
-    .select("id, name")
-    .eq("organization_id", organizationId);
-  if (listErr) {
-    throw new Error(listErr.message);
-  }
-  const match = list?.find(
-    (c) => c.name.trim().toLowerCase() === name.toLowerCase()
-  );
-  if (match) {
-    return match.id;
-  }
-  const { data: created, error } = await supabase
-    .from("categories")
-    .insert({ organization_id: organizationId, name })
-    .select("id")
-    .single();
-  if (error || !created) {
-    throw new Error(error?.message ?? "Could not create category.");
-  }
-  return created.id;
 }
 
 export async function createProduct(
@@ -140,7 +171,7 @@ export async function createProduct(
 
     let code = input.code?.trim() || generateProductCode();
     for (let attempt = 0; attempt < 5; attempt++) {
-      const categoryId = await ensureCategory(
+      const categoryId = await ensureProductCategory(
         supabase,
         ctx.organizationId,
         input.categoryId,

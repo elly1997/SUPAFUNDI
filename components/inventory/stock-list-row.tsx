@@ -48,6 +48,8 @@ type RowProps = {
   outletId: string | null;
   saving: boolean;
   recommendation?: PriceRecommendation;
+  selected?: boolean;
+  onSelectedChange?: (selected: boolean) => void;
   onRequestChange: (change: PendingInventoryChange) => void;
   onSaveCatalogField?: (field: CatalogTextField, value: string) => void;
   onEdit?: () => void;
@@ -61,6 +63,8 @@ export function StockListRow({
   outletId,
   saving,
   recommendation,
+  selected = false,
+  onSelectedChange,
   onRequestChange,
   onSaveCatalogField,
   onEdit,
@@ -96,6 +100,15 @@ export function StockListRow({
 
   return (
     <TableRow className={saving ? "opacity-70" : undefined}>
+      <TableCell className="w-10 pr-0">
+        <input
+          type="checkbox"
+          className="size-4 accent-primary"
+          checked={selected}
+          onChange={(e) => onSelectedChange?.(e.target.checked)}
+          aria-label={`Select ${row.product_name}`}
+        />
+      </TableCell>
       <TableCell>
         <span
           className={cn(

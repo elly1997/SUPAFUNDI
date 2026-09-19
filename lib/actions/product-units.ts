@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { listCategoriesForOrg } from "@/lib/actions/inventory";
+import { resolveProductCategoryId } from "@/lib/inventory/resolve-category";
 import {
   type ProductUnitOption,
   defaultUnitsForProduct,
@@ -204,7 +205,8 @@ const unitInput = z.object({
 const updateProductEditInput = z.object({
   productId: z.string().uuid(),
   name: z.string().min(1).max(200),
-  categoryId: z.string().uuid().nullable(),
+  categoryId: z.string().uuid().nullable().optional(),
+  categoryName: z.string().min(1).max(200).optional(),
   units: z.array(unitInput).min(1).max(12),
 });
 
@@ -232,6 +234,21 @@ export async function updateProductEdit(
       .maybeSingle();
     if (!product) return { ok: false, message: "Product not found." };
 
+    let categoryId: string | null;
+    try {
+      categoryId = await resolveProductCategoryId(
+        supabase,
+        ctx.organizationId,
+        input.categoryId ?? null,
+        input.categoryName
+      );
+    } catch (e) {
+      return {
+        ok: false,
+        message: e instanceof Error ? e.message : "Invalid category",
+      };
+    }
+
     const baseUnit = baseUnits[0]!;
     const normalizedUnits = input.units.map((u) => ({
       ...u,
@@ -242,7 +259,7 @@ export async function updateProductEdit(
       .from("products")
       .update({
         name: input.name.trim(),
-        category_id: input.categoryId,
+        category_id: categoryId,
         unit: baseUnit.unitLabel.trim(),
       })
       .eq("id", input.productId);

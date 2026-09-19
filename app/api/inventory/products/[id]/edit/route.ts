@@ -8,7 +8,8 @@ import { z } from "zod";
 
 const updateSchema = z.object({
   name: z.string().min(1).max(200),
-  categoryId: z.string().uuid().nullable(),
+  categoryId: z.string().uuid().nullable().optional(),
+  categoryName: z.string().min(1).max(200).optional(),
   units: z.array(
     z.object({
       id: z.string().uuid().optional(),
@@ -53,7 +54,8 @@ export async function PATCH(
     const result = await updateProductEdit({
       productId: id,
       name: body.name,
-      categoryId: body.categoryId,
+      categoryId: body.categoryId ?? null,
+      categoryName: body.categoryName,
       units: body.units,
     });
     if (!result.ok) {

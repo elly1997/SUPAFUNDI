@@ -53,6 +53,7 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [newCategoryName, setNewCategoryName] = useState("");
   const [unitDrafts, setUnitDrafts] = useState<UnitDraft[]>([]);
 
   const { data, isLoading, isError, error } = useQuery({
@@ -65,6 +66,7 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
     if (!data) return;
     setName(data.name);
     setCategoryId(data.categoryId ?? "");
+    setNewCategoryName("");
     setUnitDrafts(
       data.units.map((u) => ({
         key: u.id,
@@ -83,6 +85,9 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
   const saveMut = useMutation({
     mutationFn: async () => {
       if (!productId) throw new Error("No product");
+      if (categoryId === "__new__" && !newCategoryName.trim()) {
+        throw new Error("Enter a new category name");
+      }
       const units = unitDrafts.map((u, i) => ({
         id: u.id,
         unitLabel: u.unitLabel.trim(),
@@ -95,7 +100,9 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
       }));
       await saveProductEdit(productId, {
         name: name.trim(),
-        categoryId: categoryId || null,
+        ...(categoryId === "__new__"
+          ? { categoryId: null, categoryName: newCategoryName.trim() }
+          : { categoryId: categoryId || null }),
         units,
       });
     },
@@ -178,7 +185,16 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
                     {c.name}
                   </option>
                 ))}
+                <option value="__new__">+ New category…</option>
               </select>
+              {categoryId === "__new__" ? (
+                <Input
+                  placeholder="New category name"
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  autoFocus
+                />
+              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -340,7 +356,12 @@ export function ProductEditDialog({ productId, open, onOpenChange }: Props) {
           </Button>
           <Button
             type="button"
-            disabled={!name.trim() || saveMut.isPending || isLoading}
+            disabled={
+              !name.trim() ||
+              saveMut.isPending ||
+              isLoading ||
+              (categoryId === "__new__" && !newCategoryName.trim())
+            }
             onClick={() => saveMut.mutate()}
           >
             {saveMut.isPending && <Loader2 className="mr-2 size-4 animate-spin" />}

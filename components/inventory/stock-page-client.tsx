@@ -8,6 +8,7 @@ import {
   Download,
   FileSpreadsheet,
   FileText,
+  FolderInput,
   Loader2,
   Pencil,
   Plus,
@@ -20,6 +21,7 @@ import Link from "next/link";
 import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
+import { BulkRecategorizeDialog } from "@/components/inventory/bulk-recategorize-dialog";
 import { IncomingTransfersPanel } from "@/components/inventory/incoming-transfers-panel";
 import { StockItemStatementDialog } from "@/components/inventory/stock-item-statement-dialog";
 import { StockTransferDialog } from "@/components/inventory/stock-transfer-dialog";
@@ -124,6 +126,8 @@ export function StockPageClient() {
   const deferredSearch = useDeferredValue(search);
   const [page, setPage] = useState(1);
   const stockListRef = useRef<HTMLDivElement>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [recategorizeOpen, setRecategorizeOpen] = useState(false);
 
   const { data: outlets = [] } = useQuery({
     queryKey: ["org-outlets"],
@@ -143,6 +147,7 @@ export function StockPageClient() {
 
   useEffect(() => {
     setPage(1);
+    setSelectedIds(new Set());
   }, [deferredSearch, categoryFilter, statusFilter, outletId]);
 
   const { data, isLoading, isFetching } = useQuery({
@@ -364,6 +369,41 @@ export function StockPageClient() {
       rows: section.rows,
     }));
   }, [rows]);
+
+  const pageProductIds = useMemo(
+    () => rows.map((r) => r.product_id),
+    [rows]
+  );
+  const allPageSelected =
+    pageProductIds.length > 0 &&
+    pageProductIds.every((id) => selectedIds.has(id));
+  const somePageSelected =
+    !allPageSelected && pageProductIds.some((id) => selectedIds.has(id));
+
+  const toggleSelected = (productId: string, selected: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (selected) next.add(productId);
+      else next.delete(productId);
+      return next;
+    });
+  };
+
+  const toggleSelectAllPage = (selected: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of pageProductIds) {
+        if (selected) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  };
+
+  const selectedIdList = useMemo(
+    () => Array.from(selectedIds),
+    [selectedIds]
+  );
 
   return (
     <div className="space-y-6">
@@ -615,6 +655,33 @@ export function StockPageClient() {
         ) : null}
       </div>
 
+      {selectedIds.size > 0 ? (
+        <div className="sticky top-2 z-20 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/40 bg-card/95 px-3 py-2.5 shadow-card backdrop-blur">
+          <span className="text-sm font-medium">
+            {selectedIds.size} selected
+          </span>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              disabled={!outletId}
+              onClick={() => setRecategorizeOpen(true)}
+            >
+              <FolderInput className="mr-1.5 size-3.5" />
+              Move to category
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setSelectedIds(new Set())}
+            >
+              Clear
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="flex items-center gap-2">
@@ -670,6 +737,10 @@ export function StockPageClient() {
                       row={r}
                       outletId={outletId}
                       saving={isRowSaving(r.product_id)}
+                      selected={selectedIds.has(r.product_id)}
+                      onSelectedChange={(sel) =>
+                        toggleSelected(r.product_id, sel)
+                      }
                       onEdit={() => setEditProductId(r.product_id)}
                       onQtySave={(qty) => {
                         if (!outletId) {
@@ -698,6 +769,18 @@ export function StockPageClient() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10 pr-0">
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-primary"
+                      checked={allPageSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = somePageSelected;
+                      }}
+                      onChange={(e) => toggleSelectAllPage(e.target.checked)}
+                      aria-label="Select all on this page"
+                    />
+                  </TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>SKU</TableHead>
                   <TableHead>Product</TableHead>
@@ -714,7 +797,7 @@ export function StockPageClient() {
                     <CatalogCategoryTableHeader
                       categoryName={section.categoryName}
                       itemCount={section.rows.length}
-                      colSpan={8}
+                      colSpan={9}
                       stockValue={stockSectionValue(section.rows)}
                     />
                     {section.rows.map((r) => (
@@ -723,6 +806,10 @@ export function StockPageClient() {
                         row={r}
                         outletId={outletId}
                         saving={isRowSaving(r.product_id)}
+                        selected={selectedIds.has(r.product_id)}
+                        onSelectedChange={(sel) =>
+                          toggleSelected(r.product_id, sel)
+                        }
                         recommendation={recByProduct.get(r.product_id)}
                         onRequestChange={setPendingChange}
                         onSaveCatalogField={(field, value) =>
@@ -793,6 +880,19 @@ export function StockPageClient() {
         preferredOutletId={outletId}
         onCreated={invalidateAfterImport}
       />
+
+      {outletId ? (
+        <BulkRecategorizeDialog
+          open={recategorizeOpen}
+          onOpenChange={setRecategorizeOpen}
+          outletId={outletId}
+          productIds={selectedIdList}
+          onDone={() => {
+            setSelectedIds(new Set());
+            invalidateAfterImport();
+          }}
+        />
+      ) : null}
 
       <ProductEditDialog
         productId={editProductId}
@@ -868,6 +968,8 @@ function StockCard({
   row,
   outletId,
   saving,
+  selected = false,
+  onSelectedChange,
   onEdit,
   onQtySave,
   onStatement,
@@ -877,6 +979,8 @@ function StockCard({
   row: StockLevelRow;
   outletId: string | null;
   saving: boolean;
+  selected?: boolean;
+  onSelectedChange?: (selected: boolean) => void;
   onEdit: () => void;
   onQtySave: (qty: number) => void;
   onStatement: () => void;
@@ -889,19 +993,34 @@ function StockCard({
   }, [row.quantity]);
 
   return (
-    <div className={cn("rounded-xl border border-border bg-card p-3", saving && "opacity-70")}>
+    <div
+      className={cn(
+        "rounded-xl border border-border bg-card p-3",
+        saving && "opacity-70",
+        selected && "border-primary/50 ring-1 ring-primary/30"
+      )}
+    >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <button
-            type="button"
-            onClick={onEdit}
-            className="text-left font-semibold leading-snug text-primary underline-offset-2 hover:underline"
-          >
-            {row.product_name}
-          </button>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {row.code ?? "No SKU"} · {row.unit}
-          </p>
+        <div className="flex min-w-0 items-start gap-2">
+          <input
+            type="checkbox"
+            className="mt-1 size-4 shrink-0 accent-primary"
+            checked={selected}
+            onChange={(e) => onSelectedChange?.(e.target.checked)}
+            aria-label={`Select ${row.product_name}`}
+          />
+          <div className="min-w-0">
+            <button
+              type="button"
+              onClick={onEdit}
+              className="text-left font-semibold leading-snug text-primary underline-offset-2 hover:underline"
+            >
+              {row.product_name}
+            </button>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {row.code ?? "No SKU"} · {row.unit} · {row.category_name}
+            </p>
+          </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           <span
