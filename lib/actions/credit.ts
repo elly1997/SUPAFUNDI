@@ -949,6 +949,7 @@ export async function recordCustomerPayment(
         {
           outletId: ctx.outletId ?? undefined,
           paymentMethod: input.paymentMethod as "mpesa" | "bank_transfer",
+          allowNegativeBalance: true,
         }
       );
       if (!bank.ok) {

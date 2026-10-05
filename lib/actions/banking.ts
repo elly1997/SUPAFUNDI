@@ -754,7 +754,12 @@ export async function creditAccountFromPosSale(
   invoiceNo: string,
   businessDate?: string,
   description?: string,
-  options?: { outletId?: string; paymentMethod?: CollectionReceiptMethod }
+  options?: {
+    outletId?: string;
+    paymentMethod?: CollectionReceiptMethod;
+    /** Customer receipts may credit an overdrawn collection account. */
+    allowNegativeBalance?: boolean;
+  }
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   if (amount <= 0) return { ok: true };
   if (options?.paymentMethod) {
@@ -772,6 +777,7 @@ export async function creditAccountFromPosSale(
     description: description ?? `POS sale ${invoiceNo}`,
     transactionDate: businessDate,
     outletId: options?.outletId,
+    allowNegativeBalance: options?.allowNegativeBalance,
   });
 }
 

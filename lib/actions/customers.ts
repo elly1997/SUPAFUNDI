@@ -256,6 +256,7 @@ export async function recordCustomerDeposit(
         {
           outletId: input.outletId,
           paymentMethod: input.paymentMethod as "mpesa" | "bank_transfer",
+          allowNegativeBalance: true,
         }
       );
       if (!bank.ok) {
