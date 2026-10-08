@@ -10,8 +10,13 @@ import {
   formatClosingReportText,
   type ClosingReportData,
 } from "@/lib/utils/closing-report";
-import { buildCashVarianceJournalLines } from "@/lib/accounting/posting-rules";
+import {
+  buildCashVarianceJournalLines,
+  buildReversingJournalLines,
+  type JournalLineInput,
+} from "@/lib/accounting/posting-rules";
 import { postJournalEntry } from "@/lib/actions/accounting";
+import { requireManagerContext } from "@/lib/server/require-manager";
 import { getOrganizationSettings } from "@/lib/actions/settings";
 import { fetchAllPaginated } from "@/lib/supabase/query-chunks";
 import { businessDayBounds, isoDateToTimestamptz, addDaysIso, todayIso } from "@/lib/utils/iso-date";
@@ -520,10 +525,14 @@ export async function reconcileDailyClosing(
       notes: input.notes?.trim() || null,
     };
 
-    const { error } = await supabase.from("daily_closings").upsert(row, {
-      onConflict: "organization_id,outlet_id,business_date",
-    });
-    if (error) return { ok: false, message: error.message };
+    const { data: saved, error } = await supabase
+      .from("daily_closings")
+      .upsert(row, {
+        onConflict: "organization_id,outlet_id,business_date",
+      })
+      .select("id")
+      .single();
+    if (error || !saved) return { ok: false, message: error?.message ?? "Reconcile failed" };
 
     const { data: openSession } = await supabase
       .from("cash_sessions")
@@ -551,7 +560,7 @@ export async function reconcileDailyClosing(
       const journal = await postJournalEntry({
         description: `Cash count variance ${input.businessDate} (${variance > 0 ? "over" : "short"})`,
         sourceType: "manual",
-        sourceId: undefined,
+        sourceId: saved.id,
         outletId: input.outletId,
         entryDate: input.businessDate,
         lines: varianceLines,
@@ -574,6 +583,182 @@ export async function reconcileDailyClosing(
     return {
       ok: false,
       message: e instanceof Error ? e.message : "Reconcile failed",
+    };
+  }
+}
+
+const reverseClosingInput = z.object({
+  outletId: z.string().uuid(),
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+async function loadVarianceJournalLines(
+  supabase: SupabaseClient,
+  entryId: string
+): Promise<JournalLineInput[]> {
+  const { data: lines } = await supabase
+    .from("journal_entry_lines")
+    .select("debit, credit, account_id")
+    .eq("journal_entry_id", entryId);
+  if (!lines?.length) return [];
+
+  const accountIds = Array.from(new Set(lines.map((l) => l.account_id)));
+  const { data: accounts } = await supabase
+    .from("chart_of_accounts")
+    .select("id, code")
+    .in("id", accountIds);
+  const codeById = new Map((accounts ?? []).map((a) => [a.id, a.code]));
+
+  return lines
+    .map((l) => {
+      const code = codeById.get(l.account_id);
+      if (!code) return null;
+      return {
+        accountCode: code,
+        debit: Number(l.debit),
+        credit: Number(l.credit),
+      };
+    })
+    .filter((l): l is JournalLineInput => l !== null);
+}
+
+/** Unlock a reconciled day and reverse its cash-variance journal. Owners and managers only. */
+export async function reverseDailyClosing(
+  raw: z.infer<typeof reverseClosingInput>
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const input = reverseClosingInput.parse(raw);
+    const ctx = await requireManagerContext();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: closing, error: findErr } = await supabase
+      .from("daily_closings")
+      .select("id, status, notes")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", input.outletId)
+      .eq("business_date", input.businessDate)
+      .maybeSingle();
+    if (findErr) return { ok: false, message: findErr.message };
+    if (!closing) return { ok: false, message: "This day is not reconciled." };
+    if (closing.status !== "reconciled") {
+      return { ok: false, message: "This day is not reconciled." };
+    }
+
+    const { data: later } = await supabase
+      .from("daily_closings")
+      .select("business_date")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", input.outletId)
+      .eq("status", "reconciled")
+      .gt("business_date", input.businessDate)
+      .order("business_date", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (later?.business_date) {
+      return {
+        ok: false,
+        message: `Reverse ${later.business_date} first. A later day is already reconciled and uses this closing as its opening float.`,
+      };
+    }
+
+    const { data: journals, error: journalErr } = await supabase
+      .from("journal_entries")
+      .select("id, description, source_id, is_reversal, reversed_entry_id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", input.outletId)
+      .eq("entry_date", input.businessDate)
+      .eq("source_type", "manual");
+    if (journalErr) return { ok: false, message: journalErr.message };
+
+    const variancePrefix = `Cash count variance ${input.businessDate}`;
+    const originals = (journals ?? []).filter(
+      (entry) =>
+        !entry.is_reversal &&
+        (entry.source_id === closing.id ||
+          (entry.description ?? "").startsWith(variancePrefix))
+    );
+    const reversedIds = new Set(
+      (journals ?? [])
+        .map((entry) => entry.reversed_entry_id)
+        .filter((id): id is string => Boolean(id))
+    );
+    const pending = originals.filter((entry) => !reversedIds.has(entry.id));
+
+    for (const entry of pending) {
+      const lines = await loadVarianceJournalLines(supabase, entry.id);
+      if (!lines.length) continue;
+      const journal = await postJournalEntry({
+        description: `Reversal of cash count variance ${input.businessDate}`,
+        sourceType: "manual",
+        sourceId: closing.id,
+        outletId: input.outletId,
+        entryDate: input.businessDate,
+        lines: buildReversingJournalLines(lines),
+      });
+      if (!journal.ok) return { ok: false, message: journal.message };
+
+      const { error: markErr } = await supabase
+        .from("journal_entries")
+        .update({
+          is_reversal: true,
+          reversed_entry_id: entry.id,
+        } as never)
+        .eq("id", journal.journalEntryId);
+      if (markErr) return { ok: false, message: markErr.message };
+    }
+
+    const note = `Reconciliation reversed ${new Date().toISOString().slice(0, 16)}`;
+    const { error: unlockErr } = await supabase
+      .from("daily_closings")
+      .update({
+        status: "open",
+        reconciled_at: null,
+        reconciled_by: null,
+        report_sent_at: null,
+        notes: closing.notes?.trim()
+          ? `${closing.notes.trim()}\n${note}`
+          : note,
+      })
+      .eq("id", closing.id);
+    if (unlockErr) return { ok: false, message: unlockErr.message };
+
+    const { data: openSession } = await supabase
+      .from("cash_sessions")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", input.outletId)
+      .eq("status", "open")
+      .limit(1)
+      .maybeSingle();
+    if (!openSession) {
+      const { data: closedSession } = await supabase
+        .from("cash_sessions")
+        .select("id")
+        .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", input.outletId)
+        .eq("business_date", input.businessDate)
+        .eq("status", "closed")
+        .order("closed_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (closedSession) {
+        await supabase
+          .from("cash_sessions")
+          .update({ status: "open", closed_at: null } as { status: string })
+          .eq("id", closedSession.id);
+      }
+    }
+
+    revalidatePath("/daily-closing");
+    revalidatePath("/reports");
+    revalidatePath("/pos");
+    revalidatePath("/finance/cash-sessions");
+    revalidatePath("/inventory/catch-up");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not reverse reconciliation",
     };
   }
 }

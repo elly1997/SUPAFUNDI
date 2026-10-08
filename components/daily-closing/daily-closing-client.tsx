@@ -5,6 +5,7 @@ import {
   Loader2,
   MessageCircle,
   Printer,
+  RotateCcw,
   Scale,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
@@ -28,7 +29,9 @@ import {
   fetchDayCashSummary,
   fetchUnreconciledDays,
   reconcileDailyClosingApi,
+  reverseDailyClosingApi,
 } from "@/lib/api/daily-ops-fetch";
+import { canManageSettings, isUserRole } from "@/lib/auth/roles";
 import { formatClosingReportText } from "@/lib/utils/closing-report";
 import {
   resolveActiveOutletId,
@@ -54,6 +57,10 @@ export function DailyClosingClient({ outlets }: Props) {
   const setBusinessDate = useBusinessDateStore((s) => s.setBusinessDate);
   const activeOutletId = useAuthStore((s) => s.activeOutletId);
   const sessionOutletId = useAuthStore((s) => s.session?.outletId);
+  const sessionRole = useAuthStore((s) => s.session?.role ?? null);
+  const canReverse = canManageSettings(
+    isUserRole(sessionRole ?? "") ? sessionRole : null
+  );
   const initialOutlet =
     resolveActiveOutletId(outlets, {
       stored: activeOutletId,
@@ -135,6 +142,30 @@ export function DailyClosingClient({ outlets }: Props) {
       if (r.ok) {
         toast.success("Day reconciled");
         setCountedClosing("");
+        void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
+        void queryClient.invalidateQueries({ queryKey: ["unreconciled-days"] });
+        void queryClient.invalidateQueries({
+          queryKey: ["reconciled-business-dates"],
+        });
+        void queryClient.invalidateQueries({ queryKey: ["drawer-status"] });
+        void queryClient.invalidateQueries({ queryKey: ["catch-up-days"] });
+        void queryClient.invalidateQueries({ queryKey: ["reports"] });
+      } else toast.error(r.message);
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Failed"),
+  });
+
+  const reverseMut = useMutation({
+    mutationFn: async () => {
+      if (!effectiveOutlet) throw new Error("Select an outlet");
+      return reverseDailyClosingApi({
+        outletId: effectiveOutlet,
+        businessDate,
+      });
+    },
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success("Reconciliation reversed. You can edit this day again.");
         void queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
         void queryClient.invalidateQueries({ queryKey: ["unreconciled-days"] });
         void queryClient.invalidateQueries({
@@ -341,12 +372,34 @@ export function DailyClosingClient({ outlets }: Props) {
                 </div>
                 </form>
                 {summary.status === "reconciled" && summary.closingBalance != null ? (
-                  <p className="text-sm text-inflow">
-                    Reconciled · closing {formatTzs(summary.closingBalance)}
-                    {summary.variance != null && summary.variance !== 0
-                      ? ` · variance ${formatTzs(summary.variance)}`
-                      : ""}
-                  </p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm text-inflow">
+                      Reconciled · closing {formatTzs(summary.closingBalance)}
+                      {summary.variance != null && summary.variance !== 0
+                        ? ` · variance ${formatTzs(summary.variance)}`
+                        : ""}
+                    </p>
+                    {canReverse ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={reverseMut.isPending}
+                        onClick={() => {
+                          const ok = window.confirm(
+                            `Reverse reconciliation for ${businessDate}? The day will unlock and any cash-count variance will be reversed in the books.`
+                          );
+                          if (ok) reverseMut.mutate();
+                        }}
+                      >
+                        {reverseMut.isPending ? (
+                          <Loader2 className="mr-2 size-4 animate-spin" />
+                        ) : (
+                          <RotateCcw className="mr-2 size-4" />
+                        )}
+                        Reverse day
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : (
                   <p className="text-sm text-warning">Not reconciled yet</p>
                 )}

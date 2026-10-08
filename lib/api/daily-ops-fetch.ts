@@ -67,6 +67,29 @@ export async function reconcileDailyClosingApi(params: {
   return body as { ok: true } | { ok: false; message: string };
 }
 
+export async function reverseDailyClosingApi(params: {
+  outletId: string;
+  businessDate: string;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const res = await fetch("/api/daily-closing/reverse", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    return {
+      ok: false,
+      message:
+        (body as { message?: string }).message ??
+        (body as { error?: string }).error ??
+        "Reverse failed",
+    };
+  }
+  return body as { ok: true } | { ok: false; message: string };
+}
+
 export async function buildClosingWhatsAppApi(
   outletId: string,
   businessDate: string

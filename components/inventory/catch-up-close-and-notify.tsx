@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Loader2, MessageCircle, Lock } from "lucide-react";
+import { CheckCircle2, Loader2, MessageCircle, Lock, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,8 +12,11 @@ import {
   buildClosingWhatsAppApi,
   markClosingReportSentApi,
   reconcileDailyClosingApi,
+  reverseDailyClosingApi,
 } from "@/lib/api/daily-ops-fetch";
+import { canManageSettings, isUserRole } from "@/lib/auth/roles";
 import { formatTzs } from "@/lib/utils/currency";
+import { useAuthStore } from "@/stores/authStore";
 
 type Props = {
   outletId: string;
@@ -22,6 +25,10 @@ type Props = {
 
 export function CatchUpCloseAndNotify({ outletId, day }: Props) {
   const queryClient = useQueryClient();
+  const sessionRole = useAuthStore((s) => s.session?.role ?? null);
+  const canReverse = canManageSettings(
+    isUserRole(sessionRole ?? "") ? sessionRole : null
+  );
   const [counted, setCounted] = useState(
     String(Math.round(day.sessionClosing ?? day.expectedCash))
   );
@@ -74,11 +81,57 @@ export function CatchUpCloseAndNotify({ outletId, day }: Props) {
     },
   });
 
+  const reverseMut = useMutation({
+    mutationFn: () =>
+      reverseDailyClosingApi({
+        outletId,
+        businessDate: day.businessDate,
+      }),
+    onSuccess: async (r) => {
+      if (!r.ok) {
+        toast.error(r.message);
+        return;
+      }
+      toast.success(`${day.businessDate} unlocked. You can edit and reconcile again.`);
+      await invalidate();
+    },
+    onError: (e) => {
+      toast.error(e instanceof Error ? e.message : "Reverse failed");
+    },
+  });
+
+  const reverseButton = canReverse && day.reconciled ? (
+    <Button
+      type="button"
+      variant="outline"
+      className="h-10 w-full"
+      disabled={reverseMut.isPending}
+      onClick={() => {
+        const ok = window.confirm(
+          `Reverse reconciliation for ${day.businessDate}? The day will unlock and any cash-count variance will be reversed in the books.`
+        );
+        if (ok) reverseMut.mutate();
+      }}
+    >
+      {reverseMut.isPending ? (
+        <Loader2 className="size-4 animate-spin" />
+      ) : (
+        <>
+          <RotateCcw className="mr-2 size-4" />
+          Reverse {day.businessDate}
+        </>
+      )}
+    </Button>
+  ) : null;
+
   if (day.reconciled && day.reportSent) {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-inflow/30 bg-inflow/10 px-3 py-2 text-sm text-inflow">
-        <CheckCircle2 className="size-4 shrink-0" />
-        Reconciled and director report sent
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 rounded-lg border border-inflow/30 bg-inflow/10 px-3 py-2 text-sm text-inflow">
+          <CheckCircle2 className="size-4 shrink-0" />
+          Reconciled and director report sent
+        </div>
+        {reverseButton}
       </div>
     );
   }
@@ -148,21 +201,24 @@ export function CatchUpCloseAndNotify({ outletId, day }: Props) {
           </Button>
         </>
       ) : (
-        <Button
-          type="button"
-          className="h-10 w-full"
-          disabled={sendMut.isPending}
-          onClick={() => sendMut.mutate()}
-        >
-          {sendMut.isPending ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <>
-              <MessageCircle className="mr-2 size-4" />
-              Send report to director
-            </>
-          )}
-        </Button>
+        <>
+          <Button
+            type="button"
+            className="h-10 w-full"
+            disabled={sendMut.isPending}
+            onClick={() => sendMut.mutate()}
+          >
+            {sendMut.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <>
+                <MessageCircle className="mr-2 size-4" />
+                Send report to director
+              </>
+            )}
+          </Button>
+          {reverseButton}
+        </>
       )}
     </div>
   );
