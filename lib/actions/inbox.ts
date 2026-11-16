@@ -7,15 +7,20 @@ import {
   listRecentVoidedSales,
   rejectVoidRequest,
 } from "@/lib/actions/void-requests";
-import { listUnreconciledDays } from "@/lib/actions/daily-closing";
+import {
+  listRecentReconciledVariances,
+  listUnreconciledDays,
+} from "@/lib/actions/daily-closing";
 import { requireManagerContext } from "@/lib/server/require-manager";
 import { formatTzs } from "@/lib/utils/currency";
+import { toPlainJson } from "@/lib/utils/plain-json";
 
 export type InboxKind =
   | "transfer_approval"
   | "void_receipt"
   | "void_done"
-  | "reconciliation";
+  | "reconciliation"
+  | "recon_variance";
 
 export type InboxItem = {
   id: string;
@@ -46,29 +51,32 @@ export async function listInboxItems(): Promise<{
 
   const warnings: string[] = [];
 
-  const [transfers, voidsResult, days, recentVoids] = await Promise.all([
-    settled(listPendingTransfersOrgWide(), []),
-    (async () => {
-      try {
-        return {
-          rows: await listPendingVoidRequests(),
-          error: null as string | null,
-        };
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Void requests unavailable";
-        if (/void_requests|does not exist|schema cache/i.test(msg)) {
+  const [transfers, voidsResult, days, recentVoids, variances] =
+    await Promise.all([
+      settled(listPendingTransfersOrgWide(), []),
+      (async () => {
+        try {
           return {
-            rows: [],
-            error:
-              "Void requests table is missing. Run migration 20260819120000_void_requests.sql in Supabase SQL editor.",
+            rows: await listPendingVoidRequests(),
+            error: null as string | null,
           };
+        } catch (e) {
+          const msg =
+            e instanceof Error ? e.message : "Void requests unavailable";
+          if (/void_requests|does not exist|schema cache/i.test(msg)) {
+            return {
+              rows: [],
+              error:
+                "Void requests table is missing. Run migration 20260819120000_void_requests.sql in Supabase SQL editor.",
+            };
+          }
+          return { rows: [], error: msg };
         }
-        return { rows: [], error: msg };
-      }
-    })(),
-    settled(listUnreconciledDays(null, 30), []),
-    settled(listRecentVoidedSales(14, 40), []),
-  ]);
+      })(),
+      settled(listUnreconciledDays(null, 30), []),
+      settled(listRecentVoidedSales(14, 40), []),
+      settled(listRecentReconciledVariances(30, 40), []),
+    ]);
   if (voidsResult.error) warnings.push(voidsResult.error);
 
   const items: InboxItem[] = [];
@@ -136,15 +144,39 @@ export async function listInboxItems(): Promise<{
     });
   }
 
+  for (const v of variances) {
+    const isOver = v.variance > 0;
+    const abs = Math.abs(v.variance);
+    items.push({
+      id: `recon-var:${v.outletId}:${v.businessDate}`,
+      kind: "recon_variance",
+      outletId: v.outletId,
+      outletName: v.outletName,
+      title: isOver
+        ? `Cash over ${v.businessDate}`
+        : `Cash short ${v.businessDate}`,
+      body: [
+        `${isOver ? "Over" : "Short"} ${formatTzs(abs)}`,
+        `Counted ${formatTzs(v.closingBalance)} vs expected ${formatTzs(v.expectedCash)}`,
+      ].join(" · "),
+      href: `/daily-closing?date=${encodeURIComponent(v.businessDate)}&outlet=${encodeURIComponent(v.outletId)}`,
+      createdAt: v.reconciledAt,
+      referenceId: v.outletId,
+    });
+  }
+
   items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const openCount =
-    transfers.length + voidsResult.rows.length + days.length;
+    transfers.length +
+    voidsResult.rows.length +
+    days.length +
+    variances.length;
 
-  return {
+  return toPlainJson({
     items,
     openCount,
     warnings,
-  };
+  });
 }
 
 export async function getInboxOpenCount(): Promise<number> {

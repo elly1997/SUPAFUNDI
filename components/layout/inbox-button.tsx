@@ -15,7 +15,8 @@ export function InboxButton({ compact = false }: { compact?: boolean }) {
 
   const { data: count = 0 } = useQuery({
     queryKey: ["inbox-count"],
-    queryFn: getInboxOpenCount,
+    // Wrap: do not pass React Query's context/AbortSignal into a Server Action.
+    queryFn: () => getInboxOpenCount(),
     enabled: canAccessInbox(role),
     refetchInterval: 60_000,
   });

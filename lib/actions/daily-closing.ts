@@ -771,6 +771,17 @@ export type UnreconciledDayRow = {
   hasActivity: boolean;
 };
 
+/** Reconciled days with non-zero cash variance (short or over). */
+export type ReconciledVarianceRow = {
+  businessDate: string;
+  outletId: string;
+  outletName: string;
+  expectedCash: number;
+  closingBalance: number;
+  variance: number;
+  reconciledAt: string;
+};
+
 /** Days with sales/expenses but not reconciled (or no closing row). */
 export async function listUnreconciledDays(
   outletId?: string | null,
@@ -858,6 +869,53 @@ export async function listUnreconciledDays(
     }
   }
   return results;
+}
+
+/** Recent reconciled closings where counted cash was short or over. */
+export async function listRecentReconciledVariances(
+  withinDays = 30,
+  limit = 40
+): Promise<ReconciledVarianceRow[]> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const fromDate = addDaysIso(todayIso(), -Math.max(1, withinDays));
+
+  const { data, error } = await supabase
+    .from("daily_closings")
+    .select(
+      "business_date, outlet_id, expected_cash, closing_balance, variance, reconciled_at"
+    )
+    .eq("organization_id", ctx.organizationId)
+    .eq("status", "reconciled")
+    .neq("variance", 0)
+    .not("variance", "is", null)
+    .gte("business_date", fromDate)
+    .order("business_date", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+
+  const rows = data ?? [];
+  if (!rows.length) return [];
+
+  const outletIds = Array.from(
+    new Set(rows.map((r) => r.outlet_id).filter((id): id is string => !!id))
+  );
+  const { data: outlets } = outletIds.length
+    ? await supabase.from("outlets").select("id, name").in("id", outletIds)
+    : { data: [] as { id: string; name: string }[] };
+  const outletMap = new Map((outlets ?? []).map((o) => [o.id, o.name]));
+
+  return rows.map((r) => ({
+    businessDate: String(r.business_date).slice(0, 10),
+    outletId: r.outlet_id,
+    outletName: outletMap.get(r.outlet_id) ?? "Outlet",
+    expectedCash: Number(r.expected_cash ?? 0),
+    closingBalance: Number(r.closing_balance ?? 0),
+    variance: Number(r.variance ?? 0),
+    reconciledAt: String(
+      r.reconciled_at ?? `${String(r.business_date).slice(0, 10)}T12:00:00.000Z`
+    ),
+  }));
 }
 
 export async function getReconciledDatesInRange(

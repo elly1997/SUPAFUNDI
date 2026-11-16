@@ -23,7 +23,9 @@ import {
 import { cn } from "@/lib/utils";
 import { formatDateTimeEAT } from "@/lib/utils/currency";
 
-const FILTERS: { id: "all" | InboxKind; label: string }[] = [
+type InboxFilter = "all" | "transfer_approval" | "void_receipt" | "void_done" | "reconciliation";
+
+const FILTERS: { id: InboxFilter; label: string }[] = [
   { id: "all", label: "All" },
   { id: "transfer_approval", label: "Transfers" },
   { id: "void_receipt", label: "Void requests" },
@@ -37,19 +39,28 @@ function kindIcon(kind: InboxKind) {
   return Scale;
 }
 
+function matchesFilter(kind: InboxKind, filter: InboxFilter) {
+  if (filter === "all") return true;
+  if (filter === "reconciliation") {
+    return kind === "reconciliation" || kind === "recon_variance";
+  }
+  return kind === filter;
+}
+
 export function InboxPageClient() {
   const queryClient = useQueryClient();
-  const [filter, setFilter] = useState<"all" | InboxKind>("all");
+  const [filter, setFilter] = useState<InboxFilter>("all");
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["inbox"],
-    queryFn: listInboxItems,
+    // Wrap: React Query passes QueryFunctionContext (incl. AbortSignal) as arg 1;
+    // Server Actions reject class instances like AbortSignal.
+    queryFn: () => listInboxItems(),
     refetchInterval: 30_000,
   });
 
   const items = useMemo(() => {
     const all = data?.items ?? [];
-    if (filter === "all") return all;
-    return all.filter((i) => i.kind === filter);
+    return all.filter((i) => matchesFilter(i.kind, filter));
   }, [data, filter]);
 
   const counts = useMemo(() => {
@@ -59,7 +70,9 @@ export function InboxPageClient() {
       transfer_approval: all.filter((i) => i.kind === "transfer_approval").length,
       void_receipt: all.filter((i) => i.kind === "void_receipt").length,
       void_done: all.filter((i) => i.kind === "void_done").length,
-      reconciliation: all.filter((i) => i.kind === "reconciliation").length,
+      reconciliation: all.filter(
+        (i) => i.kind === "reconciliation" || i.kind === "recon_variance"
+      ).length,
     };
   }, [data]);
 
@@ -182,13 +195,14 @@ export function InboxPageClient() {
               <>No voided receipts in the last 14 days for this organization.</>
             ) : filter === "reconciliation" ? (
               <>
-                No unreconciled days in the last 45 days. Days with completed sales
-                or expenses that are not marked reconciled will show here.
+                No open closings or cash short/over in the last 30–45 days. Days
+                still needing reconcile, plus reconciled shorts and overs, appear
+                here.
               </>
             ) : (
               <>
-                Nothing waiting. Staff void requests, recent voids, transfers, and
-                unreconciled days appear here.
+                Nothing waiting. Staff void requests, recent voids, transfers,
+                unreconciled days, and cash short/over appear here.
               </>
             )}
           </CardContent>
@@ -280,12 +294,23 @@ export function InboxPageClient() {
                         View receipt
                       </Link>
                     ) : null}
-                    {item.kind === "reconciliation" ? (
+                    {item.kind === "reconciliation" ||
+                    item.kind === "recon_variance" ? (
                       <Link
                         href={item.href}
-                        className={cn(buttonVariants({ size: "sm" }))}
+                        className={cn(
+                          buttonVariants({
+                            size: "sm",
+                            variant:
+                              item.kind === "recon_variance"
+                                ? "outline"
+                                : "default",
+                          })
+                        )}
                       >
-                        Open closing
+                        {item.kind === "recon_variance"
+                          ? "View report"
+                          : "Open closing"}
                       </Link>
                     ) : null}
                   </div>
