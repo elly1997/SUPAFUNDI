@@ -24,6 +24,8 @@ import {
   PosAddToCartDialog,
   type PosAddToCartPayload,
 } from "@/components/pos/pos-add-to-cart-dialog";
+import { PosFavoritesRow } from "@/components/pos/pos-favorites-row";
+import { PosHeldSalesBar } from "@/components/pos/pos-held-sales-bar";
 import {
   formatPaymentMethodLabel,
   getReceiptStamp,
@@ -38,6 +40,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -47,6 +50,8 @@ import { useCart } from "@/hooks/useCart";
 import { useTaxRate, useVatEnabled } from "@/hooks/useTaxRate";
 import { usePersistedCart } from "@/hooks/usePersistedCart";
 import {
+  POS_CATALOG_LIMIT_DEFAULT,
+  POS_CATALOG_LIMIT_MAX,
   usePosProducts,
   type PosPricingMode,
   type PosProductRow,
@@ -60,14 +65,33 @@ import {
   formatSellQty,
   resolveUnitPrice,
 } from "@/lib/products/units";
+import {
+  buildDefaultAddPayload,
+  productNeedsQtyDialog,
+} from "@/lib/pos/quick-add";
+import {
+  getHeldSale,
+  holdCurrentSale,
+  listHeldSales,
+  removeHeldSale,
+  type HeldSale,
+} from "@/lib/pos/held-sales";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import { computeCartMargin } from "@/lib/utils/cart-margin";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
-import { canSwitchOutlets } from "@/lib/auth/roles";
+import {
+  canOverridePosCharge,
+  canSwitchOutlets,
+  canViewPosMargin,
+} from "@/lib/auth/roles";
 import { resolveActiveOutletId } from "@/lib/outlets/resolve-default";
 import { useAuthStore } from "@/stores/authStore";
 import type { AddProductResult } from "@/stores/cartStore";
+import { useCartStore } from "@/stores/cartStore";
+
+const CHARGE_CONFIRM_PCT = 0.05;
+const CHARGE_CONFIRM_MIN_TZS = 5000;
 
 type ReceiptState = {
   invoiceNo: string;
@@ -123,12 +147,18 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
   const [stkPending, setStkPending] = useState(false);
   const [pricingMode, setPricingMode] = useState<PosPricingMode>("retail");
   const [sessionOverride, setSessionOverride] = useState(false);
-  const [cashflowCollapsed, setCashflowCollapsed] = useState(false);
+  const [cashflowCollapsed, setCashflowCollapsed] = useState(true);
   const [qtyProduct, setQtyProduct] = useState<PosProductRow | null>(null);
   const [qtyOpen, setQtyOpen] = useState(false);
+  const [catalogLimit, setCatalogLimit] = useState(POS_CATALOG_LIMIT_DEFAULT);
+  const [heldSales, setHeldSales] = useState<HeldSale[]>([]);
+  const [chargeConfirmOpen, setChargeConfirmOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const prevPricingModeRef = useRef<PosPricingMode>(pricingMode);
 
   const canSwitch = canSwitchOutlets(session?.role ?? null);
+  const showPosMargin = canViewPosMargin(session?.role ?? null);
+  const canSkipChargeConfirm = canOverridePosCharge(session?.role ?? null);
 
   useEffect(() => {
     if (!outlets.length) return;
@@ -184,11 +214,26 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     isLoading: productsLoading,
     isFetching: productsFetching,
     refetch: refetchProducts,
-  } = usePosProducts(effectiveOutletId, pricingMode, deferredSearch, categoryId);
+  } = usePosProducts(
+    effectiveOutletId,
+    pricingMode,
+    deferredSearch,
+    categoryId,
+    catalogLimit
+  );
 
   useEffect(() => {
     setCategoryId(null);
     setSearch("");
+    setCatalogLimit(POS_CATALOG_LIMIT_DEFAULT);
+  }, [effectiveOutletId]);
+
+  useEffect(() => {
+    if (!effectiveOutletId) {
+      setHeldSales([]);
+      return;
+    }
+    setHeldSales(listHeldSales(effectiveOutletId));
   }, [effectiveOutletId]);
 
   /** Re-price cart lines when retail/wholesale mode changes. */
@@ -317,6 +362,13 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     }
   }, [effectiveTotal, lines.length, paymentMethod]);
 
+  const focusSearch = useCallback(() => {
+    requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    });
+  }, []);
+
   const addFromProductWithUnit = useCallback(
     (p: PosProductRow, payload: PosAddToCartPayload) => {
       const { unit, quantity, unitPrice } = payload;
@@ -335,17 +387,37 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
         },
         quantity
       );
-      if (result.ok) return true;
+      if (result.ok) {
+        focusSearch();
+        return true;
+      }
       stockToast(result);
       return false;
     },
-    [addProduct, pricingMode]
+    [addProduct, focusSearch, pricingMode]
   );
 
   const openAddDialogFor = useCallback((p: PosProductRow) => {
     setQtyProduct(p);
     setQtyOpen(true);
   }, []);
+
+  /** Single-unit: one tap adds 1. Multi-unit: open qty/unit dialog (existing path). */
+  const handleProductTap = useCallback(
+    (p: PosProductRow) => {
+      if (productNeedsQtyDialog(p)) {
+        openAddDialogFor(p);
+        return;
+      }
+      const payload = buildDefaultAddPayload(p, pricingMode, 1);
+      if (!payload) {
+        openAddDialogFor(p);
+        return;
+      }
+      addFromProductWithUnit(p, payload);
+    },
+    [addFromProductWithUnit, openAddDialogFor, pricingMode]
+  );
 
   const tryAddFromSearch = useCallback(() => {
     const q = search.trim();
@@ -365,9 +437,77 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       return;
     }
 
+    // Keep existing search Enter behaviour (dialog) — barcode path unchanged.
     openAddDialogFor(match);
     setSearch("");
   }, [search, products, filtered, openAddDialogFor]);
+
+  const refreshHeldSales = useCallback(() => {
+    if (!effectiveOutletId) return;
+    setHeldSales(listHeldSales(effectiveOutletId));
+  }, [effectiveOutletId]);
+
+  const handleHoldSale = useCallback(() => {
+    if (!effectiveOutletId || lines.length === 0) return;
+    const label =
+      customerName?.trim() ||
+      `Hold ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    holdCurrentSale({
+      outletId: effectiveOutletId,
+      label,
+      lines,
+      pricingMode,
+      customerId,
+      customerName,
+      chargeTotal,
+    });
+    clear();
+    setChargeTotal("");
+    setChargeLocked(false);
+    setCustomerId("");
+    setCustomerName(null);
+    setCartSheetOpen(false);
+    refreshHeldSales();
+    toast.success(`Sale held · ${label}`);
+    focusSearch();
+  }, [
+    chargeTotal,
+    clear,
+    customerId,
+    customerName,
+    effectiveOutletId,
+    focusSearch,
+    lines,
+    pricingMode,
+    refreshHeldSales,
+  ]);
+
+  const handleResumeHeld = useCallback(
+    (id: string) => {
+      const held = getHeldSale(id);
+      if (!held) {
+        toast.error("Held sale not found");
+        refreshHeldSales();
+        return;
+      }
+      if (lines.length > 0) {
+        const ok = window.confirm(
+          "Replace the current cart with the held sale? Current lines will be lost unless you hold them first."
+        );
+        if (!ok) return;
+      }
+      useCartStore.setState({ lines: held.lines });
+      setPricingMode(held.pricingMode);
+      setCustomerId(held.customerId);
+      setCustomerName(held.customerName);
+      setChargeTotal(held.chargeTotal);
+      setChargeLocked(!!held.chargeTotal);
+      removeHeldSale(id);
+      refreshHeldSales();
+      toast.success(`Resumed · ${held.label}`);
+    },
+    [lines.length, refreshHeldSales]
+  );
 
   const bumpAmountPaid = useCallback((delta: number) => {
     setAmountPaid((prev) => {
@@ -549,6 +689,20 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     }
   };
 
+  const chargeNeedsConfirm = useMemo(() => {
+    if (canSkipChargeConfirm || lines.length === 0) return false;
+    const absAdj = Math.abs(adjustment);
+    if (absAdj < CHARGE_CONFIRM_MIN_TZS) return false;
+    const vsCalc =
+      calculatedTotal > 0 ? absAdj / calculatedTotal : absAdj > 0 ? 1 : 0;
+    return vsCalc >= CHARGE_CONFIRM_PCT || absAdj >= CHARGE_CONFIRM_MIN_TZS;
+  }, [
+    adjustment,
+    calculatedTotal,
+    canSkipChargeConfirm,
+    lines.length,
+  ]);
+
   const handleCompleteSale = useCallback(() => {
     if (checkout.isPending) {
       return;
@@ -567,8 +721,59 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
       );
       return;
     }
+    if (chargeNeedsConfirm) {
+      setChargeConfirmOpen(true);
+      return;
+    }
     checkout.mutate();
-  }, [checkout, lines.length, needsCustomer, needsPaymentAccount, paymentMethod]);
+  }, [
+    chargeNeedsConfirm,
+    checkout,
+    lines.length,
+    needsCustomer,
+    needsPaymentAccount,
+    paymentMethod,
+  ]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      const typing =
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select" ||
+        target?.isContentEditable;
+      if (e.key === "F2") {
+        e.preventDefault();
+        if (lines.length > 0 && !checkout.isPending) {
+          handleCompleteSale();
+        }
+        return;
+      }
+      if (e.key === "F4" && !typing) {
+        e.preventDefault();
+        if (lines.length > 0) {
+          const ok = window.confirm("Clear the current cart?");
+          if (ok) {
+            clear();
+            setChargeTotal("");
+            setChargeLocked(false);
+            focusSearch();
+          }
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        setCartSheetOpen(false);
+        setCashflowSheetOpen(false);
+        setQtyOpen(false);
+        setChargeConfirmOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [checkout.isPending, clear, focusSearch, handleCompleteSale, lines.length]);
 
   const showAmountPaid =
     paymentMethod === "credit_account" ||
@@ -609,6 +814,7 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
     onPaymentAccountIdChange: setPaymentAccountId,
     margin: cartMargin,
     listMargin,
+    showMargin: showPosMargin,
   };
 
   if (outlets.length === 0) {
@@ -680,11 +886,19 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                     className="hidden lg:block"
                   />
                   <PosWholesaleBanner mode={pricingMode} customerName={customerName} />
+                  <PosHeldSalesBar
+                    held={heldSales}
+                    canHold={lines.length > 0}
+                    onHold={handleHoldSale}
+                    onResume={handleResumeHeld}
+                    className="hidden lg:flex"
+                  />
                   <div className="space-y-2 border-b p-2.5">
                     <div className="flex gap-2">
                       <div className="relative min-w-0 flex-1">
                       <Search className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
                       <Input
+                        ref={searchInputRef}
                         className="pos-search-input pos-touch h-12 rounded-2xl border border-border pl-12 pr-4 text-base shadow-inner focus-visible:ring-primary/30"
                         placeholder="Search or scan barcode..."
                         value={search}
@@ -719,13 +933,23 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                      <span>High-demand items appear first from recent sales.</span>
+                      <span>
+                        Tap to add · Qty/unit for packs · F2 pay · F4 clear cart
+                      </span>
                       <span className="font-money">
                         {filtered.length} visible
                       </span>
                     </div>
                     <PosCategoryChips value={categoryId} onChange={setCategoryId} />
                   </div>
+
+                  {effectiveOutletId ? (
+                    <PosFavoritesRow
+                      outletId={effectiveOutletId}
+                      products={products}
+                      onPick={handleProductTap}
+                    />
+                  ) : null}
 
                   <div className="pos-scroll-area min-h-0 flex-1 p-3">
                     {productsLoading ? (
@@ -750,18 +974,36 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                         </p>
                       </div>
                     ) : (
-                      <div className="pos-catalog-grid grid gap-2">
-                        {filtered.map((p) => (
-                          <PosProductCard
-                            key={p.id}
-                            product={p}
-                            pricingMode={pricingMode}
-                            cartQty={cartQtyByProduct.get(p.id) ?? 0}
-                            onAdd={() => openAddDialogFor(p)}
-                            onQtyClick={() => openAddDialogFor(p)}
-                          />
-                        ))}
-                      </div>
+                      <>
+                        <div className="pos-catalog-grid grid gap-2">
+                          {filtered.map((p) => (
+                            <PosProductCard
+                              key={p.id}
+                              product={p}
+                              pricingMode={pricingMode}
+                              cartQty={cartQtyByProduct.get(p.id) ?? 0}
+                              onAdd={() => handleProductTap(p)}
+                              onQtyClick={() => openAddDialogFor(p)}
+                            />
+                          ))}
+                        </div>
+                        {!search.trim() &&
+                          catalogLimit < POS_CATALOG_LIMIT_MAX &&
+                          filtered.length >= catalogLimit && (
+                            <div className="mt-3 flex justify-center pb-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="min-h-11 rounded-xl"
+                                onClick={() =>
+                                  setCatalogLimit(POS_CATALOG_LIMIT_MAX)
+                                }
+                              >
+                                Show more products
+                              </Button>
+                            </div>
+                          )}
+                      </>
                     )}
                   </div>
                 </section>
@@ -782,6 +1024,32 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                   "pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:hidden"
                 )}
               >
+                {(heldSales.length > 0 || lines.length > 0) && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-9 rounded-lg text-xs"
+                      disabled={lines.length === 0}
+                      onClick={handleHoldSale}
+                    >
+                      Hold
+                    </Button>
+                    {heldSales.slice(0, 3).map((h) => (
+                      <Button
+                        key={h.id}
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="min-h-9 max-w-[9rem] truncate rounded-lg text-xs"
+                        onClick={() => handleResumeHeld(h.id)}
+                      >
+                        {h.label}
+                      </Button>
+                    ))}
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <Button
                     type="button"
@@ -890,6 +1158,54 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                 paymentAccountId={paymentAccountId}
                 onPaymentAccountIdChange={setPaymentAccountId}
               />
+
+              <Dialog open={chargeConfirmOpen} onOpenChange={setChargeConfirmOpen}>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Confirm charge change</DialogTitle>
+                    <DialogDescription>
+                      Charge differs from the calculated cart total by{" "}
+                      <span className="font-money font-semibold text-foreground">
+                        {formatTzs(Math.abs(adjustment))}
+                      </span>
+                      {adjustment > 0 ? " (discount)" : " (overcharge)"}. Continue?
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="rounded-xl border border-border bg-muted/30 px-4 py-3 text-sm">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">Calculated</span>
+                      <span className="font-money tabular-nums">
+                        {formatTzs(calculatedTotal)}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex justify-between gap-2">
+                      <span className="text-muted-foreground">Charge</span>
+                      <span className="font-money font-semibold tabular-nums text-primary">
+                        {formatTzs(effectiveTotal)}
+                      </span>
+                    </div>
+                  </div>
+                  <DialogFooter className="gap-2 sm:justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setChargeConfirmOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={checkout.isPending}
+                      onClick={() => {
+                        setChargeConfirmOpen(false);
+                        checkout.mutate();
+                      }}
+                    >
+                      Confirm &amp; complete
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               <Dialog open={!!receipt} onOpenChange={() => setReceipt(null)}>
                 <DialogContent className="overflow-hidden p-0 sm:max-w-sm">

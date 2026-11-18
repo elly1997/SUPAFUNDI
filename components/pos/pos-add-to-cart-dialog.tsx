@@ -30,14 +30,13 @@ import { fetchProductUnitsMap } from "@/lib/api/product-units-fetch";
 import { cn } from "@/lib/utils";
 import { formatTzs } from "@/lib/utils/currency";
 import type { PosPricingMode } from "@/hooks/usePosProducts";
+import {
+  type PosAddToCartPayload,
+} from "@/lib/pos/quick-add";
 
 const QUICK_QTY = [0.5, 1, 2, 5, 10] as const;
 
-export type PosAddToCartPayload = {
-  unit: ProductUnitOption;
-  quantity: number;
-  unitPrice: number;
-};
+export type { PosAddToCartPayload };
 
 type Props = {
   product: PosProductRow | null;

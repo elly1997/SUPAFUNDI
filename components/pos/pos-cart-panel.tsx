@@ -53,6 +53,8 @@ type Props = {
   onPaymentAccountIdChange?: (id: string) => void;
   margin?: CartMarginSummary | null;
   listMargin?: CartMarginSummary | null;
+  /** When false, hide cost/margin block (cashiers). Default true for back-compat. */
+  showMargin?: boolean;
 };
 
 export function PosCartPanel({
@@ -88,6 +90,7 @@ export function PosCartPanel({
   onPaymentAccountIdChange,
   margin = null,
   listMargin = null,
+  showMargin = true,
 }: Props) {
   const itemCount = lines.reduce((s, l) => s + l.quantity, 0);
   const chargeAmount = Number(chargeTotal);
@@ -261,13 +264,13 @@ export function PosCartPanel({
           </p>
         )}
 
-        {margin ? (
+        {showMargin && margin ? (
           <PosCartMargin
             margin={margin}
             listMargin={listMargin}
             showListComparison={adjustment !== 0}
           />
-        ) : lines.length > 0 ? (
+        ) : showMargin && lines.length > 0 ? (
           <p className="form-hint text-[10px] leading-snug">
             Set buying prices in inventory to see estimated margin.
           </p>

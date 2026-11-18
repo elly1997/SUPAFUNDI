@@ -30,7 +30,8 @@ export type PosProductRow = {
 };
 
 const POS_CATALOG_CACHE_PREFIX = "supafundi_pos_catalog_v3";
-const POS_CATALOG_LIMIT = 120;
+export const POS_CATALOG_LIMIT_DEFAULT = 160;
+export const POS_CATALOG_LIMIT_MAX = 240;
 
 function catalogCacheKey(outletId: string, search: string, categoryId: string | null) {
   return `${POS_CATALOG_CACHE_PREFIX}:${outletId}:${search.trim().toLowerCase()}:${categoryId ?? "all"}`;
@@ -107,12 +108,17 @@ export function usePosProducts(
   outletId: string | null,
   pricingMode: PosPricingMode = "retail",
   search = "",
-  categoryId: string | null = null
+  categoryId: string | null = null,
+  catalogLimit: number = POS_CATALOG_LIMIT_DEFAULT
 ) {
   const envOk = getPublicSupabaseEnv().ok;
+  const limit = Math.min(
+    POS_CATALOG_LIMIT_MAX,
+    Math.max(40, Math.floor(catalogLimit) || POS_CATALOG_LIMIT_DEFAULT)
+  );
 
   const query = useQuery({
-    queryKey: ["pos-products", outletId, search, categoryId],
+    queryKey: ["pos-products", outletId, search, categoryId, limit],
     enabled: envOk && !!outletId,
     staleTime: 30_000,
     gcTime: 30 * 60_000,
@@ -132,7 +138,7 @@ export function usePosProducts(
       const catalog = await fetchPosCatalog(outletId, {
         q: search,
         categoryId,
-        limit: POS_CATALOG_LIMIT,
+        limit,
       });
       writeCachedCatalog(outletId, search, categoryId, catalog);
       return catalog;

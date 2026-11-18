@@ -99,14 +99,14 @@ export function PosFavoritesRow({ outletId, products, onPick }: Props) {
             type="button"
             onClick={() => handlePick(p)}
             className={cn(
-              "shrink-0 rounded-xl border bg-card px-3 py-2 text-left touch-manipulation",
+              "min-h-11 shrink-0 rounded-xl border bg-card px-3 py-2 text-left touch-manipulation",
               "hover:border-primary/40 active:scale-[0.98]"
             )}
           >
-            <span className="block max-w-[8rem] truncate text-xs font-semibold">
+            <span className="block max-w-[9rem] truncate text-sm font-semibold">
               {p.name}
             </span>
-            <span className="font-money block text-xs font-bold text-primary">
+            <span className="font-money block text-sm font-bold text-primary">
               {p.displayPrice > 0 ? formatTzs(p.displayPrice) : "—"}
             </span>
           </button>

@@ -83,7 +83,8 @@ function catalogDb(
 
 function normalizeLimit(input?: number) {
   const n = Math.floor(Number(input) || 80);
-  return Math.min(120, Math.max(20, n));
+  /** Allow denser catalogs on tablet POS; search still re-queries server. */
+  return Math.min(240, Math.max(20, n));
 }
 
 function escapeLikePattern(value: string) {

@@ -78,6 +78,16 @@ export function canViewFinance(role: UserRole | null): boolean {
   );
 }
 
+/** Cost / margin on the POS cart — owners, managers, accountants only. */
+export function canViewPosMargin(role: UserRole | null): boolean {
+  return canViewFinance(role);
+}
+
+/** Large charge overrides without a confirm prompt. */
+export function canOverridePosCharge(role: UserRole | null): boolean {
+  return role === "owner" || role === "manager";
+}
+
 export function canViewReports(role: UserRole | null): boolean {
   return role !== "cashier" && role !== null;
 }

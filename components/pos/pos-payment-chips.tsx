@@ -44,7 +44,7 @@ export function PosPaymentChips({ value, onChange, compact = false }: Props) {
               onClick={() => onChange(v)}
               title={label}
               className={cn(
-                "flex min-h-9 flex-col items-center justify-center gap-0.5 rounded-lg border px-0.5 py-1 text-center transition-all touch-manipulation active:scale-[0.97]",
+                "flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-lg border px-0.5 py-1.5 text-center transition-all touch-manipulation active:scale-[0.97]",
                 selected
                   ? "border-primary bg-primary/10 text-primary"
                   : "border-border/60 bg-muted/50 text-muted-foreground hover:bg-muted"
