@@ -23,7 +23,6 @@ import {
   resolveUnitPrice,
   sellQtysEqual,
   unitConversionHint,
-  type ProductUnitOption,
 } from "@/lib/products/units";
 import { computeLineTotal } from "@/lib/utils/calculations";
 import { fetchProductUnitsMap } from "@/lib/api/product-units-fetch";
