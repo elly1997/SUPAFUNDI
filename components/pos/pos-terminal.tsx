@@ -25,7 +25,6 @@ import {
   PosAddToCartDialog,
   type PosAddToCartPayload,
 } from "@/components/pos/pos-add-to-cart-dialog";
-import { PosFavoritesRow } from "@/components/pos/pos-favorites-row";
 import { PosHeldSalesBar } from "@/components/pos/pos-held-sales-bar";
 import {
   formatPaymentMethodLabel,
@@ -960,14 +959,6 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                       </span>
                     </div>
                   </div>
-
-                  {effectiveOutletId ? (
-                    <PosFavoritesRow
-                      outletId={effectiveOutletId}
-                      products={products}
-                      onPick={handleProductTap}
-                    />
-                  ) : null}
 
                   <div className="pos-scroll-area min-h-0 flex-1 p-3">
                     {productsLoading ? (
