@@ -59,7 +59,13 @@ export function PartyStatementDialog({
               Credit balance (debit/credit) and prepaid deposit (Deposit ± /
               Dep. balance). Deposit dates show when money was recorded.
             </p>
-          ) : null}
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Supplier AP: Credit = purchases/bills (we owe more). Debit =
+              payments and return credits (we owe less). Balance = amount still
+              owed for the active outlet.
+            </p>
+          )}
         </DialogHeader>
         {isLoading ? (
           <div className="flex justify-center py-8">

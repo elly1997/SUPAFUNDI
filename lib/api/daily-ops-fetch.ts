@@ -242,6 +242,21 @@ export async function receiveFromPurchaseOrderApi(
   return res.json();
 }
 
+export async function repairOrphanReceivedPurchaseOrderApi(
+  poId: string
+): Promise<
+  | { ok: true; message: string; reset: boolean }
+  | { ok: false; message: string }
+> {
+  const res = await fetch("/api/inventory/purchase-orders/repair-orphan", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ poId }),
+  });
+  return res.json();
+}
+
 export async function createPurchaseOrderApi(
   payload: Parameters<
     typeof import("@/lib/actions/purchase-orders").createPurchaseOrder

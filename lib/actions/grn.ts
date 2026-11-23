@@ -77,6 +77,7 @@ export async function receiveGoods(
   { ok: true; grnId: string; poId: string } | { ok: false; message: string }
 > {
   let grnId: string | null = null;
+  let createdPoId: string | null = null;
   const stockRollbacks: { stockId: string; qty: number; prevQty: number; prevCost: number }[] = [];
 
   try {
@@ -243,6 +244,7 @@ export async function receiveGoods(
     if (!poResult.ok) {
       throw new Error(poResult.message);
     }
+    createdPoId = poResult.poId;
 
     if (paymentMethod === "on_account" && input.supplierId) {
       const bill = await createSupplierBillFromGrn({
@@ -306,6 +308,37 @@ export async function receiveGoods(
         }
       }
       await supabase.from("stock_movements").delete().eq("reference_id", grnId);
+      if (createdPoId) {
+        await supabase.from("purchase_order_items").delete().eq("po_id", createdPoId);
+        await supabase.from("purchase_orders").delete().eq("id", createdPoId);
+      }
+      const { data: je } = await supabase
+        .from("journal_entries")
+        .select("id")
+        .eq("source_id", grnId)
+        .eq("source_type", "grn")
+        .maybeSingle();
+      if (je?.id) {
+        await supabase.from("journal_entry_lines").delete().eq("journal_entry_id", je.id);
+        await supabase.from("journal_entries").delete().eq("id", je.id);
+      }
+      const { data: leakedBills } = await apDb(supabase)
+        .from("supplier_bills")
+        .select("id")
+        .eq("grn_id", grnId);
+      const leakedBillIds = ((leakedBills ?? []) as { id: string }[]).map(
+        (b) => b.id
+      );
+      if (leakedBillIds.length > 0) {
+        await apDb(supabase)
+          .from("supplier_bill_items")
+          .delete()
+          .in("bill_id", leakedBillIds);
+        await apDb(supabase)
+          .from("supplier_bills")
+          .delete()
+          .in("id", leakedBillIds);
+      }
       await supabase.from("grn_items").delete().eq("grn_id", grnId);
       await supabase.from("grns").delete().eq("id", grnId);
     }

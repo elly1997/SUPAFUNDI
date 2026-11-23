@@ -309,6 +309,19 @@ export async function recordExpense(
         }
       );
       if (!bank.ok) {
+        const { data: je } = await supabase
+          .from("journal_entries")
+          .select("id")
+          .eq("source_id", expense.id)
+          .eq("source_type", "expense")
+          .maybeSingle();
+        if (je?.id) {
+          await supabase
+            .from("journal_entry_lines")
+            .delete()
+            .eq("journal_entry_id", je.id);
+          await supabase.from("journal_entries").delete().eq("id", je.id);
+        }
         await supabase.from("expenses").delete().eq("id", expense.id);
         return bank;
       }

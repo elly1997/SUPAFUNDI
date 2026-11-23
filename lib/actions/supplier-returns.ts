@@ -25,10 +25,12 @@ function apDb(supabase: Supabase) {
 /**
  * Reduce open supplier bills by return value (FIFO). Leftover becomes a
  * negative credit-memo bill so payablesBySupplier includes it.
+ * Also writes supplier_payments rows so the statement shows return credits.
  */
 async function applySupplierReturnCreditToBills(params: {
   supabase: Supabase;
   organizationId: string;
+  outletId: string;
   userId: string;
   supplierId: string;
   amount: number;
@@ -39,6 +41,7 @@ async function applySupplierReturnCreditToBills(params: {
   const {
     supabase,
     organizationId,
+    outletId,
     userId,
     supplierId,
     amount,
@@ -47,11 +50,15 @@ async function applySupplierReturnCreditToBills(params: {
     referenceNo,
   } = params;
   let remaining = roundMoney(amount);
+  const ref =
+    referenceNo?.trim() ||
+    `Return ${returnId.slice(0, 8).toUpperCase()}`;
 
   const { data: bills, error } = await apDb(supabase)
     .from("supplier_bills")
     .select("id, total_amount, amount_paid, status, bill_date")
     .eq("organization_id", organizationId)
+    .eq("outlet_id", outletId)
     .eq("supplier_id", supplierId)
     .in("status", ["open", "partial"])
     .order("bill_date", { ascending: true });
@@ -72,6 +79,22 @@ async function applySupplierReturnCreditToBills(params: {
       .update({ amount_paid: newPaid, status: newStatus })
       .eq("id", bill.id);
     if (updErr) return { ok: false, message: updErr.message };
+
+    const { error: payErr } = await apDb(supabase)
+      .from("supplier_payments")
+      .insert({
+        organization_id: organizationId,
+        outlet_id: outletId,
+        supplier_id: supplierId,
+        bill_id: bill.id,
+        payment_method: "return",
+        amount: slice,
+        reference_no: ref,
+        payment_date: returnDate,
+        created_by: userId,
+      });
+    if (payErr) return { ok: false, message: payErr.message };
+
     remaining = roundMoney(remaining - slice);
   }
 
@@ -81,6 +104,7 @@ async function applySupplierReturnCreditToBills(params: {
       .from("supplier_bills")
       .insert({
         organization_id: organizationId,
+        outlet_id: outletId,
         supplier_id: supplierId,
         bill_no: billNo,
         bill_date: returnDate,
@@ -90,9 +114,7 @@ async function applySupplierReturnCreditToBills(params: {
         total_amount: -remaining,
         amount_paid: 0,
         status: "open",
-        notes: referenceNo
-          ? `Supplier return credit ${referenceNo}`
-          : `Supplier return credit ${returnId.slice(0, 8)}`,
+        notes: `Supplier return credit ${ref}`,
         created_by: userId,
       });
     if (memoErr) return { ok: false, message: memoErr.message };
@@ -131,6 +153,14 @@ export async function createSupplierReturn(
       input.bankAccountId
     );
     if (!accountCheck.ok) return accountCheck;
+
+    if (input.paymentMethod === "on_account" && !input.supplierId) {
+      return {
+        ok: false,
+        message:
+          "Select a supplier for on-account returns so payables / credit memos update.",
+      };
+    }
 
     const returnDate = resolveBusinessDate(input.businessDate);
     const movementAt = isoDateToTimestamptz(returnDate);
@@ -242,6 +272,7 @@ export async function createSupplierReturn(
       const ap = await applySupplierReturnCreditToBills({
         supabase,
         organizationId: ctx.organizationId,
+        outletId: input.outletId,
         userId: ctx.userId,
         supplierId: input.supplierId,
         amount: totalAmount,
@@ -250,8 +281,45 @@ export async function createSupplierReturn(
         referenceNo: input.referenceNo?.trim() || null,
       });
       if (!ap.ok) {
+        for (const line of input.lines) {
+          const { data: stock } = await supabase
+            .from("stock")
+            .select("id, quantity")
+            .eq("outlet_id", input.outletId)
+            .eq("product_id", line.productId)
+            .maybeSingle();
+          if (stock?.id) {
+            await supabase
+              .from("stock")
+              .update({
+                quantity: roundMoney(Number(stock.quantity) + line.quantity),
+              })
+              .eq("id", stock.id);
+          }
+        }
+        await supabase.from("stock_movements").delete().eq("reference_id", ret.id);
+        await supabase
+          .from("supplier_return_items")
+          .delete()
+          .eq("return_id", ret.id);
         await supabase.from("supplier_returns").delete().eq("id", ret.id);
-        return ap;
+        const { data: je } = await supabase
+          .from("journal_entries")
+          .select("id")
+          .eq("source_id", ret.id)
+          .eq("source_type", "supplier_return")
+          .maybeSingle();
+        if (je?.id) {
+          await supabase
+            .from("journal_entry_lines")
+            .delete()
+            .eq("journal_entry_id", je.id);
+          await supabase.from("journal_entries").delete().eq("id", je.id);
+        }
+        return {
+          ok: false,
+          message: `${ap.message} (stock/GL rolled back — fix AP then retry).`,
+        };
       }
     }
 

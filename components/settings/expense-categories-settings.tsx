@@ -21,7 +21,7 @@ export function ExpenseCategoriesSettings() {
 
   const { data: categories = [], isLoading } = useQuery({
     queryKey: ["expense-categories"],
-    queryFn: listExpenseCategories,
+    queryFn: () => listExpenseCategories(),
   });
 
   const addMut = useMutation({

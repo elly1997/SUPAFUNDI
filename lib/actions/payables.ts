@@ -80,11 +80,21 @@ async function nextBillNo(
   supabase: SupabaseClient,
   organizationId: string
 ): Promise<string> {
-  const { count } = await apDb(supabase)
+  /** Use max numeric suffix — count+1 collides after deletes/gaps (e.g. 149 rows, BILL-00150 exists). */
+  const { data } = await apDb(supabase)
     .from("supplier_bills")
-    .select("id", { count: "exact", head: true })
-    .eq("organization_id", organizationId);
-  const n = (count ?? 0) + 1;
+    .select("bill_no")
+    .eq("organization_id", organizationId)
+    .like("bill_no", "BILL-%")
+    .order("bill_no", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  let n = 1;
+  const raw = (data as { bill_no?: string } | null)?.bill_no;
+  if (raw) {
+    const m = /^BILL-(\d+)$/i.exec(raw);
+    if (m) n = Number(m[1]) + 1;
+  }
   return `BILL-${String(n).padStart(5, "0")}`;
 }
 
@@ -118,36 +128,43 @@ export async function createSupplierBillFromGrn(params: {
       .maybeSingle();
     if (existing) return { ok: true, billId: existing.id };
 
-    const billNo = await nextBillNo(supabase, ctx.organizationId);
     const due = new Date(params.billDate);
     due.setDate(due.getDate() + 30);
+    const notes = params.referenceNo
+      ? `From GRN ${params.referenceNo}`
+      : `From GRN ${params.grnId.slice(0, 8)}`;
 
-    const { data: bill, error: billErr } = await apDb(supabase)
-      .from("supplier_bills")
-      .insert({
-        organization_id: ctx.organizationId,
-        outlet_id: billOutletId,
-        supplier_id: params.supplierId,
-        po_id: params.poId ?? null,
-        grn_id: params.grnId,
-        bill_no: billNo,
-        bill_date: params.billDate,
-        due_date: due.toISOString().slice(0, 10),
-        subtotal: params.subtotal,
-        tax_amount: params.taxAmount,
-        total_amount: params.totalAmount,
-        amount_paid: 0,
-        status: "open",
-        notes: params.referenceNo
-          ? `From GRN ${params.referenceNo}`
-          : `From GRN ${params.grnId.slice(0, 8)}`,
-        created_by: ctx.userId,
-      })
-      .select("id")
-      .single();
-    if (billErr || !bill) {
+    let bill: { id: string } | null = null;
+    let billErr: { message?: string } | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const billNo = await nextBillNo(supabase, ctx.organizationId);
+      const inserted = await apDb(supabase)
+        .from("supplier_bills")
+        .insert({
+          organization_id: ctx.organizationId,
+          outlet_id: billOutletId,
+          supplier_id: params.supplierId,
+          po_id: params.poId ?? null,
+          grn_id: params.grnId,
+          bill_no: billNo,
+          bill_date: params.billDate,
+          due_date: due.toISOString().slice(0, 10),
+          subtotal: params.subtotal,
+          tax_amount: params.taxAmount,
+          total_amount: params.totalAmount,
+          amount_paid: 0,
+          status: "open",
+          notes,
+          created_by: ctx.userId,
+        })
+        .select("id")
+        .single();
+      bill = inserted.data as { id: string } | null;
+      billErr = inserted.error as { message?: string } | null;
+      if (!billErr && bill) break;
+      const msg = (billErr?.message ?? "").toLowerCase();
       /** Race: unique(grn_id) — re-read winner. */
-      if (billErr?.message?.toLowerCase().includes("unique")) {
+      if (msg.includes("unique") && msg.includes("grn")) {
         const { data: raced } = await apDb(supabase)
           .from("supplier_bills")
           .select("id")
@@ -157,6 +174,13 @@ export async function createSupplierBillFromGrn(params: {
           .maybeSingle();
         if (raced) return { ok: true, billId: raced.id };
       }
+      /** Race / gap: unique(bill_no) — retry with a fresh max+1. */
+      if (msg.includes("unique") && msg.includes("bill_no") && attempt < 2) {
+        continue;
+      }
+      break;
+    }
+    if (billErr || !bill) {
       return { ok: false, message: billErr?.message ?? "Bill create failed" };
     }
 
@@ -209,34 +233,51 @@ export async function createManualSupplierBill(
       return { ok: false, message: "Select a working outlet before creating bills." };
     }
     const supabase = await createServerSupabaseClient();
-    const billNo = await nextBillNo(supabase, ctx.organizationId);
     const total = roundMoney(input.totalAmount);
 
-    const { data, error } = await apDb(supabase)
-      .from("supplier_bills")
-      .insert({
-        organization_id: ctx.organizationId,
-        outlet_id: ctx.outletId,
-        supplier_id: input.supplierId,
-        bill_no: billNo,
-        bill_date: input.billDate,
-        due_date: input.dueDate ?? null,
-        subtotal: total,
-        tax_amount: 0,
-        total_amount: total,
-        amount_paid: 0,
-        status: "open",
-        notes: input.notes?.trim() || null,
-        created_by: ctx.userId,
-      })
-      .select("id")
-      .single();
+    let data: { id: string } | null = null;
+    let error: { message?: string } | null = null;
+    let createdBillNo = "";
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const billNo = await nextBillNo(supabase, ctx.organizationId);
+      const inserted = await apDb(supabase)
+        .from("supplier_bills")
+        .insert({
+          organization_id: ctx.organizationId,
+          outlet_id: ctx.outletId,
+          supplier_id: input.supplierId,
+          bill_no: billNo,
+          bill_date: input.billDate,
+          due_date: input.dueDate ?? null,
+          subtotal: total,
+          tax_amount: 0,
+          total_amount: total,
+          amount_paid: 0,
+          status: "open",
+          notes: input.notes?.trim() || null,
+          created_by: ctx.userId,
+        })
+        .select("id")
+        .single();
+      data = inserted.data as { id: string } | null;
+      error = inserted.error as { message?: string } | null;
+      if (!error && data) {
+        createdBillNo = billNo;
+        break;
+      }
+      const msg = (error?.message ?? "").toLowerCase();
+      if (msg.includes("unique") && msg.includes("bill_no") && attempt < 2) {
+        continue;
+      }
+      break;
+    }
     if (error || !data) {
       return { ok: false, message: error?.message ?? "Create failed" };
     }
 
     const journal = await postJournalEntry({
-      description: input.notes?.trim() || `Manual supplier bill ${billNo}`,
+      description:
+        input.notes?.trim() || `Manual supplier bill ${createdBillNo}`,
       sourceType: "supplier_bill",
       sourceId: data.id,
       entryDate: input.billDate,

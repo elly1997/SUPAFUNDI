@@ -109,6 +109,8 @@ export type PurchaseOrderDetail = {
   paid_at: string | null;
   bill_id: string | null;
   bill_balance: number | null;
+  /** True when PO looks received but has no GRN (failed receive left orphan status). */
+  orphan_receive: boolean;
   items: {
     id: string;
     product_id: string | null;
@@ -257,22 +259,51 @@ export async function getPurchaseOrderById(
 
   let billId: string | null = null;
   let billBalance: number | null = null;
-  const { data: bill } = await apDb(supabase)
+  const { data: bills } = await apDb(supabase)
     .from("supplier_bills")
     .select("id, total_amount, amount_paid, status")
     .eq("po_id", id)
-    .maybeSingle();
-  if (bill) {
-    const b = bill as {
-      id: string;
-      total_amount: number;
-      amount_paid: number;
-      status: string;
-    };
-    billId = b.id;
-    const bal = roundMoney(Number(b.total_amount) - Number(b.amount_paid));
-    if (b.status !== "paid" && bal > 0) billBalance = bal;
+    .order("bill_date", { ascending: true });
+  let outstanding = 0;
+  for (const bill of (bills ?? []) as {
+    id: string;
+    total_amount: number;
+    amount_paid: number;
+    status: string;
+  }[]) {
+    if (!billId) billId = bill.id;
+    const bal = roundMoney(Number(bill.total_amount) - Number(bill.amount_paid));
+    if (bill.status !== "paid" && bal > 0) {
+      outstanding = roundMoney(outstanding + bal);
+    }
   }
+  if (outstanding > 0) billBalance = outstanding;
+
+  const { count: grnCount } = await supabase
+    .from("grns")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", ctx.organizationId)
+    .eq("po_id", id);
+  const hasGrn = (grnCount ?? 0) > 0;
+  const mappedItems = (items ?? []).map((i) => {
+    const p = i.product_id ? productMap.get(i.product_id) : null;
+    const ordered = Number(i.ordered_qty);
+    const received = Number(i.received_qty);
+    return {
+      id: i.id,
+      product_id: i.product_id,
+      product_name: p?.name ?? "—",
+      product_code: p?.code ?? null,
+      ordered_qty: ordered,
+      received_qty: received,
+      unit_cost: Number(i.unit_cost),
+      remaining_qty: roundMoney(Math.max(0, ordered - received)),
+    };
+  });
+  const orphanReceive =
+    !hasGrn &&
+    ["received", "partial"].includes(po.status) &&
+    (mappedItems.some((i) => i.received_qty > 0) || po.status === "received");
 
   return {
     id: po.id,
@@ -294,21 +325,8 @@ export async function getPurchaseOrderById(
     paid_at: po.paid_at ?? null,
     bill_id: billId,
     bill_balance: billBalance,
-    items: (items ?? []).map((i) => {
-      const p = i.product_id ? productMap.get(i.product_id) : null;
-      const ordered = Number(i.ordered_qty);
-      const received = Number(i.received_qty);
-      return {
-        id: i.id,
-        product_id: i.product_id,
-        product_name: p?.name ?? "—",
-        product_code: p?.code ?? null,
-        ordered_qty: ordered,
-        received_qty: received,
-        unit_cost: Number(i.unit_cost),
-        remaining_qty: roundMoney(Math.max(0, ordered - received)),
-      };
-    }),
+    orphan_receive: orphanReceive,
+    items: mappedItems,
   };
 }
 
@@ -451,6 +469,7 @@ export async function receiveFromPurchaseOrder(
     prevCost: number;
     isNew: boolean;
   }[] = [];
+  const poItemRollbacks: { itemId: string; prevQty: number }[] = [];
 
   try {
     const input = receivePoInput.parse(raw);
@@ -609,6 +628,7 @@ export async function receiveFromPurchaseOrder(
       });
 
       const item = po.items.find((i) => i.id === line.poItemId)!;
+      poItemRollbacks.push({ itemId: line.poItemId, prevQty: item.received_qty });
       const newReceived = roundMoney(item.received_qty + line.quantity);
       await supabase
         .from("purchase_order_items")
@@ -632,20 +652,8 @@ export async function receiveFromPurchaseOrder(
 
     const isCredit = paymentMethod === "on_account";
 
-    const updated = await getPurchaseOrderById(po.id);
-    const allReceived =
-      updated?.items.every((i) => i.remaining_qty <= 0) ?? false;
-    const anyReceived = updated?.items.some((i) => i.received_qty > 0) ?? false;
-    await supabase
-      .from("purchase_orders")
-      .update({
-        status: allReceived ? "received" : anyReceived ? "partial" : po.status,
-        payment_status: isCredit ? "unpaid" : "paid",
-        payment_method: paymentMethod,
-        paid_at: isCredit ? null : receivedDate,
-      })
-      .eq("id", po.id);
-
+    // Create AP bill / bank withdrawal BEFORE marking the PO received.
+    // Otherwise a failure here used to leave an orphan "received" PO with no GRN/bill.
     if (isCredit && po.supplier_id) {
       const bill = await createSupplierBillFromGrn({
         grnId: grn.id,
@@ -680,9 +688,53 @@ export async function receiveFromPurchaseOrder(
       if (!bank.ok) throw new Error(bank.message);
     }
 
+    const updated = await getPurchaseOrderById(po.id);
+    const allReceived =
+      updated?.items.every((i) => i.remaining_qty <= 0) ?? false;
+    const anyReceived = updated?.items.some((i) => i.received_qty > 0) ?? false;
+
+    // Derive payment status from open bills — never mark whole PO paid just
+    // because this receive was cash when earlier on-account bills remain.
+    const { data: poBills } = await apDb(supabase)
+      .from("supplier_bills")
+      .select("total_amount, amount_paid, status")
+      .eq("po_id", po.id)
+      .in("status", ["open", "partial", "draft", "paid"]);
+    let outstanding = 0;
+    let anyBillPaid = false;
+    for (const b of (poBills ?? []) as {
+      total_amount: number;
+      amount_paid: number;
+      status: string;
+    }[]) {
+      const bal = roundMoney(Number(b.total_amount) - Number(b.amount_paid));
+      if (bal > 0) outstanding = roundMoney(outstanding + bal);
+      if (Number(b.amount_paid) > 0 || b.status === "paid") anyBillPaid = true;
+    }
+    const paymentStatus =
+      outstanding > 0
+        ? anyBillPaid
+          ? "partial"
+          : "unpaid"
+        : isCredit
+          ? "unpaid"
+          : "paid";
+
+    await supabase
+      .from("purchase_orders")
+      .update({
+        status: allReceived ? "received" : anyReceived ? "partial" : po.status,
+        payment_status: paymentStatus,
+        payment_method: paymentMethod,
+        paid_at: paymentStatus === "paid" ? receivedDate : null,
+      })
+      .eq("id", po.id);
+
     revalidatePath("/inventory/purchase-orders");
+    revalidatePath(`/inventory/purchase-orders/${po.id}`);
     revalidatePath("/finance/payables");
     revalidatePath("/suppliers");
+    if (po.supplier_id) revalidatePath(`/suppliers/${po.supplier_id}`);
     revalidatePath("/finance/banking");
     revalidatePath("/inventory/stock");
     revalidatePath("/inventory/receive");
@@ -700,13 +752,153 @@ export async function receiveFromPurchaseOrder(
             .eq("id", r.stockId);
         }
       }
+      for (const item of poItemRollbacks) {
+        await supabase
+          .from("purchase_order_items")
+          .update({ received_qty: item.prevQty })
+          .eq("id", item.itemId);
+      }
       await supabase.from("stock_movements").delete().eq("reference_id", grnId);
+      const { data: je } = await supabase
+        .from("journal_entries")
+        .select("id")
+        .eq("source_id", grnId)
+        .eq("source_type", "grn")
+        .maybeSingle();
+      if (je?.id) {
+        await supabase
+          .from("journal_entry_lines")
+          .delete()
+          .eq("journal_entry_id", je.id);
+        await supabase.from("journal_entries").delete().eq("id", je.id);
+      }
+      // Bill is keyed by grn_id — remove if a partial create leaked.
+      const { data: leakedBills } = await apDb(supabase)
+        .from("supplier_bills")
+        .select("id")
+        .eq("grn_id", grnId);
+      const leakedBillIds = ((leakedBills ?? []) as { id: string }[]).map(
+        (b) => b.id
+      );
+      if (leakedBillIds.length > 0) {
+        await apDb(supabase)
+          .from("supplier_bill_items")
+          .delete()
+          .in("bill_id", leakedBillIds);
+        await apDb(supabase)
+          .from("supplier_bills")
+          .delete()
+          .in("id", leakedBillIds);
+      }
       await supabase.from("grn_items").delete().eq("grn_id", grnId);
       await supabase.from("grns").delete().eq("id", grnId);
     }
     return {
       ok: false,
       message: e instanceof Error ? e.message : "Receive from PO failed",
+    };
+  }
+}
+
+/**
+ * Fix POs stuck as received/partial after a failed receive rolled back the GRN
+ * but left received_qty / status. Resets lines and status so goods can be
+ * received again (on account creates the supplier bill / payable).
+ */
+export async function repairOrphanReceivedPurchaseOrder(
+  poId: string
+): Promise<
+  | { ok: true; message: string; reset: boolean }
+  | { ok: false; message: string }
+> {
+  try {
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const po = await getPurchaseOrderById(poId);
+    if (!po) return { ok: false, message: "Purchase order not found." };
+    if (!["received", "partial"].includes(po.status)) {
+      return {
+        ok: false,
+        message: "Only received or partial POs can be repaired this way.",
+      };
+    }
+
+    const { data: grns } = await supabase
+      .from("grns")
+      .select("id")
+      .eq("organization_id", ctx.organizationId)
+      .eq("po_id", poId)
+      .limit(1);
+    if ((grns ?? []).length > 0) {
+      return {
+        ok: true,
+        reset: false,
+        message:
+          "This PO already has a goods receipt. Payables come from on-account bills linked to that receipt — check the supplier Bills tab and active outlet.",
+      };
+    }
+
+    const inflated = po.items.filter((i) => i.received_qty > 0);
+    if (inflated.length === 0 && po.status === "partial") {
+      await supabase
+        .from("purchase_orders")
+        .update({
+          status: "sent",
+          payment_status: "unpaid",
+          payment_method: null,
+          paid_at: null,
+        })
+        .eq("id", poId)
+        .eq("organization_id", ctx.organizationId);
+      revalidatePath("/inventory/purchase-orders");
+      revalidatePath(`/inventory/purchase-orders/${poId}`);
+      if (po.supplier_id) revalidatePath(`/suppliers/${po.supplier_id}`);
+      return {
+        ok: true,
+        reset: true,
+        message: "PO reset to sent (no receipt qty to clear).",
+      };
+    }
+    if (inflated.length === 0) {
+      return {
+        ok: false,
+        message: "PO is marked received but has no received quantities or GRN.",
+      };
+    }
+
+    for (const item of inflated) {
+      await supabase
+        .from("purchase_order_items")
+        .update({ received_qty: 0 })
+        .eq("id", item.id);
+    }
+    await supabase
+      .from("purchase_orders")
+      .update({
+        status: "sent",
+        payment_status: "unpaid",
+        payment_method: null,
+        paid_at: null,
+      })
+      .eq("id", poId)
+      .eq("organization_id", ctx.organizationId);
+
+    revalidatePath("/inventory/purchase-orders");
+    revalidatePath(`/inventory/purchase-orders/${poId}`);
+    revalidatePath("/suppliers");
+    if (po.supplier_id) revalidatePath(`/suppliers/${po.supplier_id}`);
+    revalidatePath("/finance/payables");
+
+    return {
+      ok: true,
+      reset: true,
+      message:
+        "Orphan receive cleared. Open the PO and receive again with “On account (AP)” so the supplier bill and payable are created.",
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Repair failed",
     };
   }
 }
@@ -825,33 +1017,55 @@ export async function payPurchaseOrder(
     const amount = roundMoney(input.amount ?? po.total_amount);
 
     let billId = po.bill_id;
+    const supabase = await createServerSupabaseClient();
     if (!billId && po.supplier_id) {
-      const supabase = await createServerSupabaseClient();
-      const { data: grn } = await supabase
+      const { data: grns } = await supabase
         .from("grns")
         .select("id")
         .eq("po_id", input.poId)
+        .order("received_date", { ascending: true })
+        .limit(20);
+      if (!grns?.length) {
+        return {
+          ok: false,
+          message:
+            "No goods receipt on this PO yet. Receive goods first (on account creates the bill), then pay.",
+        };
+      }
+      // Prefer an existing open bill for any GRN on this PO.
+      const { data: existingBill } = await apDb(supabase)
+        .from("supplier_bills")
+        .select("id, total_amount, amount_paid, status")
+        .eq("po_id", input.poId)
+        .in("status", ["open", "partial"])
+        .order("bill_date", { ascending: true })
+        .limit(1)
         .maybeSingle();
-      const bill = await createSupplierBillFromGrn({
-        grnId: grn?.id ?? input.poId,
-        supplierId: po.supplier_id,
-        outletId: po.outlet_id,
-        billDate: po.order_date,
-        subtotal: po.subtotal,
-        taxAmount: po.tax_amount,
-        totalAmount: po.total_amount,
-        referenceNo: po.reference_no,
-        poId: po.id,
-        lines: po.items
-          .filter((i) => i.product_id)
-          .map((i) => ({
-            productId: i.product_id!,
-            quantity: i.received_qty || i.ordered_qty,
-            unitCost: i.unit_cost,
-          })),
-      });
-      if (!bill.ok) return bill;
-      billId = bill.billId;
+      if (existingBill?.id) {
+        billId = existingBill.id as string;
+      } else {
+        const firstGrnId = grns[0].id;
+        const bill = await createSupplierBillFromGrn({
+          grnId: firstGrnId,
+          supplierId: po.supplier_id,
+          outletId: po.outlet_id,
+          billDate: po.order_date,
+          subtotal: po.subtotal,
+          taxAmount: po.tax_amount,
+          totalAmount: po.total_amount,
+          referenceNo: po.reference_no,
+          poId: po.id,
+          lines: po.items
+            .filter((i) => i.product_id)
+            .map((i) => ({
+              productId: i.product_id!,
+              quantity: i.received_qty || i.ordered_qty,
+              unitCost: i.unit_cost,
+            })),
+        });
+        if (!bill.ok) return bill;
+        billId = bill.billId;
+      }
     }
 
     const payResult = await paySupplier({
@@ -866,13 +1080,31 @@ export async function payPurchaseOrder(
     if (!payResult.ok) return payResult;
 
     const ctx = await requireOrgContext();
-    const supabase = await createServerSupabaseClient();
+    const { data: poBills } = await apDb(supabase)
+      .from("supplier_bills")
+      .select("total_amount, amount_paid, status")
+      .eq("po_id", input.poId)
+      .in("status", ["open", "partial", "draft", "paid"]);
+    let outstanding = 0;
+    let anyPaid = false;
+    for (const b of (poBills ?? []) as {
+      total_amount: number;
+      amount_paid: number;
+      status: string;
+    }[]) {
+      const bal = roundMoney(Number(b.total_amount) - Number(b.amount_paid));
+      if (bal > 0) outstanding = roundMoney(outstanding + bal);
+      if (Number(b.amount_paid) > 0 || b.status === "paid") anyPaid = true;
+    }
+    const paymentStatus =
+      outstanding <= 0 ? "paid" : anyPaid ? "partial" : "unpaid";
+
     const { error } = await supabase
       .from("purchase_orders")
       .update({
-        payment_status: "paid",
+        payment_status: paymentStatus,
         payment_method: input.paymentMethod,
-        paid_at: paymentDate,
+        paid_at: paymentStatus === "paid" ? paymentDate : null,
       })
       .eq("id", input.poId)
       .eq("organization_id", ctx.organizationId);

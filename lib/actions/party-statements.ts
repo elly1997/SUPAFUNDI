@@ -34,18 +34,21 @@ export async function getSupplierStatement(
 ): Promise<PartyStatementLine[]> {
   const ctx = await requireOrgContext();
   const supabase = await createServerSupabaseClient();
+  const outletId = ctx.outletId;
 
-  const { data: bills } = await apDb(supabase)
+  let billsQuery = apDb(supabase)
     .from("supplier_bills")
     .select(
-      "id, bill_no, bill_date, total_amount, amount_paid, status, created_at"
+      "id, bill_no, bill_date, total_amount, amount_paid, status, created_at, notes"
     )
     .eq("organization_id", ctx.organizationId)
     .eq("supplier_id", supplierId)
     .order("bill_date", { ascending: false })
     .limit(limit);
+  if (outletId) billsQuery = billsQuery.eq("outlet_id", outletId);
+  const { data: bills } = await billsQuery;
 
-  const { data: payments } = await apDb(supabase)
+  let paymentsQuery = apDb(supabase)
     .from("supplier_payments")
     .select(
       "id, amount, payment_method, reference_no, payment_date, created_at, bill_id"
@@ -54,6 +57,8 @@ export async function getSupplierStatement(
     .eq("supplier_id", supplierId)
     .order("payment_date", { ascending: false })
     .limit(limit);
+  if (outletId) paymentsQuery = paymentsQuery.eq("outlet_id", outletId);
+  const { data: payments } = await paymentsQuery;
 
   type Raw = {
     id: string;
@@ -67,29 +72,53 @@ export async function getSupplierStatement(
 
   const raw: Raw[] = [];
 
+  /**
+   * Supplier AP convention (what we owe):
+   * - Credit = purchases / bills (increases balance)
+   * - Debit = payments / returns / credit memos (decreases balance)
+   * - Balance = credit − debit
+   */
   for (const b of bills ?? []) {
     const total = Number(b.total_amount);
+    const date = String(b.bill_date ?? b.created_at).slice(0, 10);
+    if (total < 0) {
+      raw.push({
+        id: `bill-${b.id}`,
+        date,
+        type: "Credit memo",
+        reference: String(b.bill_no),
+        debit: Math.abs(total),
+        credit: 0,
+        payment_method: null,
+      });
+      continue;
+    }
     raw.push({
       id: `bill-${b.id}`,
-      date: String(b.bill_date ?? b.created_at).slice(0, 10),
+      date,
       type: "Bill",
       reference: String(b.bill_no),
-      debit: total,
-      credit: 0,
+      debit: 0,
+      credit: total,
       payment_method: null,
     });
   }
 
   for (const p of payments ?? []) {
     const amt = Number(p.amount);
+    const method = String(p.payment_method ?? "");
+    const isReturn =
+      method === "return" ||
+      method === "supplier_return" ||
+      method === "credit_note";
     raw.push({
       id: `pay-${p.id}`,
       date: String(p.payment_date ?? p.created_at).slice(0, 10),
-      type: "Payment",
+      type: isReturn ? "Return credit" : "Payment",
       reference: String(p.reference_no ?? p.bill_id?.slice(0, 8) ?? "—"),
-      debit: 0,
-      credit: amt,
-      payment_method: String(p.payment_method),
+      debit: amt,
+      credit: 0,
+      payment_method: method || null,
     });
   }
 
@@ -99,7 +128,7 @@ export async function getSupplierStatement(
   const chronological = [...raw].reverse();
   const withBalance: PartyStatementLine[] = [];
   for (const row of chronological) {
-    running = roundMoney(running + row.debit - row.credit);
+    running = roundMoney(running + row.credit - row.debit);
     withBalance.push({ ...row, balance: running });
   }
 
@@ -214,16 +243,30 @@ export async function getCustomerStatement(
   for (const e of ledger ?? []) {
     const debit = Number(e.debit);
     const credit = Number(e.credit);
-    const isDepositApplied =
-      e.reference_type === "deposit_applied" ||
-      e.reference_type === "deposit_to_credit";
-    if (e.entry_type === "invoice" && e.reference_type === "sale") {
+    const refType = String(e.reference_type ?? "");
+    // Already represented by sales / payments / deposit rows — skip to avoid double-count.
+    if (
+      (e.entry_type === "invoice" && refType === "sale") ||
+      refType === "deposit_applied" ||
+      refType === "deposit_to_credit" ||
+      refType === "cash_to_credit" ||
+      refType === "customer_payment" ||
+      refType === "sale_void"
+    ) {
       continue;
     }
-    if (isDepositApplied) {
-      continue;
-    }
-    if (e.entry_type === "payment" && e.reference_type === "customer_payment") {
+    // Void restores prepaid deposit — track deposit only, not AR debit/credit.
+    if (refType === "deposit_restore_void") {
+      raw.push({
+        id: `led-${e.id}`,
+        date: paymentDateOnly(String(e.entry_date ?? e.created_at)),
+        type: "Deposit restored (void)",
+        reference: String(e.description ?? "—").slice(0, 60),
+        debit: 0,
+        credit: 0,
+        payment_method: null,
+        deposit_delta: debit > 0 ? debit : credit,
+      });
       continue;
     }
     raw.push({

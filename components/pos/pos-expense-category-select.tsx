@@ -35,7 +35,7 @@ export function PosExpenseCategorySelect({
 
   const { data: fetched = [], isLoading, isError } = useQuery({
     queryKey: ["expense-categories"],
-    queryFn: listExpenseCategories,
+    queryFn: () => listExpenseCategories(),
     staleTime: 60_000,
   });
 

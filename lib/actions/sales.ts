@@ -10,7 +10,11 @@ import {
 import { postJournalEntry } from "@/lib/actions/accounting";
 import { refreshDailyClosingSnapshot } from "@/lib/actions/daily-closing";
 import { applyCustomerDepositToCredit } from "@/lib/actions/credit";
-import { creditAccountFromPosSale } from "@/lib/actions/banking";
+import {
+  creditAccountFromPosSale,
+  reverseBankTransaction,
+  withdrawFromCollectionAccount,
+} from "@/lib/actions/banking";
 import {
   buildSalePaymentBreakdown,
   summarizeSalePaymentLabels,
@@ -43,7 +47,6 @@ import {
   isUserRole,
   type UserRole,
 } from "@/lib/auth/roles";
-import { reverseBankTransaction } from "@/lib/actions/banking";
 import {
   businessDateFromTimestamptz,
   isoDateToTimestamptz,
@@ -185,7 +188,17 @@ async function generateInvoiceNo(
 async function rollbackSale(
   supabase: Supabase,
   saleId: string,
-  stockRollbacks: StockRollback[]
+  stockRollbacks: StockRollback[],
+  extras?: {
+    customerId?: string | null;
+    depositApplied?: number;
+    bankCredit?: {
+      accountId: string;
+      amount: number;
+      invoiceNo: string;
+      businessDate?: string;
+    } | null;
+  }
 ): Promise<void> {
   for (const r of stockRollbacks) {
     const { data: row } = await supabase
@@ -200,8 +213,34 @@ async function rollbackSale(
         .eq("id", r.stockId);
     }
   }
+  if (extras?.depositApplied && extras.depositApplied > 0 && extras.customerId) {
+    const { data: cust } = await supabase
+      .from("customers")
+      .select("deposit_balance")
+      .eq("id", extras.customerId)
+      .maybeSingle();
+    const restored = roundMoney(
+      Number(cust?.deposit_balance ?? 0) + extras.depositApplied
+    );
+    await supabase
+      .from("customers")
+      .update({ deposit_balance: restored })
+      .eq("id", extras.customerId);
+  }
+  if (extras?.bankCredit && extras.bankCredit.amount > 0) {
+    await withdrawFromCollectionAccount(
+      extras.bankCredit.accountId,
+      extras.bankCredit.amount,
+      `Reversal — POS sale ${extras.bankCredit.invoiceNo}`,
+      {
+        referenceNo: extras.bankCredit.invoiceNo,
+        transactionDate: extras.bankCredit.businessDate,
+      }
+    );
+  }
   await supabase.from("stock_movements").delete().eq("reference_id", saleId);
   await supabase.from("credit_ledger").delete().eq("reference_id", saleId);
+  await supabase.from("payments").delete().eq("sale_id", saleId);
   await supabase.from("sales").delete().eq("id", saleId);
 }
 
@@ -210,9 +249,18 @@ export async function completeSale(
 ): Promise<CompleteSaleResult> {
   const stockRollbacks: StockRollback[] = [];
   let saleId: string | null = null;
+  let bankCredit: {
+    accountId: string;
+    amount: number;
+    invoiceNo: string;
+    businessDate?: string;
+  } | null = null;
+  let depositAppliedForRollback = 0;
+  let customerIdForRollback: string | null = null;
 
   try {
     const input = completeSaleInput.parse(raw);
+    customerIdForRollback = input.customerId ?? null;
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
     const vatConfig = await getOrgVatConfig();
@@ -489,7 +537,11 @@ export async function completeSale(
       itemsErr = (await supabase.from("sale_items").insert(saleItemsBase)).error;
     }
     if (itemsErr) {
-      await rollbackSale(supabase, sale.id, stockRollbacks);
+      await rollbackSale(supabase, sale.id, stockRollbacks, {
+            customerId: input.customerId,
+            depositApplied: depositAppliedForRollback,
+            bankCredit,
+          });
       return { ok: false, message: itemsErr.message };
     }
 
@@ -517,7 +569,11 @@ export async function completeSale(
         payErr = (await supabase.from("payments").insert(paymentBase)).error;
       }
       if (payErr) {
-        await rollbackSale(supabase, sale.id, stockRollbacks);
+        await rollbackSale(supabase, sale.id, stockRollbacks, {
+            customerId: input.customerId,
+            depositApplied: depositAppliedForRollback,
+            bankCredit,
+          });
         return { ok: false, message: payErr.message };
       }
 
@@ -536,9 +592,19 @@ export async function completeSale(
           input.businessDate
         );
         if (!credit.ok) {
-          await rollbackSale(supabase, sale.id, stockRollbacks);
+          await rollbackSale(supabase, sale.id, stockRollbacks, {
+            customerId: input.customerId,
+            depositApplied: depositAppliedForRollback,
+            bankCredit,
+          });
           return { ok: false, message: credit.message };
         }
+        bankCredit = {
+          accountId: input.paymentAccountId!,
+          amount: payAmount,
+          invoiceNo,
+          businessDate: input.businessDate,
+        };
       }
     }
 
@@ -550,7 +616,11 @@ export async function completeSale(
         .single();
       const availableDep = roundMoney(Number(depRow?.deposit_balance ?? 0));
       if (availableDep < depositApplied) {
-        await rollbackSale(supabase, sale.id, stockRollbacks);
+        await rollbackSale(supabase, sale.id, stockRollbacks, {
+            customerId: input.customerId,
+            depositApplied: depositAppliedForRollback,
+            bankCredit,
+          });
         return {
           ok: false,
           message: `Deposit balance changed (available ${availableDep}). Retry checkout.`,
@@ -565,16 +635,25 @@ export async function completeSale(
         .select("id")
         .maybeSingle();
       if (depErr) {
-        await rollbackSale(supabase, sale.id, stockRollbacks);
+        await rollbackSale(supabase, sale.id, stockRollbacks, {
+            customerId: input.customerId,
+            depositApplied: depositAppliedForRollback,
+            bankCredit,
+          });
         return { ok: false, message: depErr.message };
       }
       if (!depUpdated) {
-        await rollbackSale(supabase, sale.id, stockRollbacks);
+        await rollbackSale(supabase, sale.id, stockRollbacks, {
+            customerId: input.customerId,
+            depositApplied: depositAppliedForRollback,
+            bankCredit,
+          });
         return {
           ok: false,
           message: "Deposit was applied by another sale. Retry checkout.",
         };
       }
+      depositAppliedForRollback = depositApplied;
     }
 
     for (const line of input.lines) {
@@ -591,11 +670,19 @@ export async function completeSale(
         .select("id")
         .maybeSingle();
       if (updErr) {
-        await rollbackSale(supabase, sale.id, stockRollbacks);
+        await rollbackSale(supabase, sale.id, stockRollbacks, {
+            customerId: input.customerId,
+            depositApplied: depositAppliedForRollback,
+            bankCredit,
+          });
         return { ok: false, message: updErr.message };
       }
       if (!updatedStock) {
-        await rollbackSale(supabase, sale.id, stockRollbacks);
+        await rollbackSale(supabase, sale.id, stockRollbacks, {
+            customerId: input.customerId,
+            depositApplied: depositAppliedForRollback,
+            bankCredit,
+          });
         return {
           ok: false,
           message: `Insufficient stock for "${line.productName}" (updated by another sale).`,
@@ -618,7 +705,11 @@ export async function completeSale(
         created_at: saleTimestamp,
       });
       if (movErr) {
-        await rollbackSale(supabase, sale.id, stockRollbacks);
+        await rollbackSale(supabase, sale.id, stockRollbacks, {
+            customerId: input.customerId,
+            depositApplied: depositAppliedForRollback,
+            bankCredit,
+          });
         return { ok: false, message: movErr.message };
       }
     }
@@ -650,7 +741,11 @@ export async function completeSale(
         created_by: ctx.userId,
       });
       if (ledgerErr) {
-        await rollbackSale(supabase, sale.id, stockRollbacks);
+        await rollbackSale(supabase, sale.id, stockRollbacks, {
+            customerId: input.customerId,
+            depositApplied: depositAppliedForRollback,
+            bankCredit,
+          });
         return { ok: false, message: ledgerErr.message };
       }
 
@@ -659,7 +754,11 @@ export async function completeSale(
         .update({ outstanding_balance: newBalance })
         .eq("id", input.customerId);
       if (custErr) {
-        await rollbackSale(supabase, sale.id, stockRollbacks);
+        await rollbackSale(supabase, sale.id, stockRollbacks, {
+            customerId: input.customerId,
+            depositApplied: depositAppliedForRollback,
+            bankCredit,
+          });
         return { ok: false, message: custErr.message };
       }
     }
@@ -708,7 +807,11 @@ export async function completeSale(
           .update({ outstanding_balance: Math.max(0, restored) })
           .eq("id", input.customerId);
       }
-      await rollbackSale(supabase, sale.id, stockRollbacks);
+      await rollbackSale(supabase, sale.id, stockRollbacks, {
+            customerId: input.customerId,
+            depositApplied: depositAppliedForRollback,
+            bankCredit,
+          });
       return {
         ok: false,
         message: `Sale rolled back: ${journal.message}`,
@@ -743,7 +846,11 @@ export async function completeSale(
   } catch (e) {
     if (saleId) {
       const supabase = await createServerSupabaseClient();
-      await rollbackSale(supabase, saleId, stockRollbacks);
+      await rollbackSale(supabase, saleId, stockRollbacks, {
+        customerId: customerIdForRollback,
+        depositApplied: depositAppliedForRollback,
+        bankCredit,
+      });
     }
     const message = e instanceof Error ? e.message : "Checkout failed";
     return { ok: false, message };

@@ -12,7 +12,7 @@ type Props = {
 export function PosCategoryChips({ value, onChange }: Props) {
   const { data: categories = [] } = useQuery({
     queryKey: ["pos-categories"],
-    queryFn: listCategoriesForPos,
+    queryFn: () => listCategoriesForPos(),
     staleTime: 60_000,
   });
 

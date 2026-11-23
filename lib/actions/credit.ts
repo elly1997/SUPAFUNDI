@@ -99,28 +99,51 @@ export async function applyAmountToCustomerCredit(
     paymentAccountId?: string;
   }
 ): Promise<
-  | { ok: true; applied: number; newOutstanding: number; ledgerId: string }
+  | {
+      ok: true;
+      applied: number;
+      newOutstanding: number;
+      ledgerId: string;
+      saleReversals: {
+        saleId: string;
+        amountPaid: number;
+        balanceDue: number;
+      }[];
+      paymentIds: string[];
+      ledgerIds: string[];
+    }
   | { ok: false; message: string }
 > {
-  const applied = roundMoney(
+  const requested = roundMoney(
     Math.min(params.amount, params.currentOutstanding)
   );
-  if (applied <= 0) {
+  if (requested <= 0) {
     return {
       ok: true,
       applied: 0,
       newOutstanding: roundMoney(params.currentOutstanding),
       ledgerId: "",
+      saleReversals: [],
+      paymentIds: [],
+      ledgerIds: [],
     };
   }
 
   const openInvoices = await listCustomerOpenInvoices(params.customerId);
-  const slices = buildFifoCreditSlices(openInvoices, applied);
+  const slices = buildFifoCreditSlices(openInvoices, requested);
   const paymentTs =
     params.paymentTs ?? `${params.entryDate}T12:00:00.000Z`;
 
   let newOutstanding = roundMoney(params.currentOutstanding);
   let lastLedgerId = "";
+  let applied = 0;
+  const saleReversals: {
+    saleId: string;
+    amountPaid: number;
+    balanceDue: number;
+  }[] = [];
+  const paymentIds: string[] = [];
+  const ledgerIds: string[] = [];
 
   for (const slice of slices) {
     const { data: sale } = await supabase
@@ -132,6 +155,11 @@ export async function applyAmountToCustomerCredit(
     if (!sale) {
       return { ok: false, message: "Sale not found." };
     }
+    saleReversals.push({
+      saleId: slice.saleId,
+      amountPaid: Number(sale.amount_paid),
+      balanceDue: Number(sale.balance_due),
+    });
     const newPaid = roundMoney(Number(sale.amount_paid) + slice.amount);
     const newDue = roundMoney(Number(sale.balance_due) - slice.amount);
     const { error: saleErr } = await supabase
@@ -144,7 +172,7 @@ export async function applyAmountToCustomerCredit(
     if (saleErr) return { ok: false, message: saleErr.message };
 
     if (params.paymentMethod) {
-      await insertCustomerPaymentRow(
+      const paymentId = await insertCustomerPaymentRow(
         supabase,
         {
           organization_id: ctx.organizationId,
@@ -163,9 +191,11 @@ export async function applyAmountToCustomerCredit(
         },
         params.paymentAccountId
       );
+      if (paymentId) paymentIds.push(paymentId);
     }
 
     newOutstanding = roundMoney(newOutstanding - slice.amount);
+    applied = roundMoney(applied + slice.amount);
 
     const { data: ledger, error: ledgerErr } = await paymentsDb(supabase)
       .from("credit_ledger")
@@ -191,6 +221,59 @@ export async function applyAmountToCustomerCredit(
       };
     }
     lastLedgerId = String(ledger.id);
+    ledgerIds.push(lastLedgerId);
+  }
+
+  // Opening / unallocated AR (no open invoice) — still reduce outstanding.
+  const remainder = roundMoney(requested - applied);
+  if (remainder > 0) {
+    newOutstanding = roundMoney(newOutstanding - remainder);
+    applied = roundMoney(applied + remainder);
+    if (params.paymentMethod) {
+      const paymentId = await insertCustomerPaymentRow(
+        supabase,
+        {
+          organization_id: ctx.organizationId,
+          outlet_id: params.outletId ?? ctx.outletId,
+          payment_method: params.paymentMethod,
+          amount: remainder,
+          reference_no: formatCustomerArReference(
+            params.customerName,
+            params.paymentReference
+          ),
+          status: "completed",
+          payment_date: paymentTs,
+          received_by: ctx.userId,
+          customer_id: params.customerId,
+        },
+        params.paymentAccountId
+      );
+      if (paymentId) paymentIds.push(paymentId);
+    }
+    const { data: ledger, error: ledgerErr } = await paymentsDb(supabase)
+      .from("credit_ledger")
+      .insert({
+        organization_id: ctx.organizationId,
+        customer_id: params.customerId,
+        entry_type: "payment",
+        reference_type: params.ledgerReferenceType,
+        debit: 0,
+        credit: remainder,
+        balance: newOutstanding,
+        description: `${params.ledgerDescription} (opening/unallocated)`,
+        entry_date: params.entryDate,
+        created_by: ctx.userId,
+      })
+      .select("id")
+      .single();
+    if (ledgerErr || !ledger) {
+      return {
+        ok: false,
+        message: ledgerErr?.message ?? "Ledger insert failed",
+      };
+    }
+    lastLedgerId = String(ledger.id);
+    ledgerIds.push(lastLedgerId);
   }
 
   const { error: custErr } = await supabase
@@ -206,6 +289,9 @@ export async function applyAmountToCustomerCredit(
     applied,
     newOutstanding,
     ledgerId: lastLedgerId,
+    saleReversals,
+    paymentIds,
+    ledgerIds,
   };
 }
 
@@ -560,6 +646,12 @@ export async function applyCustomerDepositToCredit(
     let newDeposit = deposit;
     let totalApplied = 0;
     const ledgerIds: string[] = [];
+    const saleReversals: {
+      saleId: string;
+      amountPaid: number;
+      balanceDue: number;
+      depositApplied: number;
+    }[] = [];
 
     for (const slice of slices) {
       const { data: sale } = await supabase
@@ -571,6 +663,12 @@ export async function applyCustomerDepositToCredit(
       if (!sale) {
         return { ok: false, message: "Sale not found." };
       }
+      saleReversals.push({
+        saleId: slice.saleId,
+        amountPaid: Number(sale.amount_paid),
+        balanceDue: Number(sale.balance_due),
+        depositApplied: Number(sale.deposit_applied ?? 0),
+      });
       const newPaid = roundMoney(Number(sale.amount_paid) + slice.amount);
       const newDue = roundMoney(Number(sale.balance_due) - slice.amount);
       const newDepositApplied = roundMoney(
@@ -608,6 +706,19 @@ export async function applyCustomerDepositToCredit(
         .select("id")
         .single();
       if (ledgerErr || !ledger) {
+        for (const rev of saleReversals) {
+          await paymentsDb(supabase)
+            .from("sales")
+            .update({
+              amount_paid: rev.amountPaid,
+              balance_due: rev.balanceDue,
+              deposit_applied: rev.depositApplied,
+            })
+            .eq("id", rev.saleId);
+        }
+        for (const id of ledgerIds) {
+          await paymentsDb(supabase).from("credit_ledger").delete().eq("id", id);
+        }
         return {
           ok: false,
           message: ledgerErr?.message ?? "Ledger insert failed",
@@ -620,6 +731,22 @@ export async function applyCustomerDepositToCredit(
       return { ok: true, applied: 0 };
     }
 
+    const restoreDepositApplySales = async () => {
+      for (const rev of saleReversals) {
+        await paymentsDb(supabase)
+          .from("sales")
+          .update({
+            amount_paid: rev.amountPaid,
+            balance_due: rev.balanceDue,
+            deposit_applied: rev.depositApplied,
+          })
+          .eq("id", rev.saleId);
+      }
+      for (const id of ledgerIds) {
+        await paymentsDb(supabase).from("credit_ledger").delete().eq("id", id);
+      }
+    };
+
     const { data: custUpdated, error: custErr } = await supabase
       .from("customers")
       .update({
@@ -631,12 +758,11 @@ export async function applyCustomerDepositToCredit(
       .select("id")
       .maybeSingle();
     if (custErr) {
+      await restoreDepositApplySales();
       return { ok: false, message: custErr.message };
     }
     if (!custUpdated) {
-      for (const id of ledgerIds) {
-        await paymentsDb(supabase).from("credit_ledger").delete().eq("id", id);
-      }
+      await restoreDepositApplySales();
       return {
         ok: false,
         message: "Deposit changed concurrently. Retry apply.",
@@ -659,9 +785,7 @@ export async function applyCustomerDepositToCredit(
           deposit_balance: deposit,
         })
         .eq("id", customerId);
-      for (const id of ledgerIds) {
-        await supabase.from("credit_ledger").delete().eq("id", id);
-      }
+      await restoreDepositApplySales();
       return { ok: false, message: journal.message };
     }
 
@@ -774,12 +898,8 @@ export async function recordCustomerPayment(
           remaining = roundMoney(remaining - slice);
         }
       }
-      if (remaining > 0) {
-        return {
-          ok: false,
-          message: `Payment exceeds open invoices by ${remaining}.`,
-        };
-      }
+      // Remainder may pay opening / unallocated AR (no open invoice rows).
+      // Reject only when it exceeds the customer outstanding balance below.
     }
 
     const owed = Number(customer.outstanding_balance);
@@ -872,17 +992,33 @@ export async function recordCustomerPayment(
       .select("id")
       .single();
     if (ledgerErr || !ledger) {
+      for (const id of paymentIds) {
+        await supabase.from("payments").delete().eq("id", id);
+      }
+      for (const rev of saleReversals) {
+        await supabase
+          .from("sales")
+          .update({
+            amount_paid: rev.amountPaid,
+            balance_due: rev.balanceDue,
+          })
+          .eq("id", rev.saleId);
+      }
       return { ok: false, message: ledgerErr?.message ?? "Ledger insert failed" };
     }
 
-    if (slices.length === 0) {
+    const allocatedToInvoices = roundMoney(
+      slices.reduce((s, x) => s + x.amount, 0)
+    );
+    const unallocated = roundMoney(input.amount - allocatedToInvoices);
+    if (unallocated > 0) {
       const paymentId = await insertCustomerPaymentRow(
         supabase,
         {
           organization_id: ctx.organizationId,
           outlet_id: ctx.outletId,
           payment_method: input.paymentMethod,
-          amount: input.amount,
+          amount: unallocated,
           reference_no: formatCustomerArReference(
             customer.name,
             input.referenceNo

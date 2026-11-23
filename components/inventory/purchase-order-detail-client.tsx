@@ -21,6 +21,7 @@ import { fetchPurchaseOrderById } from "@/lib/api/procurement-fetch";
 import {
   cancelPurchaseOrderApi,
   receiveFromPurchaseOrderApi,
+  repairOrphanReceivedPurchaseOrderApi,
   sendPurchaseOrderApi,
 } from "@/lib/api/daily-ops-fetch";
 import { PoPayDialog } from "@/components/procurement/po-pay-dialog";
@@ -82,15 +83,37 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
     mutationFn: receiveFromPurchaseOrderApi,
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success("Goods received and posted to GL");
+        toast.success(
+          paymentMethod === "on_account"
+            ? "Goods received on account — supplier bill / payable created"
+            : "Goods received and posted to GL"
+        );
         setReceiveQty({});
         invalidate();
         queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
         queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
+        queryClient.invalidateQueries({ queryKey: ["suppliers"] });
+        if (po?.supplier_id) {
+          queryClient.invalidateQueries({
+            queryKey: ["supplier", po.supplier_id],
+          });
+        }
       } else toast.error(r.message);
     },
     onError: (e) =>
       toast.error(e instanceof Error ? e.message : "Receive failed"),
+  });
+
+  const repairMut = useMutation({
+    mutationFn: () => repairOrphanReceivedPurchaseOrderApi(poId),
+    onSuccess: (r) => {
+      if (r.ok) {
+        toast.success(r.message);
+        invalidate();
+      } else toast.error(r.message);
+    },
+    onError: (e) =>
+      toast.error(e instanceof Error ? e.message : "Repair failed"),
   });
 
   if (isLoading || !po) {
@@ -136,8 +159,25 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
                 supplier account
               </p>
             ) : null}
+            {po.orphan_receive ? (
+              <p className="mt-2 text-sm text-destructive">
+                Receive was incomplete: PO shows received but there is no goods
+                receipt or supplier bill. Reset this PO, then receive again with{" "}
+                <strong>On account (AP)</strong> if you still owe the supplier.
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
+            {po.orphan_receive ? (
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={repairMut.isPending}
+                onClick={() => repairMut.mutate()}
+              >
+                {repairMut.isPending ? "Repairing…" : "Reset orphan receive"}
+              </Button>
+            ) : null}
             {!isPoPaid(po.payment_status) && po.supplier_id ? (
               <Button
                 type="button"
@@ -268,11 +308,17 @@ export function PurchaseOrderDetailClient({ poId }: Props) {
                   )
                 }
               >
-                <option value="on_account">On account (AP)</option>
-                <option value="cash">Cash</option>
-                <option value="mpesa">M-Pesa</option>
-                <option value="bank_transfer">Bank transfer</option>
+                <option value="on_account">On account (AP) — creates payable</option>
+                <option value="cash">Cash — paid now (no payable)</option>
+                <option value="mpesa">M-Pesa — paid now (no payable)</option>
+                <option value="bank_transfer">
+                  Bank transfer — paid now (no payable)
+                </option>
               </select>
+              <p className="form-hint text-xs text-muted-foreground">
+                Only <strong>On account</strong> adds to supplier payables. Cash /
+                M-Pesa / bank mark the PO paid and do not create a bill.
+              </p>
             </div>
             <CollectionAccountSelect
               paymentMethod={paymentMethod}

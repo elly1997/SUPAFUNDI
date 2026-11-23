@@ -153,17 +153,25 @@ export function SupplierDetailClient({ supplierId }: Props) {
             <p className="text-sm text-muted-foreground">No purchase orders.</p>
           ) : (
             <ul className="space-y-2 text-sm">
-              {supplier.purchase_orders.map((po) => (
-                <li key={po.id}>
-                  <Link
-                    href={`/inventory/purchase-orders/${po.id}`}
-                    className="text-primary hover:underline"
-                  >
-                    {po.reference_no ?? po.id.slice(0, 8)}
-                  </Link>{" "}
-                  · {po.status} · {formatTzs(po.total_amount)}
-                </li>
-              ))}
+              {supplier.purchase_orders.map((po) => {
+                const payLabel =
+                  po.payment_method === "on_account"
+                    ? "on account"
+                    : po.payment_method
+                      ? po.payment_method.replace("_", " ")
+                      : po.payment_status;
+                return (
+                  <li key={po.id}>
+                    <Link
+                      href={`/inventory/purchase-orders/${po.id}`}
+                      className="text-primary hover:underline"
+                    >
+                      {po.reference_no ?? po.id.slice(0, 8)}
+                    </Link>{" "}
+                    · {po.status} · {payLabel} · {formatTzs(po.total_amount)}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </CardContent>

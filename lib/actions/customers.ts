@@ -266,6 +266,14 @@ export async function recordCustomerDeposit(
     }
 
     /** AR slice — counted once as cashCustomerPayments (invoice-linked). */
+    let creditSaleReversals: {
+      saleId: string;
+      amountPaid: number;
+      balanceDue: number;
+    }[] = [];
+    let creditPaymentIds: string[] = [];
+    let creditLedgerIds: string[] = [];
+
     if (toCredit > 0) {
       const credit = await applyAmountToCustomerCredit(supabase, ctx, {
         customerId: input.customerId,
@@ -299,10 +307,37 @@ export async function recordCustomerDeposit(
         return credit;
       }
       creditOutstandingBefore = outstanding;
+      creditSaleReversals = credit.saleReversals;
+      creditPaymentIds = credit.paymentIds;
+      creditLedgerIds = credit.ledgerIds;
       if (!journalSourceId && credit.ledgerId) {
         journalSourceId = credit.ledgerId;
       }
     }
+
+    const rollbackCreditApply = async () => {
+      for (const id of creditPaymentIds) {
+        await supabase.from("payments").delete().eq("id", id);
+      }
+      for (const id of creditLedgerIds) {
+        await supabase.from("credit_ledger").delete().eq("id", id);
+      }
+      for (const rev of creditSaleReversals) {
+        await supabase
+          .from("sales")
+          .update({
+            amount_paid: rev.amountPaid,
+            balance_due: rev.balanceDue,
+          })
+          .eq("id", rev.saleId);
+      }
+      if (toCredit > 0) {
+        await supabase
+          .from("customers")
+          .update({ outstanding_balance: creditOutstandingBefore })
+          .eq("id", input.customerId);
+      }
+    };
 
     const journal = await postJournalEntry({
       description:
@@ -334,13 +369,8 @@ export async function recordCustomerDeposit(
           }
         );
       }
+      await rollbackCreditApply();
       await rollbackPayments();
-      if (toCredit > 0) {
-        await supabase
-          .from("customers")
-          .update({ outstanding_balance: creditOutstandingBefore })
-          .eq("id", input.customerId);
-      }
       return { ok: false, message: journal.message };
     }
 

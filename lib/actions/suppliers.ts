@@ -81,6 +81,8 @@ export type SupplierDetail = {
     status: string;
     order_date: string;
     total_amount: number;
+    payment_status: string;
+    payment_method: string | null;
   }[];
 };
 
@@ -149,10 +151,11 @@ async function payablesBySupplier(
 
   for (const b of billRows) {
     if (!b.supplier_id) continue;
+    // Include negative credit-memo residuals so returns reduce payables.
     const balance = roundMoney(
       Number(b.total_amount) - Number(b.amount_paid)
     );
-    if (balance <= 0) continue;
+    if (balance === 0) continue;
     map.set(b.supplier_id, roundMoney((map.get(b.supplier_id) ?? 0) + balance));
   }
 
@@ -323,7 +326,9 @@ export async function getSupplierDetail(
 
   const { data: pos } = await supabase
     .from("purchase_orders")
-    .select("id, reference_no, status, order_date, total_amount")
+    .select(
+      "id, reference_no, status, order_date, total_amount, payment_status, payment_method"
+    )
     .eq("organization_id", ctx.organizationId)
     .eq("supplier_id", supplierId)
     .order("created_at", { ascending: false })
@@ -363,6 +368,8 @@ export async function getSupplierDetail(
       status: p.status,
       order_date: p.order_date,
       total_amount: Number(p.total_amount),
+      payment_status: p.payment_status ?? "unpaid",
+      payment_method: p.payment_method ?? null,
     })),
   };
 }
@@ -607,20 +614,25 @@ async function planBillAllocations(
   organizationId: string,
   supplierId: string,
   totalAmount: number,
-  billId?: string
+  billId?: string,
+  outletId?: string | null
 ): Promise<{ ok: true; slices: BillSlice[] } | { ok: false; message: string }> {
   if (billId) {
-    const { data: bill } = await apDb(supabase)
+    let billQuery = apDb(supabase)
       .from("supplier_bills")
-      .select("id, supplier_id, total_amount, amount_paid")
+      .select("id, supplier_id, total_amount, amount_paid, outlet_id")
       .eq("id", billId)
       .eq("organization_id", organizationId)
-      .eq("supplier_id", supplierId)
-      .maybeSingle();
+      .eq("supplier_id", supplierId);
+    if (outletId) billQuery = billQuery.eq("outlet_id", outletId);
+    const { data: bill } = await billQuery.maybeSingle();
     if (!bill) return { ok: false, message: "Bill not found." };
     const balance = roundMoney(
       Number(bill.total_amount) - Number(bill.amount_paid)
     );
+    if (balance <= 0) {
+      return { ok: false, message: "This bill has no open balance." };
+    }
     if (totalAmount > balance) {
       return {
         ok: false,
@@ -630,13 +642,15 @@ async function planBillAllocations(
     return { ok: true, slices: [{ billId, amount: totalAmount }] };
   }
 
-  const { data: bills } = await apDb(supabase)
+  let billsQuery = apDb(supabase)
     .from("supplier_bills")
     .select("id, total_amount, amount_paid")
     .eq("organization_id", organizationId)
     .eq("supplier_id", supplierId)
     .in("status", ["open", "partial", "draft"])
     .order("bill_date", { ascending: true });
+  if (outletId) billsQuery = billsQuery.eq("outlet_id", outletId);
+  const { data: bills } = await billsQuery;
 
   let remaining = totalAmount;
   const slices: BillSlice[] = [];
@@ -699,11 +713,17 @@ export async function paySupplier(
       ctx.organizationId,
       input.supplierId,
       input.amount,
-      input.billId
+      input.billId,
+      ctx.outletId
     );
     if (!plan.ok) return plan;
 
     const paymentIds: string[] = [];
+    const billRollbacks: {
+      billId: string;
+      amountPaid: number;
+      status: string;
+    }[] = [];
 
     for (const slice of plan.slices) {
       const { data: bill } = await apDb(supabase)
@@ -712,6 +732,12 @@ export async function paySupplier(
         .eq("id", slice.billId)
         .maybeSingle();
       if (!bill) return { ok: false, message: "Bill not found." };
+
+      billRollbacks.push({
+        billId: bill.id,
+        amountPaid: Number(bill.amount_paid),
+        status: String(bill.status),
+      });
 
       const newPaid = roundMoney(Number(bill.amount_paid) + slice.amount);
       const newStatus =
@@ -761,6 +787,15 @@ export async function paySupplier(
       ),
     });
     if (!journal.ok) {
+      for (const paymentId of paymentIds) {
+        await apDb(supabase).from("supplier_payments").delete().eq("id", paymentId);
+      }
+      for (const rb of billRollbacks) {
+        await apDb(supabase)
+          .from("supplier_bills")
+          .update({ amount_paid: rb.amountPaid, status: rb.status })
+          .eq("id", rb.billId);
+      }
       return { ok: false, message: journal.message };
     }
 
@@ -779,7 +814,36 @@ export async function paySupplier(
         transactionDate: paymentDate,
         allowNegativeBalance: true,
       });
-      if (!bank.ok) return bank;
+      if (!bank.ok) {
+        for (const paymentId of paymentIds) {
+          await apDb(supabase)
+            .from("supplier_payments")
+            .delete()
+            .eq("id", paymentId);
+        }
+        for (const rb of billRollbacks) {
+          await apDb(supabase)
+            .from("supplier_bills")
+            .update({ amount_paid: rb.amountPaid, status: rb.status })
+            .eq("id", rb.billId);
+        }
+        if (paymentIds[0]) {
+          const { data: je } = await supabase
+            .from("journal_entries")
+            .select("id")
+            .eq("source_id", paymentIds[0])
+            .eq("source_type", "payment")
+            .maybeSingle();
+          if (je?.id) {
+            await supabase
+              .from("journal_entry_lines")
+              .delete()
+              .eq("journal_entry_id", je.id);
+            await supabase.from("journal_entries").delete().eq("id", je.id);
+          }
+        }
+        return bank;
+      }
     }
 
     revalidatePath("/suppliers");
