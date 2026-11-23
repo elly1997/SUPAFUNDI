@@ -19,6 +19,7 @@ import { PosCategoryChips } from "@/components/pos/pos-category-chips";
 import { PosCheckoutDialog } from "@/components/pos/pos-checkout-dialog";
 import { PosCashflowPanel } from "@/components/pos/pos-cashflow-panel";
 import { PosHeader, type PosOutletOption } from "@/components/pos/pos-header";
+import { PosPricingToggle } from "@/components/pos/pos-pricing-toggle";
 import { PosProductCard } from "@/components/pos/pos-product-card";
 import {
   PosAddToCartDialog,
