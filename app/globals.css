@@ -192,6 +192,38 @@
     color: var(--foreground);
   }
 
+  /* POS counter nav — keep ≥36px touch height without eating the catalog */
+  .nav-tab-compact {
+    display: inline-flex;
+    shrink: 0;
+    align-items: center;
+    min-height: 2.25rem;
+    gap: 0.35rem;
+    border-radius: 0.5rem;
+    padding: 0.35rem 0.65rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--muted-foreground);
+    touch-action: manipulation;
+    transition: color 0.15s, background-color 0.15s, box-shadow 0.15s;
+  }
+
+  .nav-tab-compact:hover {
+    background-color: rgb(51 65 85 / 0.75);
+    color: var(--foreground);
+  }
+
+  .nav-tab-compact-active {
+    background: linear-gradient(
+      135deg,
+      rgb(249 115 22 / 0.22) 0%,
+      rgb(249 115 22 / 0.08) 100%
+    );
+    color: var(--primary);
+    box-shadow: inset 0 0 0 1px rgb(249 115 22 / 0.35);
+  }
+
   .report-tab {
     display: inline-flex;
     shrink: 0;

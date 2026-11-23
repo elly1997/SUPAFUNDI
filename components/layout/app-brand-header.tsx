@@ -62,6 +62,7 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
   }
 
   const displayName = session.fullName || session.email;
+  const shortName = displayName.split(" ")[0] || displayName;
   const canSwitch = canSwitchOutlets(session.role);
   const outletValue =
     resolveActiveOutletId(outlets, {
@@ -88,14 +89,101 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
     });
   };
 
+  /** POS counter mode: one dense bar — brand + modules + date + actions. */
+  if (isPos) {
+    return (
+      <div className="flex shrink-0 flex-col">
+        <header className="sticky top-0 z-30 flex h-11 items-center gap-1.5 border-b border-border bg-header px-2 md:gap-2 md:px-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0 md:hidden"
+            onClick={() => setMobileNavOpen(true)}
+            aria-label="Open menu"
+          >
+            <Menu className="size-4" />
+          </Button>
+
+          <BrandLogo compact showTagline={false} href="/pos" />
+
+          <div className="hidden min-w-0 flex-1 md:block">
+            <PosModuleNav compact className="border-0 bg-transparent px-0 py-0" />
+          </div>
+
+          <div className="ml-auto flex shrink-0 items-center gap-1 md:gap-1.5">
+            <DatePicker
+              value={businessDate}
+              onChange={onBusinessDateChange}
+              disabledDates={reconciledDates}
+              showPresets
+              buttonClassName="h-8 min-w-0 max-w-[9.5rem] px-2 text-[11px]"
+            />
+            <InboxButton compact />
+            <span
+              className="hidden max-w-[5.5rem] truncate text-xs font-medium text-muted-foreground lg:inline"
+              title={displayName}
+            >
+              {shortName}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 border-border bg-surface-1 px-2"
+              onClick={onSignOut}
+              disabled={pending}
+              aria-label="Sign out"
+            >
+              <LogOut className="size-3.5" />
+              <span className="ml-1 hidden sm:inline text-xs">Out</span>
+            </Button>
+          </div>
+        </header>
+
+        {/* Mobile-only module strip — desktop embeds modules in the header */}
+        <div className="md:hidden">
+          <PosModuleNav compact />
+        </div>
+
+        <Dialog open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+          <DialogContent className="max-h-[85vh] overflow-y-auto border-border bg-card sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>All modules</DialogTitle>
+            </DialogHeader>
+            <nav className="flex flex-col gap-4">
+              {mobileSections.map((section) => (
+                <div key={section.id}>
+                  {section.title ? (
+                    <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">
+                      {section.title}
+                    </p>
+                  ) : null}
+                  <ul className="space-y-1">
+                    {section.items.map((item) => (
+                      <li key={item.href}>
+                        <Link
+                          href={item.href}
+                          onClick={() => setMobileNavOpen(false)}
+                          className="block rounded-lg px-3 py-2.5 text-sm hover:bg-secondary"
+                        >
+                          {item.label}
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </nav>
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
+  }
+
   return (
     <div className="flex shrink-0 flex-col">
-      <header
-        className={cn(
-          "sticky top-0 z-30 flex flex-wrap items-center gap-2 border-b border-border bg-header px-3 md:px-4",
-          isPos ? "py-1.5" : "gap-3 py-2"
-        )}
-      >
+      <header className="sticky top-0 z-30 flex flex-wrap items-center gap-2 border-b border-border bg-header px-3 py-2 md:gap-3 md:px-4">
         <Button
           type="button"
           variant="ghost"
@@ -109,7 +197,7 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
 
         <BrandLogo className="min-w-0 flex-1 md:flex-none" />
 
-        {outlets.length > 0 && !isPos ? (
+        {outlets.length > 0 ? (
           <label className="inline-flex min-w-0 max-w-[11rem] items-center gap-1.5 rounded-lg border border-border bg-surface-1 px-2 py-1 text-sm">
             <Store className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
             {canSwitch ? (
@@ -134,34 +222,32 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
           </label>
         ) : null}
 
-        {!isPos ? (
-          <div className="hidden items-center gap-2 sm:flex">
-            <Link
-              href="/daily-closing"
-              className={cn(
-                buttonVariants({ size: "sm" }),
-                "btn-reconcile h-8 border-0 px-3"
-              )}
-            >
-              Reconcile
-            </Link>
-            <Link
-              href="/daily-closing"
-              className={cn(
-                buttonVariants({ variant: "secondary", size: "sm" }),
-                "h-8"
-              )}
-            >
-              <Wallet className="mr-1.5 size-4" />
-              Daily closing
-            </Link>
-          </div>
-        ) : null}
+        <div className="hidden items-center gap-2 sm:flex">
+          <Link
+            href="/daily-closing"
+            className={cn(
+              buttonVariants({ size: "sm" }),
+              "btn-reconcile h-8 border-0 px-3"
+            )}
+          >
+            Reconcile
+          </Link>
+          <Link
+            href="/daily-closing"
+            className={cn(
+              buttonVariants({ variant: "secondary", size: "sm" }),
+              "h-8"
+            )}
+          >
+            <Wallet className="mr-1.5 size-4" />
+            Daily closing
+          </Link>
+        </div>
 
         <div className="ml-auto flex items-center gap-2">
           <InboxButton />
-          {!isPos ? <LiveClock /> : null}
-          {!isPos ? <SyncBadge state="synced" /> : null}
+          <LiveClock />
+          <SyncBadge state="synced" />
           <span className="hidden items-center gap-1.5 text-sm text-muted-foreground md:inline-flex">
             <User className="size-4 shrink-0" aria-hidden />
             <span
@@ -185,12 +271,7 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
         </div>
       </header>
 
-      <div
-        className={cn(
-          "flex flex-wrap items-center gap-2 border-b border-border bg-background/80 px-3 text-sm md:px-4",
-          isPos ? "py-1.5" : "py-1.5"
-        )}
-      >
+      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-background/80 px-3 py-1.5 text-sm md:px-4">
         <DatePicker
           value={businessDate}
           onChange={onBusinessDateChange}
@@ -222,7 +303,7 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
         </Link>
       </div>
 
-      {isPos ? <PosModuleNav /> : <AppNavTabs />}
+      <AppNavTabs />
 
       <Dialog open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
         <DialogContent className="max-h-[85vh] overflow-y-auto border-border bg-card sm:max-w-sm">

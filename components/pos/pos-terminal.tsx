@@ -883,64 +883,81 @@ export function PosTerminal({ outlets }: PosTerminalProps) {
                     onPricingModeChange={setPricingMode}
                     cartSummary={cartSummary}
                     showSync={false}
+                    showPricing={false}
                     className="hidden lg:block"
                   />
-                  <PosWholesaleBanner mode={pricingMode} customerName={customerName} />
-                  <PosHeldSalesBar
-                    held={heldSales}
-                    canHold={lines.length > 0}
-                    onHold={handleHoldSale}
-                    onResume={handleResumeHeld}
-                    className="hidden lg:flex"
+                  <PosWholesaleBanner
+                    mode={pricingMode}
+                    customerName={customerName}
+                    className="py-1 text-xs"
                   />
-                  <div className="space-y-2 border-b p-2.5">
-                    <div className="flex gap-2">
+                  {(heldSales.length > 0 || lines.length > 0) && (
+                    <PosHeldSalesBar
+                      held={heldSales}
+                      canHold={lines.length > 0}
+                      onHold={handleHoldSale}
+                      onResume={handleResumeHeld}
+                      className="hidden lg:flex py-1"
+                    />
+                  )}
+                  <div className="space-y-1.5 border-b border-border px-2 py-1.5 sm:px-2.5">
+                    <div className="flex items-center gap-1.5">
                       <div className="relative min-w-0 flex-1">
-                      <Search className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        ref={searchInputRef}
-                        className="pos-search-input pos-touch h-12 rounded-2xl border border-border pl-12 pr-4 text-base shadow-inner focus-visible:ring-primary/30"
-                        placeholder="Search or scan barcode..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            tryAddFromSearch();
-                          }
-                        }}
-                        autoComplete="off"
-                        autoCorrect="off"
-                        spellCheck={false}
-                        inputMode="search"
-                      />
+                        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          ref={searchInputRef}
+                          className="pos-search-input h-10 rounded-xl border border-border pl-10 pr-3 text-sm shadow-inner focus-visible:ring-primary/30"
+                          placeholder="Search / scan barcode…"
+                          value={search}
+                          onChange={(e) => setSearch(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              tryAddFromSearch();
+                            }
+                          }}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          inputMode="search"
+                          title="Tap product to add · F2 pay · F4 clear"
+                        />
                       </div>
+                      <PosPricingToggle
+                        mode={pricingMode}
+                        onChange={setPricingMode}
+                      />
                       <Button
                         type="button"
                         variant="outline"
                         size="icon"
-                        className="pos-touch size-12 shrink-0 rounded-2xl"
+                        className="size-10 shrink-0 rounded-xl"
                         aria-label="Refresh product list"
                         disabled={productsFetching}
                         onClick={() => void refetchProducts()}
                       >
                         <RefreshCw
-                          className={cn("size-5", productsFetching && "animate-spin")}
+                          className={cn(
+                            "size-4",
+                            productsFetching && "animate-spin"
+                          )}
                         />
                       </Button>
                       <div className="hidden shrink-0 items-center xl:flex">
                         <PosSyncStatus />
                       </div>
                     </div>
-                    <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                      <span>
-                        Tap to add · Qty/unit for packs · F2 pay · F4 clear cart
-                      </span>
-                      <span className="font-money">
-                        {filtered.length} visible
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        <PosCategoryChips
+                          value={categoryId}
+                          onChange={setCategoryId}
+                        />
+                      </div>
+                      <span className="hidden shrink-0 font-money text-[10px] text-muted-foreground sm:inline">
+                        {filtered.length}
                       </span>
                     </div>
-                    <PosCategoryChips value={categoryId} onChange={setCategoryId} />
                   </div>
 
                   {effectiveOutletId ? (

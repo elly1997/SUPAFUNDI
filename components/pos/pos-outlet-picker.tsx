@@ -61,11 +61,11 @@ export function PosOutletPicker({
   return (
     <label
       className={cn(
-        "inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 shadow-sm",
+        "inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1.5 shadow-sm",
         className
       )}
     >
-      <Store className="size-4 shrink-0 text-primary" aria-hidden />
+      <Store className="size-3.5 shrink-0 text-primary" aria-hidden />
       <span className="sr-only">Outlet</span>
       {canSwitch ? (
         <select

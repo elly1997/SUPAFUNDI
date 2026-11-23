@@ -327,10 +327,15 @@ export function CashSessionBar({
 
   const priorBlocker = drawer?.priorDayBlocker ?? null;
 
+  const dense = variant === "inline";
+
   const statusPill = (
     <span
       className={cn(
-        "inline-flex min-h-11 max-w-full flex-col items-start gap-0.5 rounded-full px-3 py-2 text-xs font-semibold touch-manipulation sm:flex-row sm:items-center sm:gap-1.5",
+        "inline-flex max-w-full flex-col items-start gap-0.5 rounded-lg font-semibold touch-manipulation sm:flex-row sm:items-center sm:gap-1.5",
+        dense
+          ? "min-h-9 px-2.5 py-1 text-[11px]"
+          : "min-h-11 rounded-full px-3 py-2 text-xs",
         session && !drawer?.dateMismatch
           ? "bg-inflow-muted text-inflow"
           : drawer?.dateMismatch
@@ -355,7 +360,7 @@ export function CashSessionBar({
           "Drawer closed"
         )}
       </span>
-      {session && !drawer?.dateMismatch && drawer ? (
+      {session && !drawer?.dateMismatch && drawer && !dense ? (
         <span className="font-normal opacity-80 sm:ml-1">
           open {formatTzs(session.opening_balance)}
         </span>
@@ -363,12 +368,16 @@ export function CashSessionBar({
     </span>
   );
 
+  const actionBtnClass = dense
+    ? "min-h-9 shrink-0 rounded-lg px-3 text-xs"
+    : "min-h-11 shrink-0 rounded-full px-4";
+
   const actionButton = drawer?.dateMismatch ? (
     <Button
       type="button"
       size="sm"
       variant="outline"
-      className="min-h-11 shrink-0 rounded-full px-4"
+      className={actionBtnClass}
       onClick={openCloseWizard}
     >
       Close {session?.business_date}
@@ -378,7 +387,7 @@ export function CashSessionBar({
       type="button"
       size="sm"
       variant="outline"
-      className="min-h-11 shrink-0 rounded-full px-4"
+      className={actionBtnClass}
       onClick={openCloseWizard}
     >
       Close
@@ -387,7 +396,7 @@ export function CashSessionBar({
     <Button
       type="button"
       size="sm"
-      className="min-h-11 shrink-0 rounded-full px-4"
+      className={actionBtnClass}
       onClick={() => {
         if (priorBlocker) {
           toast.error(priorBlocker.message);

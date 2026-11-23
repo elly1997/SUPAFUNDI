@@ -19,12 +19,12 @@ export function PosCategoryChips({ value, onChange }: Props) {
   if (categories.length === 0) return null;
 
   return (
-    <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+    <div className="flex gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
       <button
         type="button"
         onClick={() => onChange(null)}
         className={cn(
-          "min-h-11 shrink-0 rounded-full px-4 py-2 text-xs font-semibold touch-manipulation transition-colors",
+          "min-h-9 shrink-0 rounded-lg px-3 py-1.5 text-[11px] font-semibold touch-manipulation transition-colors",
           value === null
             ? "bg-primary text-primary-foreground"
             : "bg-muted text-muted-foreground hover:text-foreground"
@@ -38,7 +38,7 @@ export function PosCategoryChips({ value, onChange }: Props) {
           type="button"
           onClick={() => onChange(c.id)}
           className={cn(
-            "min-h-11 shrink-0 rounded-full px-4 py-2 text-xs font-semibold touch-manipulation transition-colors",
+            "min-h-9 shrink-0 rounded-lg px-3 py-1.5 text-[11px] font-semibold touch-manipulation transition-colors",
             value === c.id
               ? "bg-primary text-primary-foreground"
               : "bg-muted text-muted-foreground hover:text-foreground"

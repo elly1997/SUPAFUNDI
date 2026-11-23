@@ -13,7 +13,7 @@ export function PosPricingToggle({ mode, onChange }: Props) {
     <div
       role="group"
       aria-label="Pricing mode"
-      className="inline-flex rounded-xl border border-border bg-card p-1 shadow-sm"
+      className="inline-flex rounded-lg border border-border bg-card p-0.5 shadow-sm"
     >
       {(["retail", "wholesale"] as const).map((m) => (
         <button
@@ -21,7 +21,7 @@ export function PosPricingToggle({ mode, onChange }: Props) {
           type="button"
           onClick={() => onChange(m)}
           className={cn(
-            "min-h-11 touch-manipulation rounded-lg px-3 py-2 text-xs font-bold capitalize transition-all",
+            "min-h-9 touch-manipulation rounded-md px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide transition-all",
             mode === m
               ? m === "wholesale"
                 ? "bg-info text-white shadow-sm"
@@ -29,7 +29,7 @@ export function PosPricingToggle({ mode, onChange }: Props) {
               : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
           )}
         >
-          {m}
+          {m === "retail" ? "Retail" : "Wholesale"}
         </button>
       ))}
     </div>

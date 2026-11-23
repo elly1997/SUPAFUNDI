@@ -35,9 +35,11 @@ function pickPosModules(tabs: NavItem[]): NavItem[] {
 
 type Props = {
   className?: string;
+  /** Dense pills for the POS counter chrome (saves vertical space). */
+  compact?: boolean;
 };
 
-export function PosModuleNav({ className }: Props) {
+export function PosModuleNav({ className, compact = false }: Props) {
   const pathname = usePathname();
   const role = useAuthStore((s) => s.session?.role);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -53,7 +55,10 @@ export function PosModuleNav({ className }: Props) {
     <>
       <nav
         className={cn(
-          "flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-header/90 px-2 py-1.5 scrollbar-thin",
+          "flex shrink-0 items-center gap-0.5 overflow-x-auto scrollbar-thin",
+          compact
+            ? "border-0 bg-transparent px-0 py-0"
+            : "gap-1 border-b border-border bg-header/90 px-2 py-1",
           className
         )}
         aria-label="Module navigation"
@@ -67,11 +72,11 @@ export function PosModuleNav({ className }: Props) {
               href={item.href}
               prefetch
               className={cn(
-                "nav-tab shrink-0 px-2.5 py-1.5 text-xs sm:text-sm",
-                active && "nav-tab-active"
+                "nav-tab-compact shrink-0",
+                active && "nav-tab-compact-active"
               )}
             >
-              <Icon className="size-3.5 sm:size-4" strokeWidth={2} aria-hidden />
+              <Icon className="size-3.5" strokeWidth={2} aria-hidden />
               <span>{item.label}</span>
             </Link>
           );
@@ -81,10 +86,13 @@ export function PosModuleNav({ className }: Props) {
             type="button"
             variant="ghost"
             size="sm"
-            className="ml-auto h-8 shrink-0 gap-1 rounded-lg px-2 text-xs"
+            className={cn(
+              "ml-auto shrink-0 gap-1 rounded-lg px-2 text-xs",
+              compact ? "h-7" : "h-8"
+            )}
             onClick={() => setMoreOpen(true)}
           >
-            <MoreHorizontal className="size-4" />
+            <MoreHorizontal className="size-3.5" />
             More
           </Button>
         ) : null}
