@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Sparkles,
   Tag,
+  Tags,
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
@@ -22,6 +23,7 @@ import { Fragment, useDeferredValue, useEffect, useMemo, useRef, useState } from
 import { toast } from "sonner";
 import { InventoryImportDialog } from "@/components/inventory/inventory-import-dialog";
 import { BulkRecategorizeDialog } from "@/components/inventory/bulk-recategorize-dialog";
+import { CategoryCleanupDialog } from "@/components/inventory/category-cleanup-dialog";
 import { IncomingTransfersPanel } from "@/components/inventory/incoming-transfers-panel";
 import { StockItemStatementDialog } from "@/components/inventory/stock-item-statement-dialog";
 import { StockTransferDialog } from "@/components/inventory/stock-transfer-dialog";
@@ -128,6 +130,7 @@ export function StockPageClient() {
   const stockListRef = useRef<HTMLDivElement>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [recategorizeOpen, setRecategorizeOpen] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
 
   const { data: outlets = [] } = useQuery({
     queryKey: ["org-outlets"],
@@ -422,6 +425,15 @@ export function StockPageClient() {
           <Button type="button" onClick={() => setAddOpen(true)}>
             <Plus className="mr-2 size-4" />
             Add product
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!outletId}
+            onClick={() => setCleanupOpen(true)}
+          >
+            <Tags className="mr-2 size-4" />
+            Recategorize stock
           </Button>
           {canManage && (
             <Button
@@ -890,6 +902,19 @@ export function StockPageClient() {
           onDone={() => {
             setSelectedIds(new Set());
             invalidateAfterImport();
+          }}
+        />
+      ) : null}
+
+      {outletId ? (
+        <CategoryCleanupDialog
+          open={cleanupOpen}
+          onOpenChange={setCleanupOpen}
+          outletId={outletId}
+          onDone={() => {
+            setSelectedIds(new Set());
+            invalidateAfterImport();
+            void queryClient.invalidateQueries({ queryKey: ["categories"] });
           }}
         />
       ) : null}

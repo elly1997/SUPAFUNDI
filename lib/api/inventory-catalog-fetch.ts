@@ -277,3 +277,67 @@ export async function bulkRecategorizeProductsApi(params: {
   }
   return { ok: true, updated: body.updated ?? 0 };
 }
+
+export async function fetchCategoryCleanupScan(outletId: string): Promise<
+  import("@/lib/actions/inventory").CategoryCleanupScan
+> {
+  const params = new URLSearchParams({ outletId });
+  const res = await fetch(`/api/inventory/categories/cleanup?${params}`, {
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json();
+}
+
+export async function ensureHardwareCategoriesApi(): Promise<{
+  ok: true;
+  created: number;
+  total: number;
+}> {
+  const res = await fetch("/api/inventory/categories/cleanup", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "ensure" }),
+  });
+  const body = (await res.json()) as {
+    ok?: true;
+    created?: number;
+    total?: number;
+    error?: string;
+  };
+  if (!res.ok || body.ok !== true) {
+    throw new Error(body.error ?? "Could not create standard categories");
+  }
+  return {
+    ok: true,
+    created: body.created ?? 0,
+    total: body.total ?? 0,
+  };
+}
+
+export async function applyCategoryCleanupApi(params: {
+  outletId: string;
+  items: { productId: string; suggestedName: string }[];
+}): Promise<{ ok: true; updated: number } | { ok: false; message: string }> {
+  const res = await fetch("/api/inventory/categories/cleanup", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "apply", ...params }),
+  });
+  const body = (await res.json()) as {
+    ok?: boolean;
+    updated?: number;
+    error?: string;
+    message?: string;
+  };
+  if (!res.ok || !body.ok) {
+    return {
+      ok: false,
+      message: body.error ?? body.message ?? "Could not apply suggestions",
+    };
+  }
+  return { ok: true, updated: body.updated ?? 0 };
+}

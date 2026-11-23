@@ -5,7 +5,7 @@ import { requireOrgContext } from "@/lib/server/org-context";
 
 const bodySchema = z.object({
   outletId: z.string().uuid(),
-  productIds: z.array(z.string().uuid()).min(1).max(200),
+  productIds: z.array(z.string().uuid()).min(1).max(500),
   categoryId: z.string().uuid().nullable().optional(),
   categoryName: z.string().min(1).max(200).optional(),
 });

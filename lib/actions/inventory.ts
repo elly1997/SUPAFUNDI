@@ -14,9 +14,18 @@ import { requireOrgContext } from "@/lib/server/org-context";
 import { applyMissingRetailPricesCore } from "@/lib/inventory/apply-missing-retail-prices";
 import { upsertRetailPrice } from "@/lib/inventory/product-prices";
 import {
+  HARDWARE_PRODUCT_CATEGORIES,
+  canonicalCategoryName,
+  normalizeCategoryKey,
+} from "@/lib/constants/hardware-product-categories";
+import {
   ensureProductCategory,
   resolveProductCategoryId,
 } from "@/lib/inventory/resolve-category";
+import {
+  buildCleanupSuggestions,
+  type CleanupSuggestionRow,
+} from "@/lib/inventory/suggest-product-category";
 import { retailPriceFromCost } from "@/lib/utils/calculations";
 import {
   SUPABASE_IN_FILTER_CHUNK,
@@ -79,7 +88,7 @@ function catalogDb(supabase: Supabase) {
 
 const bulkRecategorizeInput = z.object({
   outletId: z.string().uuid(),
-  productIds: z.array(z.string().uuid()).min(1).max(200),
+  productIds: z.array(z.string().uuid()).min(1).max(500),
   categoryId: z.string().uuid().nullable().optional(),
   categoryName: z.string().min(1).max(200).optional(),
 });
@@ -947,4 +956,183 @@ export async function listCategoriesForOrg(): Promise<
     throw new Error(error.message);
   }
   return data ?? [];
+}
+
+/** Ensure canonical hardware categories exist (idempotent). */
+export async function ensureHardwareProductCategories(): Promise<{
+  ok: true;
+  created: number;
+  total: number;
+}> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const existing = await listCategoriesForOrg();
+  const covered = new Set<string>();
+  for (const c of existing) {
+    const canon = canonicalCategoryName(c.name);
+    if (canon) covered.add(normalizeCategoryKey(canon));
+    covered.add(normalizeCategoryKey(c.name));
+  }
+
+  let created = 0;
+  for (const def of HARDWARE_PRODUCT_CATEGORIES) {
+    const key = normalizeCategoryKey(def.name);
+    if (covered.has(key)) continue;
+    const { error } = await supabase.from("categories").insert({
+      organization_id: ctx.organizationId,
+      name: def.name,
+    });
+    if (error) throw new Error(error.message);
+    covered.add(key);
+    created += 1;
+  }
+
+  revalidatePath("/inventory/stock");
+  revalidatePath("/inventory/products");
+  revalidatePath("/pos");
+  return {
+    ok: true,
+    created,
+    total: HARDWARE_PRODUCT_CATEGORIES.length,
+  };
+}
+
+export type CategoryCleanupScan = {
+  suggestions: CleanupSuggestionRow[];
+  uncategorizedCount: number;
+  mismatchCount: number;
+  productCount: number;
+};
+
+/** Scan outlet catalog for uncategorized / likely mis-categorized products. */
+export async function scanProductCategoryCleanup(
+  outletId: string
+): Promise<CategoryCleanupScan> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+
+  const { data: outlet } = await supabase
+    .from("outlets")
+    .select("id")
+    .eq("id", outletId)
+    .eq("organization_id", ctx.organizationId)
+    .maybeSingle();
+  if (!outlet) {
+    throw new Error("Invalid outlet for your organization.");
+  }
+
+  const [categories, products] = await Promise.all([
+    listCategoriesForOrg(),
+    fetchAllPaginated(async (from, to) => {
+      const { data, error } = await catalogDb(supabase)
+        .from("products")
+        .select("id, name, code, category_id")
+        .eq("organization_id", ctx.organizationId)
+        .eq("outlet_id", outletId)
+        .eq("is_active", true)
+        .order("name")
+        .range(from, to);
+      return { data, error };
+    }),
+  ]);
+
+  const categoryNameById = new Map(categories.map((c) => [c.id, c.name]));
+  const suggestions = buildCleanupSuggestions({
+    products: (products ?? []) as {
+      id: string;
+      name: string;
+      code: string | null;
+      category_id: string | null;
+    }[],
+    categoryNameById,
+  });
+
+  return {
+    suggestions,
+    uncategorizedCount: suggestions.filter((s) => s.uncategorized).length,
+    mismatchCount: suggestions.filter((s) => s.mismatch).length,
+    productCount: products?.length ?? 0,
+  };
+}
+
+/**
+ * Apply cleanup suggestions: group by suggested category name and bulk-update.
+ * Creates missing canonical categories as needed.
+ */
+export async function applyProductCategorySuggestions(raw: {
+  outletId: string;
+  items: { productId: string; suggestedName: string }[];
+}): Promise<{ ok: true; updated: number } | { ok: false; message: string }> {
+  try {
+    const input = z
+      .object({
+        outletId: z.string().uuid(),
+        items: z
+          .array(
+            z.object({
+              productId: z.string().uuid(),
+              suggestedName: z.string().min(1).max(200),
+            })
+          )
+          .min(1)
+          .max(500),
+      })
+      .parse(raw);
+
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+
+    const { data: outlet } = await supabase
+      .from("outlets")
+      .select("id")
+      .eq("id", input.outletId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    if (!outlet) {
+      return { ok: false, message: "Invalid outlet for your organization." };
+    }
+
+    const byName = new Map<string, string[]>();
+    for (const item of input.items) {
+      const name = item.suggestedName.trim();
+      const list = byName.get(name) ?? [];
+      list.push(item.productId);
+      byName.set(name, list);
+    }
+
+    let updated = 0;
+    for (const [categoryName, productIds] of byName) {
+      const categoryId = await ensureProductCategory(
+        supabase,
+        ctx.organizationId,
+        null,
+        categoryName
+      );
+      for (let i = 0; i < productIds.length; i += SUPABASE_IN_FILTER_CHUNK) {
+        const chunk = productIds.slice(i, i + SUPABASE_IN_FILTER_CHUNK);
+        const { data, error } = await catalogDb(supabase)
+          .from("products")
+          .update({ category_id: categoryId })
+          .eq("organization_id", ctx.organizationId)
+          .eq("outlet_id", input.outletId)
+          .in("id", chunk)
+          .select("id");
+        if (error) {
+          return { ok: false, message: error.message };
+        }
+        updated += data?.length ?? 0;
+      }
+    }
+
+    revalidatePath("/inventory/stock");
+    revalidatePath("/inventory/products");
+    revalidatePath("/pos");
+    revalidatePath("/reports");
+    return { ok: true, updated };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not apply suggestions",
+    };
+  }
 }
