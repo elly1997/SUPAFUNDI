@@ -1101,7 +1101,7 @@ export async function applyProductCategorySuggestions(raw: {
     }
 
     let updated = 0;
-    for (const [categoryName, productIds] of byName) {
+    for (const [categoryName, productIds] of Array.from(byName.entries())) {
       const categoryId = await ensureProductCategory(
         supabase,
         ctx.organizationId,
