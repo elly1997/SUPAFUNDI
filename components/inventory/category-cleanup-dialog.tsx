@@ -41,22 +41,25 @@ export function CategoryCleanupDialog({
     enabled: open && !!outletId,
   });
 
-  const suggestions = data?.suggestions ?? [];
-  const preview = useMemo(() => suggestions.slice(0, 40), [suggestions]);
+  const suggestionList = data?.suggestions ?? [];
+  const preview = useMemo(
+    () => (data?.suggestions ?? []).slice(0, 40),
+    [data?.suggestions]
+  );
 
   const runMut = useMutation({
     mutationFn: async () => {
       await ensureHardwareCategoriesApi();
 
-      if (suggestions.length === 0) {
+      const items = suggestionList.map((r) => ({
+        productId: r.productId,
+        suggestedName: r.suggestedName,
+      }));
+      if (items.length === 0) {
         return { updated: 0, empty: true as const };
       }
 
       let updated = 0;
-      const items = suggestions.map((r) => ({
-        productId: r.productId,
-        suggestedName: r.suggestedName,
-      }));
       for (let i = 0; i < items.length; i += 500) {
         const chunk = items.slice(i, i + 500);
         const r = await applyCategoryCleanupApi({ outletId, items: chunk });
@@ -84,6 +87,7 @@ export function CategoryCleanupDialog({
   });
 
   const busy = runMut.isPending || isLoading;
+  const count = suggestionList.length;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -108,8 +112,7 @@ export function CategoryCleanupDialog({
           <div className="space-y-3 text-sm">
             <div className="rounded-xl border border-border bg-muted/30 px-3 py-3">
               <p className="font-medium text-foreground">
-                {suggestions.length} product
-                {suggestions.length === 1 ? "" : "s"} to update
+                {count} product{count === 1 ? "" : "s"} to update
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 Scanned {data?.productCount ?? 0} active items ·{" "}
@@ -119,7 +122,7 @@ export function CategoryCleanupDialog({
               </p>
             </div>
 
-            {suggestions.length > 0 ? (
+            {count > 0 ? (
               <button
                 type="button"
                 className="text-xs font-medium text-primary hover:underline"
@@ -138,9 +141,9 @@ export function CategoryCleanupDialog({
                     {r.currentCategoryName} → {r.suggestedName}
                   </li>
                 ))}
-                {suggestions.length > preview.length ? (
+                {count > preview.length ? (
                   <li className="text-muted-foreground">
-                    …and {suggestions.length - preview.length} more
+                    …and {count - preview.length} more
                   </li>
                 ) : null}
               </ul>
@@ -164,11 +167,11 @@ export function CategoryCleanupDialog({
           </Button>
           <Button
             type="button"
-            disabled={busy || suggestions.length === 0}
+            disabled={busy || count === 0}
             onClick={() => {
               if (
                 !window.confirm(
-                  `Recategorize ${suggestions.length} product${suggestions.length === 1 ? "" : "s"} in this outlet?`
+                  `Recategorize ${count} product${count === 1 ? "" : "s"} in this outlet?`
                 )
               ) {
                 return;
@@ -180,7 +183,7 @@ export function CategoryCleanupDialog({
               <Loader2 className="mr-2 size-4 animate-spin" />
             ) : null}
             Recategorize all
-            {suggestions.length > 0 ? ` (${suggestions.length})` : ""}
+            {count > 0 ? ` (${count})` : ""}
           </Button>
         </DialogFooter>
       </DialogContent>

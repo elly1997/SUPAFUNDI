@@ -162,7 +162,7 @@ export function ExpensesPageClient() {
         });
       }
     }
-    return [...map.values()].sort((a, b) => b.total - a.total);
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
   }, [expenses]);
 
   const grandTotal = useMemo(
