@@ -100,7 +100,7 @@ export function FinancialReports({ fromDate, toDate }: FinancialReportsProps) {
     (gaps?.supplierPaymentsMissingJournal ?? 0);
 
   return (
-    <div className="space-y-6">
+    <div className="app-page">
       <Card className="glass-card border-primary/30">
         <CardHeader>
           <CardTitle>Sync books to GL</CardTitle>

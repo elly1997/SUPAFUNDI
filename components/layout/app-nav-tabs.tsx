@@ -21,7 +21,7 @@ export function AppNavTabs() {
 
   return (
     <nav
-      className="flex gap-1 overflow-x-auto border-b border-border bg-header px-3 py-2 scrollbar-thin"
+      className="flex gap-0.5 overflow-x-auto border-b border-border bg-header/90 px-2 py-1 scrollbar-thin"
       aria-label="Main navigation"
     >
       {tabs.map((item) => {
@@ -32,9 +32,12 @@ export function AppNavTabs() {
             key={item.href}
             href={item.href}
             prefetch={true}
-            className={cn("nav-tab touch-manipulation", active && "nav-tab-active")}
+            className={cn(
+              "nav-tab-compact touch-manipulation",
+              active && "nav-tab-compact-active"
+            )}
           >
-            <Icon className="size-4 shrink-0" strokeWidth={2} aria-hidden />
+            <Icon className="size-3.5 shrink-0" strokeWidth={2} aria-hidden />
             <span>{item.label}</span>
           </Link>
         );

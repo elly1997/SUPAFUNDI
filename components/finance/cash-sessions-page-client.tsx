@@ -37,7 +37,7 @@ export function CashSessionsPageClient() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="app-page">
       <Card className="dash-stat-card">
         <CardHeader>
           <CardTitle className="text-base">Cash drawer</CardTitle>

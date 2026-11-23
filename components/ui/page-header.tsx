@@ -8,6 +8,7 @@ type PageHeaderProps = {
   className?: string;
 };
 
+/** Dense page title row — title left, actions right. */
 export function PageHeader({
   title,
   description,
@@ -17,20 +18,20 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        "flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between",
+        "flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between",
         className
       )}
     >
-      <div className="min-w-0 space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+      <div className="min-w-0 space-y-0.5">
+        <h1 className="truncate text-xl font-semibold tracking-tight text-foreground sm:text-[1.35rem]">
           {title}
         </h1>
         {description ? (
-          <p className="text-sm text-muted-foreground">{description}</p>
+          <p className="text-xs text-muted-foreground sm:text-sm">{description}</p>
         ) : null}
       </div>
       {actions ? (
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           {actions}
         </div>
       ) : null}

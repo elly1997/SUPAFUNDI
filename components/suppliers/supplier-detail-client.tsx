@@ -49,7 +49,7 @@ export function SupplierDetailClient({ supplierId }: Props) {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="app-page">
       <Card className="dash-stat-card border-warning/30">
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
           <CardTitle>{supplier.name}</CardTitle>

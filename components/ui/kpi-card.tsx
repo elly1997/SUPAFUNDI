@@ -65,36 +65,36 @@ export function KpiCard({
           : undefined
       }
     >
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 p-3 pb-1">
+        <CardTitle className="text-xs font-medium text-muted-foreground">
           {title}
         </CardTitle>
         {Icon ? (
           <span
             className={cn(
-              "flex size-8 items-center justify-center rounded-lg",
+              "flex size-7 items-center justify-center rounded-md",
               iconBg[variant]
             )}
           >
-            <Icon className="size-4" />
+            <Icon className="size-3.5" />
           </span>
         ) : null}
       </CardHeader>
-      <CardContent>
+      <CardContent className="p-3 pt-0">
         <p
           className={cn(
-            "font-money text-2xl font-semibold tabular-nums",
+            "font-money text-xl font-semibold tabular-nums sm:text-2xl",
             variantStyles[variant]
           )}
         >
           {value}
         </p>
         {subtitle ? (
-          <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{subtitle}</p>
         ) : null}
         {interactive ? (
-          <p className="mt-1 text-[11px] font-medium text-primary">
-            {selected ? "Showing in list below · tap to clear" : "Tap to show in list"}
+          <p className="mt-0.5 text-[10px] font-medium text-primary">
+            {selected ? "Filtered below · tap to clear" : "Tap to filter list"}
           </p>
         ) : null}
       </CardContent>

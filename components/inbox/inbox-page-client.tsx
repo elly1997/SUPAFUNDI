@@ -115,7 +115,7 @@ export function InboxPageClient() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="app-page">
       <PageHeader
         title="Inbox"
         description="Approvals, voided receipts, and days that still need closing — all outlets. Owner and managers only."

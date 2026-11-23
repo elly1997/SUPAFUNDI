@@ -43,9 +43,9 @@ export function DashboardKpisClient({ fallbackOutletId }: Props) {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="space-y-2">
-        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
           <span>Business date (EAT): {businessDate}</span>
           {(isLoading || isFetching) && (
             <span className="inline-flex items-center gap-1">
@@ -54,7 +54,7 @@ export function DashboardKpisClient({ fallbackOutletId }: Props) {
             </span>
           )}
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <KpiCard
             title="Sales"
             value={formatTzs(kpis.salesToday)}

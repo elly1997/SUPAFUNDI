@@ -241,7 +241,7 @@ export function BankingPageClient() {
   const typeHint = PAYMENT_ACCOUNT_TYPES.find((t) => t.value === accountType)?.hint;
 
   return (
-    <div className="space-y-6">
+    <div className="app-page">
       <div className="grid gap-4 sm:grid-cols-3">
         <Card className="glass-card sm:col-span-1">
           <CardHeader className="pb-2">

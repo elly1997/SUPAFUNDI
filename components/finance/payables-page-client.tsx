@@ -215,7 +215,7 @@ export function PayablesPageClient() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="app-page">
       <Card className="glass-card border-warning/30">
         <CardContent className="flex flex-wrap items-center justify-between gap-4 py-5">
           <div>

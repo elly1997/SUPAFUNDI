@@ -207,7 +207,7 @@ export function DailyClosingClient({ outlets }: Props) {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="app-page">
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1">
           <Label>Outlet</Label>

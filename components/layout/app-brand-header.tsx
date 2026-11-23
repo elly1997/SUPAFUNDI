@@ -7,7 +7,6 @@ import {
   LogOut,
   Menu,
   Store,
-  User,
   Wallet,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -183,29 +182,29 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
 
   return (
     <div className="flex shrink-0 flex-col">
-      <header className="sticky top-0 z-30 flex flex-wrap items-center gap-2 border-b border-border bg-header px-3 py-2 md:gap-3 md:px-4">
+      <header className="sticky top-0 z-30 flex h-11 items-center gap-1.5 border-b border-border bg-header px-2 md:gap-2 md:px-3">
         <Button
           type="button"
           variant="ghost"
           size="icon"
-          className="md:hidden"
+          className="size-8 shrink-0 md:hidden"
           onClick={() => setMobileNavOpen(true)}
           aria-label="Open menu"
         >
-          <Menu className="size-5" />
+          <Menu className="size-4" />
         </Button>
 
-        <BrandLogo className="min-w-0 flex-1 md:flex-none" />
+        <BrandLogo compact showTagline={false} className="min-w-0 shrink" />
 
         {outlets.length > 0 ? (
-          <label className="inline-flex min-w-0 max-w-[11rem] items-center gap-1.5 rounded-lg border border-border bg-surface-1 px-2 py-1 text-sm">
+          <label className="hidden min-w-0 max-w-[10rem] items-center gap-1 rounded-lg border border-border bg-surface-1 px-2 py-1 text-xs sm:inline-flex">
             <Store className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
             {canSwitch ? (
               <select
                 value={outletValue}
                 disabled={pending || outlets.length === 0}
                 onChange={(e) => onOutletChange(e.target.value)}
-                className="min-w-0 flex-1 truncate border-0 bg-transparent py-0 text-sm font-medium text-foreground focus:outline-none focus:ring-0"
+                className="min-w-0 flex-1 truncate border-0 bg-transparent py-0 text-xs font-medium text-foreground focus:outline-none focus:ring-0"
                 aria-label="Active outlet"
               >
                 {outlets.map((o) => (
@@ -215,19 +214,27 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
                 ))}
               </select>
             ) : (
-              <span className="min-w-0 flex-1 truncate py-0 text-sm font-medium text-foreground">
+              <span className="min-w-0 flex-1 truncate py-0 text-xs font-medium text-foreground">
                 {outlets.find((o) => o.id === outletValue)?.name ?? "Outlet"}
               </span>
             )}
           </label>
         ) : null}
 
-        <div className="hidden items-center gap-2 sm:flex">
+        <DatePicker
+          value={businessDate}
+          onChange={onBusinessDateChange}
+          disabledDates={reconciledDates}
+          showPresets
+          buttonClassName="h-8 min-w-0 max-w-[9.5rem] px-2 text-[11px]"
+        />
+
+        <div className="ml-auto flex items-center gap-1 md:gap-1.5">
           <Link
             href="/daily-closing"
             className={cn(
               buttonVariants({ size: "sm" }),
-              "btn-reconcile h-8 border-0 px-3"
+              "btn-reconcile hidden h-8 border-0 px-2.5 text-xs sm:inline-flex"
             )}
           >
             Reconcile
@@ -236,72 +243,35 @@ export function AppBrandHeader({ outlets }: AppBrandHeaderProps) {
             href="/daily-closing"
             className={cn(
               buttonVariants({ variant: "secondary", size: "sm" }),
-              "h-8"
+              "hidden h-8 px-2 text-xs lg:inline-flex"
             )}
           >
-            <Wallet className="mr-1.5 size-4" />
-            Daily closing
+            <Wallet className="mr-1 size-3.5" />
+            Closing
           </Link>
-        </div>
-
-        <div className="ml-auto flex items-center gap-2">
-          <InboxButton />
+          <InboxButton compact />
           <LiveClock />
           <SyncBadge state="synced" />
-          <span className="hidden items-center gap-1.5 text-sm text-muted-foreground md:inline-flex">
-            <User className="size-4 shrink-0" aria-hidden />
-            <span
-              className="max-w-[7rem] truncate font-medium text-foreground"
-              title={displayName}
-            >
-              {displayName}
-            </span>
+          <span
+            className="hidden max-w-[5.5rem] truncate text-xs font-medium text-muted-foreground lg:inline"
+            title={displayName}
+          >
+            {shortName}
           </span>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="h-8 border-border bg-surface-1"
+            className="h-8 border-border bg-surface-1 px-2"
             onClick={onSignOut}
             disabled={pending}
+            aria-label="Sign out"
           >
-            <LogOut className="size-4 sm:mr-1" />
-            <span className="hidden sm:inline">Sign out</span>
+            <LogOut className="size-3.5" />
+            <span className="ml-1 hidden sm:inline text-xs">Out</span>
           </Button>
         </div>
       </header>
-
-      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-background/80 px-3 py-1.5 text-sm md:px-4">
-        <DatePicker
-          value={businessDate}
-          onChange={onBusinessDateChange}
-          disabledDates={reconciledDates}
-          showPresets
-          className="sm:hidden"
-          buttonClassName="h-8 min-w-[8.5rem] text-xs"
-        />
-        <span className="hidden text-xs text-muted-foreground sm:inline">
-          {session.organizationName ?? "SUPAFUNDI TRADERS"}
-        </span>
-        <span className="hidden text-xs text-muted-foreground sm:inline">·</span>
-        <DatePicker
-          value={businessDate}
-          onChange={onBusinessDateChange}
-          disabledDates={reconciledDates}
-          showPresets
-          className="hidden sm:inline-block"
-          buttonClassName="h-8 min-w-[10rem] text-xs"
-        />
-        <Link
-          href="/daily-closing"
-          className={cn(
-            buttonVariants({ size: "sm" }),
-            "btn-reconcile ml-auto h-7 border-0 px-2 text-xs sm:hidden"
-          )}
-        >
-          Reconcile
-        </Link>
-      </div>
 
       <AppNavTabs />
 

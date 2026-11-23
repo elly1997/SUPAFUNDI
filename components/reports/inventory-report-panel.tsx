@@ -142,7 +142,7 @@ export function InventoryReportPanel({ enabled = true }: InventoryReportPanelPro
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         {INVENTORY_REPORT_PRESETS.map((p) => (
           <Button

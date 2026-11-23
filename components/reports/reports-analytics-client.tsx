@@ -267,8 +267,8 @@ export function ReportsAnalyticsClient() {
     }
     if (!operational) return null;
     return (
-      <div className="space-y-6">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="space-y-3">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           <KpiCard
             title="Sales"
             value={formatTzs(operational.salesTotal)}
@@ -503,94 +503,104 @@ export function ReportsAnalyticsClient() {
   };
 
   return (
-    <div className="app-page space-y-5 pb-10">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-            <BarChart3 className="size-7 text-primary" />
-            Reports &amp; Analytics
+    <div className="app-page">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+            <BarChart3 className="size-5 shrink-0 text-primary" />
+            Reports
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {operational?.period.label ?? "Select dates and generate reports"}
+          <p className="truncate text-xs text-muted-foreground">
+            {operational?.period.label ?? "Pick a period, then generate"}
             {opFetching ? " · Updating…" : null}
           </p>
         </div>
-        <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-wrap items-end gap-2">
           <DateRangePicker
-            label="Report period"
+            label="Period"
             from={fromDate}
             to={toDate}
             onFromChange={setFromDate}
             onToChange={setToDate}
             align="end"
           />
-          <label className="flex max-w-[11rem] flex-col gap-1 self-end pb-2 text-xs">
-            <span className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={reconciledOnly}
-                onChange={(e) => setReconciledOnly(e.target.checked)}
-                className="size-4 rounded border-border"
-              />
-              Reconciled days only
-            </span>
-            <span className="text-[10px] leading-snug text-muted-foreground">
-              Requires an active outlet. Only days reconciled for that branch.
-            </span>
+          <label
+            className="flex items-center gap-1.5 self-end rounded-lg border border-border bg-surface-1 px-2 py-1.5 text-[11px]"
+            title="Requires an active outlet. Only days reconciled for that branch."
+          >
+            <input
+              type="checkbox"
+              checked={reconciledOnly}
+              onChange={(e) => setReconciledOnly(e.target.checked)}
+              className="size-3.5 rounded border-border"
+            />
+            Reconciled only
           </label>
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="app-page-toolbar sticky top-0 z-10 -mx-1 border-b border-border/60 bg-background/95 px-1 py-1.5 backdrop-blur">
         <Button
           type="button"
-          className="rounded-lg btn-primary-gradient"
+          size="sm"
+          className="h-8 rounded-lg btn-primary-gradient"
           onClick={generateReports}
         >
-          <RefreshCw className="mr-2 size-4" />
-          Generate Reports
+          <RefreshCw className="mr-1.5 size-3.5" />
+          Generate
         </Button>
-        <Link
-          href="/inventory/stock"
-          className={cn(buttonVariants({ variant: "outline" }), "rounded-lg")}
-        >
-          <Boxes className="mr-2 size-4" />
-          Stock & adjustments
-        </Link>
         <Button
           type="button"
+          size="sm"
           variant="secondary"
-          className="rounded-lg"
+          className="h-8 rounded-lg"
           onClick={() => window.print()}
         >
-          <Printer className="mr-2 size-4" />
+          <Printer className="mr-1.5 size-3.5" />
           Print
         </Button>
         <Button
           type="button"
+          size="sm"
           variant="secondary"
-          className="rounded-lg"
+          className="h-8 rounded-lg"
           disabled={exporting}
           onClick={() => void exportCsv()}
         >
-          <Download className="mr-2 size-4" />
-          {exporting ? "Exporting…" : "Export CSV"}
+          <Download className="mr-1.5 size-3.5" />
+          {exporting ? "…" : "CSV"}
         </Button>
         <Link
-          href="/daily-closing"
-          className={cn(buttonVariants({ variant: "secondary" }), "rounded-lg")}
+          href="/inventory/stock"
+          className={cn(
+            buttonVariants({ variant: "outline", size: "sm" }),
+            "h-8 rounded-lg"
+          )}
         >
-          Daily closing
+          <Boxes className="mr-1.5 size-3.5" />
+          Stock
+        </Link>
+        <Link
+          href="/daily-closing"
+          className={cn(
+            buttonVariants({ variant: "secondary", size: "sm" }),
+            "h-8 rounded-lg"
+          )}
+        >
+          Closing
         </Link>
         <Link
           href="/suppliers?tab=bills"
-          className={cn(buttonVariants({ variant: "secondary" }), "rounded-lg")}
+          className={cn(
+            buttonVariants({ variant: "secondary", size: "sm" }),
+            "hidden h-8 rounded-lg sm:inline-flex"
+          )}
         >
-          Supplier payables
+          Payables
         </Link>
       </div>
 
-      <div className="scrollbar-thin flex gap-1.5 overflow-x-auto pb-1">
+      <div className="scrollbar-thin flex gap-1 overflow-x-auto pb-0.5">
         {REPORT_TABS.map((t) => (
           <button
             key={t.id}
