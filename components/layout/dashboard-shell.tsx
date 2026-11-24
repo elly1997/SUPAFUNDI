@@ -15,7 +15,7 @@ export function DashboardShell({ outlets, children }: DashboardShellProps) {
   const isPos = pathname === "/pos" || pathname.startsWith("/pos/");
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+    <div className="fixed inset-0 flex flex-col overflow-hidden bg-background text-foreground">
       <AppBrandHeader outlets={outlets} />
       <BusinessDateBanner />
       <main

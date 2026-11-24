@@ -137,7 +137,7 @@ export function SmsSettingsPanel() {
           />
           <p className="form-hint">
             Placeholders: {"{{name}}"}, {"{{balance}}"}, {"{{shopPhone}}"},{" "}
-            {"{{shopName}}"}. Shop phone comes from company profile above.
+            {"{{shopName}}"}. Shop phone comes from General settings.
           </p>
         </div>
 

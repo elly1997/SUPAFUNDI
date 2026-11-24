@@ -11,6 +11,7 @@ import { normalizeProductName } from "@/lib/products/product-name";
 import { getOrgRetailMarginPct } from "@/lib/pricing/org-retail-margin";
 import { generateProductCode } from "@/lib/products/sku";
 import { requireOrgContext } from "@/lib/server/org-context";
+import { requireManagerContext } from "@/lib/server/require-manager";
 import { applyMissingRetailPricesCore } from "@/lib/inventory/apply-missing-retail-prices";
 import { upsertRetailPrice } from "@/lib/inventory/product-prices";
 import {
@@ -956,6 +957,147 @@ export async function listCategoriesForOrg(): Promise<
     throw new Error(error.message);
   }
   return data ?? [];
+}
+
+export type ProductCategoryRow = {
+  id: string;
+  name: string;
+  productCount: number;
+};
+
+/** Product categories with how many products use each (all outlets). */
+export async function listProductCategoriesWithCounts(): Promise<
+  { categories: ProductCategoryRow[]; uncategorizedCount: number }
+> {
+  const ctx = await requireOrgContext();
+  const supabase = await createServerSupabaseClient();
+  const [categories, products] = await Promise.all([
+    listCategoriesForOrg(),
+    fetchAllPaginated(async (from, to) => {
+      const { data, error } = await catalogDb(supabase)
+        .from("products")
+        .select("id, category_id")
+        .eq("organization_id", ctx.organizationId)
+        .eq("is_active", true)
+        .range(from, to);
+      return { data, error };
+    }),
+  ]);
+
+  const counts = new Map<string, number>();
+  let uncategorizedCount = 0;
+  for (const p of (products ?? []) as { category_id: string | null }[]) {
+    if (!p.category_id) {
+      uncategorizedCount += 1;
+      continue;
+    }
+    counts.set(p.category_id, (counts.get(p.category_id) ?? 0) + 1);
+  }
+
+  return {
+    categories: categories.map((c) => ({
+      id: c.id,
+      name: c.name,
+      productCount: counts.get(c.id) ?? 0,
+    })),
+    uncategorizedCount,
+  };
+}
+
+export async function createProductCategory(
+  name: string
+): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
+  try {
+    await requireManagerContext();
+    const trimmed = name.trim();
+    if (trimmed.length < 2) {
+      return { ok: false, message: "Enter a category name (2+ characters)." };
+    }
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const id = await ensureProductCategory(
+      supabase,
+      ctx.organizationId,
+      null,
+      trimmed
+    );
+    revalidatePath("/inventory/stock");
+    revalidatePath("/pos");
+    return { ok: true, id };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not add category",
+    };
+  }
+}
+
+export async function renameProductCategory(
+  categoryId: string,
+  name: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await requireManagerContext();
+    const trimmed = name.trim();
+    if (trimmed.length < 2) {
+      return { ok: false, message: "Enter a category name (2+ characters)." };
+    }
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const existing = await listCategoriesForOrg();
+    const clash = existing.find(
+      (c) =>
+        c.id !== categoryId &&
+        normalizeCategoryKey(c.name) === normalizeCategoryKey(trimmed)
+    );
+    if (clash) {
+      return {
+        ok: false,
+        message: `“${clash.name}” already exists — use Move to category to merge products.`,
+      };
+    }
+    const { error } = await supabase
+      .from("categories")
+      .update({ name: trimmed })
+      .eq("id", categoryId)
+      .eq("organization_id", ctx.organizationId);
+    if (error) return { ok: false, message: error.message };
+    revalidatePath("/inventory/stock");
+    revalidatePath("/pos");
+    revalidatePath("/reports");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not rename category",
+    };
+  }
+}
+
+/** Delete a category — its products become uncategorized (General). */
+export async function deleteProductCategory(
+  categoryId: string
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await requireManagerContext();
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const { error } = await supabase
+      .from("categories")
+      .delete()
+      .eq("id", categoryId)
+      .eq("organization_id", ctx.organizationId);
+    if (error) return { ok: false, message: error.message };
+    revalidatePath("/inventory/stock");
+    revalidatePath("/pos");
+    revalidatePath("/reports");
+    return { ok: true };
+  } catch (e) {
+    return {
+      ok: false,
+      message: e instanceof Error ? e.message : "Could not delete category",
+    };
+  }
 }
 
 /** Ensure canonical hardware categories exist (idempotent). */

@@ -15,7 +15,7 @@
 
   .pos-page {
     min-height: 100%;
-    background-color: #0f172a;
+    background-color: var(--background, #0f172a);
     background: linear-gradient(
       180deg,
       var(--header, #1e293b) 0%,
@@ -66,7 +66,7 @@
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
-    scrollbar-color: #475569 #1e293b;
+    scrollbar-color: var(--scroll-thumb) var(--scroll-track-solid);
   }
 
   .pos-scroll-area::-webkit-scrollbar {
@@ -75,18 +75,18 @@
   }
 
   .pos-scroll-area::-webkit-scrollbar-track {
-    background: rgb(15 23 42 / 0.85);
+    background: var(--scroll-track);
     border-radius: 4px;
   }
 
   .pos-scroll-area::-webkit-scrollbar-thumb {
-    background: #475569;
+    background: var(--scroll-thumb);
     border-radius: 4px;
-    border: 2px solid #1e293b;
+    border: 2px solid var(--scroll-track-solid);
   }
 
   .pos-scroll-area::-webkit-scrollbar-thumb:hover {
-    background: #64748b;
+    background: var(--scroll-thumb-hover);
   }
 
   .pos-workspace-grid {
@@ -152,7 +152,7 @@
   /* Brand-matched thin thumbs (Firefox + Chromium / Edge) */
   .scrollbar-thin {
     scrollbar-width: thin;
-    scrollbar-color: #475569 transparent;
+    scrollbar-color: var(--scroll-thumb) transparent;
   }
 
   .scrollbar-thin::-webkit-scrollbar {
@@ -165,12 +165,12 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: #475569;
+    background: var(--scroll-thumb);
     border-radius: 999px;
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background: #64748b;
+    background: var(--scroll-thumb-hover);
   }
 
   .scrollbar-thin::-webkit-scrollbar-button {
@@ -245,7 +245,7 @@
   }
 
   .nav-tab:hover {
-    background-color: rgb(51 65 85 / 0.75);
+    background-color: var(--nav-hover-bg);
     color: var(--foreground);
   }
 
@@ -267,7 +267,7 @@
   }
 
   .nav-tab-compact:hover {
-    background-color: rgb(51 65 85 / 0.75);
+    background-color: var(--nav-hover-bg);
     color: var(--foreground);
   }
 
@@ -297,7 +297,7 @@
   }
 
   .report-tab:hover {
-    background: rgb(51 65 85 / 0.6);
+    background: var(--nav-hover-bg);
     color: var(--foreground);
   }
 
@@ -325,7 +325,7 @@
         rgb(249 115 22 / 0.15),
         transparent
       ),
-      linear-gradient(180deg, #0f172a 0%, #020617 100%);
+      linear-gradient(180deg, var(--auth-from) 0%, var(--auth-to) 100%);
   }
 
   .login-card {
@@ -386,6 +386,59 @@
     --info: #3b82f6;
     --info-muted: rgb(59 130 246 / 0.12);
     --shell: #0f172a;
+    --scroll-thumb: #475569;
+    --scroll-thumb-hover: #64748b;
+    --scroll-track: rgb(15 23 42 / 0.85);
+    --scroll-track-solid: #1e293b;
+    --nav-hover-bg: rgb(51 65 85 / 0.75);
+    --auth-from: #0f172a;
+    --auth-to: #020617;
+    color-scheme: dark;
+  }
+
+  /* Appearance → Light (Settings). Dark remains the default brand theme. */
+  :root.light {
+    --background: #f1f5f9;
+    --foreground: #0f172a;
+    --card: #ffffff;
+    --card-foreground: #0f172a;
+    --popover: #ffffff;
+    --popover-foreground: #0f172a;
+    --primary-foreground: #ffffff;
+    --secondary: #e2e8f0;
+    --secondary-foreground: #0f172a;
+    --muted: #e2e8f0;
+    --muted-foreground: #64748b;
+    --accent: #cbd5e1;
+    --accent-foreground: #0f172a;
+    --border: #cbd5e1;
+    --input: #e2e8f0;
+    --header: #ffffff;
+    --surface-1: #e2e8f0;
+    --surface-2: #cbd5e1;
+    --sidebar: #ffffff;
+    --sidebar-foreground: #0f172a;
+    --sidebar-accent: #e2e8f0;
+    --sidebar-accent-foreground: #0f172a;
+    --sidebar-border: #cbd5e1;
+    --inflow-muted: rgb(16 185 129 / 0.14);
+    --outflow-muted: rgb(239 68 68 / 0.12);
+    --warning-muted: rgb(245 158 11 / 0.16);
+    --info-muted: rgb(59 130 246 / 0.12);
+    --shell: #f1f5f9;
+    --scroll-thumb: #94a3b8;
+    --scroll-thumb-hover: #64748b;
+    --scroll-track: rgb(226 232 240 / 0.9);
+    --scroll-track-solid: #e2e8f0;
+    --nav-hover-bg: rgb(148 163 184 / 0.25);
+    --auth-from: #f8fafc;
+    --auth-to: #e2e8f0;
+    color-scheme: light;
+  }
+
+  :root.light .dash-stat-card,
+  :root.light .glass-card {
+    box-shadow: 0 1px 3px rgb(15 23 42 / 0.12);
   }
 
   * {

@@ -1,11 +1,7 @@
 export const dynamic = "force-dynamic";
 
-import { BusinessDataExportPanel } from "@/components/settings/business-data-export-panel";
-import { CatalogBackupPanel } from "@/components/settings/catalog-backup-panel";
-import { ExpenseCategoriesSettings } from "@/components/settings/expense-categories-settings";
 import { GeneralSettingsClient } from "@/components/settings/general-settings-client";
-import { OrganizationAdminPanel } from "@/components/settings/organization-admin-panel";
-import { SmsSettingsPanel } from "@/components/settings/sms-settings-panel";
+import { PageHeader } from "@/components/ui/page-header";
 import {
   getOrganizationSettings,
   seedOrgSettingsIfMissing,
@@ -17,6 +13,7 @@ export default async function GeneralSettingsPage() {
   } catch {
     /* env not configured at build */
   }
+
   let settings = null;
   try {
     settings = await getOrganizationSettings();
@@ -25,23 +22,13 @@ export default async function GeneralSettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">General</h1>
-        <p className="text-sm text-muted-foreground">
-          Company details, expense categories, outlets, and user assignments for
-          your organization (main store admins).
-        </p>
-      </div>
+    <div className="space-y-4">
+      <PageHeader
+        title="General"
+        description="Company profile, VAT, retail margin, receipts, and cash drawer rules."
+      />
       {settings ? (
-        <>
-          <GeneralSettingsClient initial={settings} />
-          <CatalogBackupPanel />
-          <BusinessDataExportPanel />
-          <ExpenseCategoriesSettings />
-          <SmsSettingsPanel />
-          <OrganizationAdminPanel />
-        </>
+        <GeneralSettingsClient initial={settings} />
       ) : (
         <p className="text-sm text-muted-foreground">Unable to load settings.</p>
       )}
