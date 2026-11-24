@@ -19,6 +19,8 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CollectionAccountSelect } from "@/components/finance/collection-account-select";
 import { EmployeeSelect } from "@/components/finance/employee-select";
+import { RentTrackerCard } from "@/components/finance/rent-tracker-card";
+import { isSalaryAdvanceCategory } from "@/lib/constants/expense-categories";
 import { ExpenseVoidActions } from "@/components/finance/expense-void-actions";
 import { PosExpenseCategorySelect } from "@/components/pos/pos-expense-category-select";
 import { Button } from "@/components/ui/button";
@@ -129,8 +131,7 @@ export function ExpensesPageClient() {
   const [referenceNo, setReferenceNo] = useState("");
   const [employeeId, setEmployeeId] = useState("");
 
-  const isSalaryAdvance =
-    category === "salary_advance" || category === "salary advance";
+  const isSalaryAdvance = isSalaryAdvanceCategory(category);
 
   const { data: expenses = [], isLoading, isFetching } = useQuery({
     queryKey: ["expenses", outletId, fromDate, toDate],
@@ -274,6 +275,8 @@ export function ExpensesPageClient() {
           Record expense
         </Button>
       </div>
+
+      <RentTrackerCard />
 
       <KpiCard
         title={`Total · ${rangeLabel(fromDate, toDate)}`}
@@ -469,14 +472,18 @@ export function ExpensesPageClient() {
                 value={category}
                 onValueChange={(v) => {
                   setCategory(v);
-                  if (v !== "salary_advance" && v !== "salary advance") {
+                  if (!isSalaryAdvanceCategory(v)) {
                     setEmployeeId("");
                   }
                 }}
               />
             </div>
             {isSalaryAdvance ? (
-              <EmployeeSelect value={employeeId} onChange={setEmployeeId} />
+              <EmployeeSelect
+                value={employeeId}
+                onChange={setEmployeeId}
+                outletId={outletId}
+              />
             ) : null}
             <div className="space-y-2">
               <Label>Description</Label>

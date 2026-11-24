@@ -34,7 +34,11 @@ import {
   invalidateSupplierQueries,
 } from "@/lib/api/suppliers-fetch";
 import { cn } from "@/lib/utils";
-import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
+import {
+  formatExpenseCategoryLabel,
+  isSalaryAdvanceCategory,
+} from "@/lib/constants/expense-categories";
+import { EmployeeSelect } from "@/components/finance/employee-select";
 import { formatTzs } from "@/lib/utils/currency";
 import { useTaxRate } from "@/hooks/useTaxRate";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
@@ -71,6 +75,8 @@ export function PosCashflowPanel({
   const [tab, setTab] = useState<Tab>("expense");
   const businessDate = useBusinessDateStore((s) => s.businessDate);
   const [category, setCategory] = useState<string>("misc");
+  const [employeeId, setEmployeeId] = useState("");
+  const isAdvance = isSalaryAdvanceCategory(category);
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [bankAccountId, setBankAccountId] = useState("");
@@ -153,10 +159,16 @@ export function PosCashflowPanel({
     mutationFn: recordExpenseApi,
     onSuccess: (r) => {
       if (r.ok) {
-        toast.success("Expense recorded");
+        toast.success(
+          isAdvance
+            ? "Salary advance recorded — deducted in payroll"
+            : "Expense recorded"
+        );
         setAmount("");
         setDescription("");
+        setEmployeeId("");
         queryClient.invalidateQueries({ queryKey: ["pos-expenses"] });
+        queryClient.invalidateQueries({ queryKey: ["payroll-run"] });
         queryClient.invalidateQueries({ queryKey: ["day-cash-summary"] });
       } else toast.error(r.message);
     },
@@ -315,6 +327,10 @@ export function PosCashflowPanel({
                   toast.error("Enter a valid amount");
                   return;
                 }
+                if (isAdvance && !employeeId) {
+                  toast.error("Select the employee receiving this salary advance");
+                  return;
+                }
                 recordMut.mutate({
                   outletId,
                   category,
@@ -322,6 +338,7 @@ export function PosCashflowPanel({
                   amount: amt,
                   paidFromCash: true,
                   expenseDate: businessDate,
+                  employeeId: isAdvance ? employeeId : undefined,
                 });
               }}
             >
@@ -345,9 +362,25 @@ export function PosCashflowPanel({
                 <Label className="text-xs">Category</Label>
                 <PosExpenseCategorySelect
                   value={category}
-                  onValueChange={setCategory}
+                  onValueChange={(id) => {
+                    setCategory(id);
+                    if (!isSalaryAdvanceCategory(id)) setEmployeeId("");
+                  }}
                 />
               </div>
+              {isAdvance ? (
+                <div className="rounded-lg border border-warning/40 bg-warning-muted/30 p-2">
+                  <EmployeeSelect
+                    value={employeeId}
+                    onChange={setEmployeeId}
+                    outletId={outletId}
+                    compact
+                  />
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    Deducted from this employee&apos;s gross salary in payroll.
+                  </p>
+                </div>
+              ) : null}
               <div className="space-y-1">
                 <Label className="text-xs">Amount (TZS)</Label>
                 <Input
@@ -371,7 +404,7 @@ export function PosCashflowPanel({
               <Button
                 type="submit"
                 className="h-10 w-full rounded-xl bg-outflow hover:bg-outflow/90"
-                disabled={recordMut.isPending}
+                disabled={recordMut.isPending || (isAdvance && !employeeId)}
               >
                 {recordMut.isPending ? (
                   <Loader2 className="size-4 animate-spin" />

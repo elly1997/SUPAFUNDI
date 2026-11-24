@@ -86,7 +86,7 @@ export function PayrollPageClient() {
 
   const { data: employees = [], isLoading: empLoading } = useQuery({
     queryKey: ["employees", outletId],
-    queryFn: fetchEmployees,
+    queryFn: () => fetchEmployees("outlet"),
     enabled: !!outletId,
   });
 

@@ -22,6 +22,8 @@ export type EmployeeRow = {
   job_title: string | null;
   gross_monthly_salary: number;
   is_active: boolean;
+  outlet_id?: string | null;
+  outlet_name?: string | null;
 };
 
 const employeeInput = z.object({
@@ -32,20 +34,47 @@ const employeeInput = z.object({
   profileId: z.string().uuid().optional().nullable(),
 });
 
-export async function listEmployees(): Promise<EmployeeRow[]> {
+/**
+ * Staff belong to one outlet and are only listed there.
+ * - default: the working outlet (`outletId` if allowed, else the signed-in user's outlet)
+ * - `scope: "org"`: every outlet — owners (admin) only; others fall back to their outlet
+ * Non-owners can never read another outlet's staff by passing `outletId`.
+ */
+export async function listEmployees(
+  scope: "outlet" | "org" = "outlet",
+  outletId?: string | null
+): Promise<EmployeeRow[]> {
   const ctx = await requireOrgContext();
-  if (!ctx.outletId) return [];
   const supabase = await createServerSupabaseClient();
-  const { data, error } = await payrollDb(supabase)
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", ctx.userId)
+    .maybeSingle();
+  const isOwner = profile?.role === "owner";
+
+  const wantsAll = scope === "org" && isOwner;
+  let targetOutlet = ctx.outletId;
+  if (!wantsAll && outletId && (isOwner || outletId === ctx.outletId)) {
+    targetOutlet = outletId;
+  }
+  if (!wantsAll && !targetOutlet) return [];
+
+  let query = payrollDb(supabase)
     .from("employees")
     .select(
-      "id, profile_id, full_name, phone, job_title, gross_monthly_salary, is_active"
+      "id, profile_id, full_name, phone, job_title, gross_monthly_salary, is_active, outlet_id, outlets(name)"
     )
-    .eq("organization_id", ctx.organizationId)
-    .eq("outlet_id", ctx.outletId)
-    .order("full_name");
+    .eq("organization_id", ctx.organizationId);
+  if (!wantsAll) query = query.eq("outlet_id", targetOutlet!);
+  const { data, error } = await query.order("full_name");
   if (error) throw new Error(error.message);
-  return ((data ?? []) as EmployeeRow[]).map((e) => ({
+  return (
+    (data ?? []) as unknown as (EmployeeRow & {
+      outlet_id: string | null;
+      outlets: { name: string } | null;
+    })[]
+  ).map((e) => ({
     id: e.id,
     profile_id: e.profile_id,
     full_name: e.full_name,
@@ -53,6 +82,8 @@ export async function listEmployees(): Promise<EmployeeRow[]> {
     job_title: e.job_title,
     gross_monthly_salary: Number(e.gross_monthly_salary),
     is_active: e.is_active,
+    outlet_id: e.outlet_id ?? null,
+    outlet_name: e.outlets?.name ?? null,
   }));
 }
 

@@ -10,6 +10,7 @@ import { requireOrgContext } from "@/lib/server/org-context";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { roundMoney } from "@/lib/utils/calculations";
 import { formatTzs } from "@/lib/utils/currency";
+import { isSalaryAdvanceCategory } from "@/lib/constants/expense-categories";
 import { validateCollectionAccount } from "@/lib/finance/collection-accounts";
 
 type Supabase = Awaited<ReturnType<typeof createServerSupabaseClient>>;
@@ -60,10 +61,14 @@ export type PayrollRunDetail = {
   };
 };
 
+/**
+ * Salary advances are matched by employee only (not expense outlet): staff are
+ * often advanced from a different till than the outlet they are registered at.
+ */
 async function sumAdvancesForEmployee(
   supabase: Supabase,
   organizationId: string,
-  outletId: string,
+  _outletId: string,
   employeeId: string,
   from: string,
   to: string
@@ -72,7 +77,6 @@ async function sumAdvancesForEmployee(
     .from("expenses")
     .select("id, amount, expense_date, description, category")
     .eq("organization_id", organizationId)
-    .eq("outlet_id", outletId)
     .eq("employee_id", employeeId)
     .gte("expense_date", from)
     .lte("expense_date", to);
@@ -80,8 +84,7 @@ async function sumAdvancesForEmployee(
   const items: PayrollLineDetail["advance_items"] = [];
   let total = 0;
   for (const row of data ?? []) {
-    const cat = (row.category ?? "").toLowerCase();
-    if (cat !== "salary_advance" && cat !== "salary advance") continue;
+    if (!isSalaryAdvanceCategory(row.category)) continue;
     const amount = Number(row.amount);
     total += amount;
     items.push({
@@ -97,7 +100,7 @@ async function sumAdvancesForEmployee(
 async function sumBonusesForEmployee(
   supabase: Supabase,
   organizationId: string,
-  outletId: string,
+  _outletId: string,
   employeeId: string,
   from: string,
   to: string
@@ -106,7 +109,6 @@ async function sumBonusesForEmployee(
     .from("employee_bonuses")
     .select("id, amount, bonus_date, description")
     .eq("organization_id", organizationId)
-    .eq("outlet_id", outletId)
     .eq("employee_id", employeeId)
     .gte("bonus_date", from)
     .lte("bonus_date", to);
@@ -126,6 +128,37 @@ async function sumBonusesForEmployee(
   }));
   const total = roundMoney(items.reduce((s, b) => s + b.amount, 0));
   return { total, items };
+}
+
+/** Closed months before `beforeMonth` where recorded advances exceed what payroll deducted. */
+async function findUnrecoveredAdvances(
+  supabase: Supabase,
+  organizationId: string,
+  employeeId: string,
+  beforeMonth: string
+): Promise<{ month: string; recorded: number; deducted: number; shortfall: number }[]> {
+  const { data: lines } = await payrollDb(supabase)
+    .from("payroll_lines")
+    .select("advances_total, payroll_runs!inner(payroll_month, status, organization_id)")
+    .eq("employee_id", employeeId)
+    .eq("payroll_runs.organization_id", organizationId)
+    .eq("payroll_runs.status", "closed")
+    .lt("payroll_runs.payroll_month", beforeMonth);
+  const out: { month: string; recorded: number; deducted: number; shortfall: number }[] = [];
+  for (const l of (lines ?? []) as unknown as {
+    advances_total: number;
+    payroll_runs: { payroll_month: string };
+  }[]) {
+    const month = l.payroll_runs.payroll_month;
+    const { from, to } = monthBounds(month);
+    const { total } = await sumAdvancesForEmployee(
+      supabase, organizationId, "", employeeId, from, to
+    );
+    const deducted = roundMoney(Number(l.advances_total));
+    const shortfall = roundMoney(total - deducted);
+    if (shortfall > 0.5) out.push({ month, recorded: total, deducted, shortfall });
+  }
+  return out;
 }
 
 export async function refreshPayrollRun(
@@ -223,6 +256,21 @@ export async function refreshPayrollRun(
       );
     }
 
+    /** Flag advances given after an earlier month was closed (never deducted from pay). */
+    for (const emp of employees ?? []) {
+      const unrecovered = await findUnrecoveredAdvances(
+        supabase,
+        ctx.organizationId,
+        emp.id,
+        payrollMonth
+      );
+      for (const u of unrecovered) {
+        warnings.push(
+          `${emp.full_name}: ${formatTzs(u.shortfall)} advance given in ${u.month} was not deducted when that month was closed (recorded ${formatTzs(u.recorded)}, deducted ${formatTzs(u.deducted)}). Recover it manually.`
+        );
+      }
+    }
+
     /** Drop lines for deleted / inactive staff so duplicates disappear after removal. */
     const activeIds = new Set(
       ((employees ?? []) as { id: string }[]).map((e) => e.id)
@@ -251,6 +299,77 @@ export async function refreshPayrollRun(
       ok: false,
       message: e instanceof Error ? e.message : "Refresh payroll failed",
     };
+  }
+}
+
+/**
+ * Sync one employee's payroll line after a salary advance (any role, e.g. POS cashier).
+ * Uses the employee's registered outlet run — not the outlet the cash was paid from.
+ */
+export async function syncPayrollForEmployeeMonth(
+  employeeId: string,
+  payrollMonth: string
+): Promise<void> {
+  try {
+    if (!PAYROLL_MONTH.test(payrollMonth)) return;
+    const ctx = await requireOrgContext();
+    const supabase = await createServerSupabaseClient();
+    const { data: emp } = await payrollDb(supabase)
+      .from("employees")
+      .select("id, outlet_id, gross_monthly_salary, is_active")
+      .eq("id", employeeId)
+      .eq("organization_id", ctx.organizationId)
+      .maybeSingle();
+    const e = emp as
+      | { id: string; outlet_id: string; gross_monthly_salary: number; is_active: boolean }
+      | null;
+    if (!e?.outlet_id) return;
+
+    const { from, to } = monthBounds(payrollMonth);
+    let { data: run } = await payrollDb(supabase)
+      .from("payroll_runs")
+      .select("id, status")
+      .eq("organization_id", ctx.organizationId)
+      .eq("outlet_id", e.outlet_id)
+      .eq("payroll_month", payrollMonth)
+      .maybeSingle();
+    if (run?.status === "closed") return;
+    if (!run) {
+      const { data: created } = await payrollDb(supabase)
+        .from("payroll_runs")
+        .insert({
+          organization_id: ctx.organizationId,
+          outlet_id: e.outlet_id,
+          payroll_month: payrollMonth,
+          status: "open",
+        })
+        .select("id, status")
+        .single();
+      run = created;
+    }
+    if (!run) return;
+
+    const gross = roundMoney(Number(e.gross_monthly_salary));
+    const { total: advances } = await sumAdvancesForEmployee(
+      supabase, ctx.organizationId, e.outlet_id, employeeId, from, to
+    );
+    const { total: bonuses } = await sumBonusesForEmployee(
+      supabase, ctx.organizationId, e.outlet_id, employeeId, from, to
+    );
+    await supabase.from("payroll_lines").upsert(
+      {
+        payroll_run_id: run.id,
+        employee_id: employeeId,
+        gross_salary: gross,
+        advances_total: advances,
+        bonuses_total: bonuses,
+        net_salary: Math.max(0, roundMoney(gross + bonuses - advances)),
+      },
+      { onConflict: "payroll_run_id,employee_id" }
+    );
+    revalidatePath("/finance/payroll");
+  } catch {
+    /* best-effort — payroll page shows live advances for open months anyway */
   }
 }
 
@@ -316,9 +435,20 @@ export async function getPayrollRunDetail(
       to
     );
     const gross = Number(line.gross_salary);
-    const advances = Number(line.advances_total);
-    const bonuses = Number(line.bonuses_total);
-    const net = Number(line.net_salary);
+    /**
+     * Open months: always show live advances/bonuses from expenses so the screen
+     * never lags behind POS entries. Closed months keep what was actually paid.
+     */
+    const isOpen = run.status !== "closed";
+    const advances = isOpen
+      ? roundMoney(advanceItems.reduce((s, a) => s + a.amount, 0))
+      : Number(line.advances_total);
+    const bonuses = isOpen
+      ? roundMoney(bonusItems.reduce((s, b) => s + b.amount, 0))
+      : Number(line.bonuses_total);
+    const net = isOpen
+      ? Math.max(0, roundMoney(gross + bonuses - advances))
+      : Number(line.net_salary);
     grossSum += gross;
     advSum += advances;
     bonusSum += bonuses;

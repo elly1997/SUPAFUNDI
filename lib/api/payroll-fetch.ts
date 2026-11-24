@@ -10,8 +10,15 @@ async function parseError(res: Response): Promise<string> {
   }
 }
 
-export async function fetchEmployees(): Promise<EmployeeRow[]> {
-  const res = await fetch("/api/payroll/employees", {
+export async function fetchEmployees(
+  scope: "outlet" | "org" = "outlet",
+  outletId?: string | null
+): Promise<EmployeeRow[]> {
+  const q = new URLSearchParams();
+  if (scope === "org") q.set("scope", "org");
+  if (outletId) q.set("outletId", outletId);
+  const qs = q.toString();
+  const res = await fetch(`/api/payroll/employees${qs ? `?${qs}` : ""}`, {
     credentials: "include",
     cache: "no-store",
   });

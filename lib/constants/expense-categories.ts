@@ -33,6 +33,49 @@ export function slugifyExpenseCategory(label: string): string {
   return slug || "misc";
 }
 
+/** Category id that links an expense to an employee and deducts from payroll. */
+export const SALARY_ADVANCE_CATEGORY_ID = "salary_advance";
+
+/** Legacy / typo ids that must behave as salary advance (payroll deduction). */
+const SALARY_ADVANCE_ALIASES = new Set([
+  "salary_advance",
+  "salary advance",
+  "advance_salary",
+  "advance salary",
+  "salary_adv",
+  "staff_advance",
+  "employee_advance",
+]);
+
+export function isSalaryAdvanceCategory(
+  category: string | null | undefined
+): boolean {
+  return SALARY_ADVANCE_ALIASES.has((category ?? "").trim().toLowerCase());
+}
+
+/** Built-ins that must always appear in pickers, even if the saved list omits them. */
+const REQUIRED_CATEGORY_IDS = [SALARY_ADVANCE_CATEGORY_ID] as const;
+
+function ensureRequiredCategories(items: ExpenseCategory[]): ExpenseCategory[] {
+  /** Drop duplicate advance aliases (e.g. custom "ADVANCE SALARY") — use the built-in. */
+  const cleaned = items.filter(
+    (c) =>
+      c.id === SALARY_ADVANCE_CATEGORY_ID || !isSalaryAdvanceCategory(c.id)
+  );
+  const out = [...cleaned];
+  for (const id of REQUIRED_CATEGORY_IDS) {
+    if (out.some((c) => c.id === id)) continue;
+    const def = DEFAULT_EXPENSE_CATEGORIES.find((c) => c.id === id);
+    if (def) {
+      /** Place right after "wages" when present, else append. */
+      const wagesIdx = out.findIndex((c) => c.id === "wages");
+      if (wagesIdx >= 0) out.splice(wagesIdx + 1, 0, { ...def });
+      else out.push({ ...def });
+    }
+  }
+  return out;
+}
+
 export function parseExpenseCategoriesJson(
   raw: string | null | undefined
 ): ExpenseCategory[] {
@@ -67,7 +110,9 @@ export function parseExpenseCategoriesJson(
         });
       }
     }
-    return items.length ? items : [...DEFAULT_EXPENSE_CATEGORIES];
+    return items.length
+      ? ensureRequiredCategories(items)
+      : [...DEFAULT_EXPENSE_CATEGORIES];
   } catch {
     return [...DEFAULT_EXPENSE_CATEGORIES];
   }

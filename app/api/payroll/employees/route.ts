@@ -7,10 +7,12 @@ import { requireOrgContext } from "@/lib/server/org-context";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     await requireOrgContext();
-    const employees = await listEmployees();
+    const params = new URL(request.url).searchParams;
+    const scope = params.get("scope") === "org" ? "org" : "outlet";
+    const employees = await listEmployees(scope, params.get("outletId"));
     return NextResponse.json({ employees });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to load employees";

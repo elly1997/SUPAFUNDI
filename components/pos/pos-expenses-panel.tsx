@@ -18,6 +18,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { fetchExpenses, recordExpenseApi } from "@/lib/api/daily-ops-fetch";
+import { EmployeeSelect } from "@/components/finance/employee-select";
+import { isSalaryAdvanceCategory } from "@/lib/constants/expense-categories";
 import { formatTzs } from "@/lib/utils/currency";
 import { useAuthStore } from "@/stores/authStore";
 import { useBusinessDateStore } from "@/stores/businessDateStore";
@@ -25,6 +27,8 @@ import { useBusinessDateStore } from "@/stores/businessDateStore";
 export function PosExpensesPanel() {
   const [collapsed, setCollapsed] = useState(false);
   const [category, setCategory] = useState<string>("misc");
+  const [employeeId, setEmployeeId] = useState("");
+  const isAdvance = isSalaryAdvanceCategory(category);
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<
@@ -50,6 +54,8 @@ export function PosExpensesPanel() {
         toast.success("Expense recorded");
         setAmount("");
         setDescription("");
+        setEmployeeId("");
+        queryClient.invalidateQueries({ queryKey: ["payroll-run"] });
         queryClient.invalidateQueries({ queryKey: ["pos-expenses"] });
         queryClient.invalidateQueries({ queryKey: ["payment-accounts"] });
         queryClient.invalidateQueries({ queryKey: ["bank-transactions"] });
@@ -89,8 +95,13 @@ export function PosExpensesPanel() {
                 toast.error("Select the bank or M-Pesa account");
                 return;
               }
+              if (isAdvance && !employeeId) {
+                toast.error("Select the employee receiving this salary advance");
+                return;
+              }
               recordMut.mutate({
                 outletId: outletId ?? undefined,
+                employeeId: isAdvance ? employeeId : undefined,
                 category,
                 description: description || undefined,
                 amount: amt,
@@ -104,9 +115,20 @@ export function PosExpensesPanel() {
               <Label className="text-xs">Category</Label>
               <PosExpenseCategorySelect
                 value={category}
-                onValueChange={setCategory}
+                onValueChange={(id) => {
+                  setCategory(id);
+                  if (!isSalaryAdvanceCategory(id)) setEmployeeId("");
+                }}
               />
             </div>
+            {isAdvance ? (
+              <EmployeeSelect
+                value={employeeId}
+                onChange={setEmployeeId}
+                outletId={outletId}
+                compact
+              />
+            ) : null}
             <div className="space-y-1">
               <Label className="text-xs">Amount (TZS)</Label>
               <Input

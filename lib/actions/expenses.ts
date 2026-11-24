@@ -14,7 +14,11 @@ import { requireManagerContext } from "@/lib/server/require-manager";
 import { checkBusinessDayMutable } from "@/lib/server/business-day-guard";
 import { requireOrgContext } from "@/lib/server/org-context";
 import { resolveWorkingOutletId } from "@/lib/customers/working-outlet";
-import { formatExpenseCategoryLabel } from "@/lib/constants/expense-categories";
+import {
+  formatExpenseCategoryLabel,
+  isSalaryAdvanceCategory,
+  SALARY_ADVANCE_CATEGORY_ID,
+} from "@/lib/constants/expense-categories";
 import { validateCollectionAccount } from "@/lib/finance/collection-accounts";
 import { resolveBusinessDate } from "@/lib/utils/iso-date";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -205,15 +209,16 @@ export async function recordExpense(
   raw: z.infer<typeof recordExpenseInput>
 ): Promise<{ ok: true; expenseId: string } | { ok: false; message: string }> {
   try {
-    const input = recordExpenseInput.parse(raw);
+    const parsedInput = recordExpenseInput.parse(raw);
+    /** Normalise legacy aliases (e.g. "advance_salary") so payroll deduction always works. */
+    const input = isSalaryAdvanceCategory(parsedInput.category)
+      ? { ...parsedInput, category: SALARY_ADVANCE_CATEGORY_ID }
+      : parsedInput;
     const ctx = await requireOrgContext();
     const supabase = await createServerSupabaseClient();
 
     const categoryKey = input.category.trim().toLowerCase();
-    if (
-      categoryKey === "salary_advance" ||
-      categoryKey === "salary advance"
-    ) {
+    if (isSalaryAdvanceCategory(categoryKey)) {
       if (!input.employeeId) {
         return {
           ok: false,
@@ -222,13 +227,21 @@ export async function recordExpense(
       }
       const { data: emp } = await supabase
         .from("employees")
-        .select("id")
+        .select("id, full_name, outlet_id")
         .eq("id", input.employeeId)
         .eq("organization_id", ctx.organizationId)
         .eq("is_active", true)
         .maybeSingle();
       if (!emp) {
         return { ok: false, message: "Employee not found or inactive." };
+      }
+      /** Staff stay in their own outlet — advances must be paid from that outlet's till. */
+      const advanceOutletId = input.outletId ?? ctx.outletId;
+      if (advanceOutletId && emp.outlet_id && emp.outlet_id !== advanceOutletId) {
+        return {
+          ok: false,
+          message: `${emp.full_name} is registered at another outlet. Switch to that outlet to record this advance.`,
+        };
       }
     }
 
@@ -327,12 +340,10 @@ export async function recordExpense(
       }
     }
 
-    if (
-      categoryKey === "salary_advance" ||
-      categoryKey === "salary advance"
-    ) {
-      const { refreshPayrollRun } = await import("@/lib/actions/payroll");
-      await refreshPayrollRun(expenseDate.slice(0, 7));
+    if (isSalaryAdvanceCategory(categoryKey) && input.employeeId) {
+      /** Cashiers cannot call manager-only refresh — sync the employee's run directly. */
+      const { syncPayrollForEmployeeMonth } = await import("@/lib/actions/payroll");
+      await syncPayrollForEmployeeMonth(input.employeeId, expenseDate.slice(0, 7));
     }
 
     revalidatePath("/finance/expenses");
