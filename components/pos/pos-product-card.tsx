@@ -2,7 +2,9 @@
 
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { computeDaysOfCover } from "@/lib/inventory/stock-status";
 import { cn } from "@/lib/utils";
+import { roundStockQty } from "@/lib/utils/calculations";
 import { formatTzs } from "@/lib/utils/currency";
 import type { PosPricingMode, PosProductRow } from "@/hooks/usePosProducts";
 
@@ -16,6 +18,19 @@ type Props = {
   onQtyClick: () => void;
 };
 
+function formatStockQty(qty: number): string {
+  return roundStockQty(qty).toLocaleString(undefined, {
+    maximumFractionDigits: 3,
+  });
+}
+
+/** Whole days of cover. Under a day stays explicit so fast movers don't read as zero. */
+function formatDaysOnShelf(days: number): string {
+  if (days < 1) return "<1 day on shelf";
+  const whole = Math.round(days);
+  return `~${whole.toLocaleString()} ${whole === 1 ? "day" : "days"} on shelf`;
+}
+
 export function PosProductCard({
   product,
   pricingMode = "retail",
@@ -24,10 +39,15 @@ export function PosProductCard({
   onQtyClick,
 }: Props) {
   const outOfStock = product.stockQty <= 0;
+  const lowStock = !outOfStock && product.stockQty <= 5;
+  const daysOnShelf = outOfStock
+    ? null
+    : computeDaysOfCover(product.stockQty, product.avgDailySold);
+  const runningLow = daysOnShelf != null && daysOnShelf < 7;
   const demandLabel =
     product.recentSoldQty > 0
       ? `${product.recentSoldQty.toLocaleString()} sold / 30d`
-      : "No recent sales";
+      : null;
 
   return (
     <div
@@ -57,31 +77,46 @@ export function PosProductCard({
           <span className="line-clamp-2 text-sm font-semibold leading-snug text-foreground">
             {product.name}
           </span>
-          <span className="mt-1 block truncate text-[11px] font-medium text-muted-foreground">
-            {product.code ?? "No SKU"} ·{" "}
-            <span
-              className={cn(
-                product.stockQty <= 5 && product.stockQty > 0 && "text-warning",
-                outOfStock && "text-outflow"
-              )}
-            >
-              {outOfStock ? "Out of stock" : `${product.stockQty} ${product.unit}`}
-            </span>
+          <span
+            className={cn(
+              "mt-1 block text-xs font-semibold leading-snug tabular-nums",
+              outOfStock
+                ? "text-outflow"
+                : lowStock
+                  ? "text-warning"
+                  : "text-foreground"
+            )}
+          >
+            {outOfStock
+              ? "Out of stock"
+              : `${formatStockQty(product.stockQty)} ${product.unit} in stock`}
           </span>
-          <span className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px]">
-            <span
-              className={cn(
-                "rounded-full px-1.5 py-0.5 font-semibold",
-                product.recentSoldQty > 0
-                  ? "bg-primary/10 text-primary"
-                  : "bg-muted text-muted-foreground"
-              )}
-            >
-              {demandLabel}
-            </span>
+          <span className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
+            {!outOfStock && (
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-0.5 font-semibold",
+                  daysOnShelf == null
+                    ? "bg-muted text-muted-foreground"
+                    : runningLow
+                      ? "bg-warning/15 text-warning"
+                      : "bg-primary/10 text-primary"
+                )}
+                title={
+                  daysOnShelf != null
+                    ? `${formatStockQty(product.stockQty)} ${product.unit} ÷ ~${product.avgDailySold}/day`
+                    : undefined
+                }
+              >
+                {daysOnShelf != null
+                  ? formatDaysOnShelf(daysOnShelf)
+                  : "No recent sales"}
+              </span>
+            )}
             {product.avgDailySold > 0 && (
               <span className="text-muted-foreground">
                 ~{product.avgDailySold}/day
+                {demandLabel ? ` · ${demandLabel}` : ""}
               </span>
             )}
           </span>
