@@ -79,12 +79,9 @@ export function PosProductCard({
           </span>
           <span
             className={cn(
-              "mt-1 block text-xs font-semibold leading-snug tabular-nums",
-              outOfStock
-                ? "text-outflow"
-                : lowStock
-                  ? "text-warning"
-                  : "text-foreground"
+              "mt-1 block text-[11px] leading-snug tabular-nums text-muted-foreground",
+              outOfStock && "text-outflow",
+              lowStock && "text-warning"
             )}
           >
             {outOfStock
